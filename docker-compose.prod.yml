@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  memgraph:
+    image: memgraph/memgraph:latest
+    container_name: ozymem-memgraph
+    ports:
+      - "7687:7687"
+    volumes:
+      - memgraph-data:/var/lib/memgraph
+    restart: always
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ozymem-server
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - OZYMEM_SERVER_MODE=web
+      - MEMGRAPH_URI=memgraph:7687
+      - MEMGRAPH_USER=admin
+      - MEMGRAPH_PASSWORD=admin
+      - MEMGRAPH_DATABASE=memgraph
+    depends_on:
+      - memgraph
+    restart: always
+
+volumes:
+  memgraph-data:
