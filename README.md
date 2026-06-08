@@ -72,3 +72,25 @@ Para arrancar el backend en la nube que recibe las sincronizaciones:
 cargo run -p ozymem-server -- --web
 ```
 *(O configurando la variable de entorno `OZYMEM_SERVER_MODE=web`)*.
+
+---
+
+## Despliegue en Producción (Coolify)
+
+Ozymem-Partner incluye soporte nativo para despliegue automatizado en Coolify o cualquier orquestador compatible con Docker Compose.
+
+### Archivos de Despliegue
+- [Dockerfile](file:///c:/Users/Lenovo/Documents/ozymem-partner/Dockerfile): Compila y empaqueta el binario de forma eficiente cacheando las dependencias.
+- [docker-compose.prod.yml](file:///c:/Users/Lenovo/Documents/ozymem-partner/docker-compose.prod.yml): Coordina e integra la base de datos Memgraph y el servidor Axum de Ozymem.
+
+### Pasos de Configuración en Coolify:
+1. Crea un nuevo recurso de tipo **Docker Compose** en tu proyecto de Coolify.
+2. Apunta a tu repositorio de GitHub, usa la rama `main` y selecciona el archivo `docker-compose.prod.yml`.
+3. Configura las siguientes variables de entorno en el panel de Coolify para el servicio `server`:
+   - `OZYMEM_SERVER_MODE`: `web`
+   - `MEMGRAPH_URI`: `memgraph:7687`
+   - `MEMGRAPH_USER`: `admin`
+   - `MEMGRAPH_PASSWORD`: `<contraseña_segura>`
+   - `MEMGRAPH_DATABASE`: `memgraph`
+4. Configura el puerto expuesto del servidor (`8080`) para que Coolify genere el proxy inverso con HTTPS automático.
+5. Haz clic en **Deploy**. Al realizar la primera consulta a `/api/health`, el servidor iniciará el *Setup Génesis* y mostrará tu credencial maestra en la terminal de logs en Coolify.
