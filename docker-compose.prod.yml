@@ -16,14 +16,14 @@ services:
       dockerfile: Dockerfile
     container_name: ozymem-server
     ports:
-      - "8080:8080"
+      - "8088:8080"
     environment:
       - PORT=8080
-      - OZYMEM_SERVER_MODE=web
-      - MEMGRAPH_URI=memgraph:7687
-      - MEMGRAPH_USER=admin
-      - MEMGRAPH_PASSWORD=admin
-      - MEMGRAPH_DATABASE=memgraph
+      - OZYMEM_SERVER_MODE=${OZYMEM_SERVER_MODE}
+      - MEMGRAPH_URI=${MEMGRAPH_URI}
+      - MEMGRAPH_USER=${MEMGRAPH_USER}
+      - MEMGRAPH_PASSWORD=${MEMGRAPH_PASSWORD}
+      - MEMGRAPH_DATABASE=${MEMGRAPH_DATABASE}
     depends_on:
       - memgraph
     restart: always
