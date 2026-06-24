@@ -151,11 +151,17 @@ func main() {
 						}
 
 						err = vectorDB.Upsert(vector.VectorRecord{
-							ID:        fmt.Sprintf("%s::%s", fp, fn.Name),
-							FilePath:  fp,
-							Symbol:    fn.Name,
-							Code:      representation,
-							Embedding: emb,
+							ID:            fmt.Sprintf("%s::%s", fp, fn.Name),
+							Category:      "fact",
+							Project:       filepath.Base(projectPath),
+							TenantID:      tenantID,
+							SourcePath:    fp,
+							Timestamp:     time.Now().Unix(),
+							HitCount:      0,
+							Text:          representation,
+							Embedding:     emb,
+							SchemaVersion: 1,
+							ParentID:      nil,
 						})
 						if err != nil {
 							log.Printf("[ERROR] Falló upsert en VectorDB para %s::%s: %v", fp, fn.Name, err)

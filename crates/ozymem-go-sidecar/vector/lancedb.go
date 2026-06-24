@@ -14,11 +14,17 @@ import (
 
 // VectorRecord represents a code snippet and its embedding vector.
 type VectorRecord struct {
-	ID        string    `json:"id"`
-	FilePath  string    `json:"file_path"`
-	Symbol    string    `json:"symbol"`
-	Code      string    `json:"code"`
-	Embedding []float32 `json:"embedding"`
+	ID            string    `json:"id"`
+	Category      string    `json:"category"`
+	Project       string    `json:"project"`
+	TenantID      string    `json:"tenant_id"`
+	SourcePath    string    `json:"source_path"`
+	Timestamp     int64     `json:"timestamp"`
+	HitCount      int       `json:"hit_count"`
+	Text          string    `json:"text"`
+	Embedding     []float32 `json:"embedding"`
+	SchemaVersion int       `json:"schema_version"`
+	ParentID      *string   `json:"parent_id"`
 }
 
 // VectorDB represents a pure-Go embedded vector store.
