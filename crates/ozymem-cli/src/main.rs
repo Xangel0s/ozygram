@@ -1572,57 +1572,42 @@ async fn print_status(context: &AppContext, json_output: bool) -> anyhow::Result
         summary.file_count, summary.function_count, summary.engram_count
     );
 
-    // Tabla de Monitoreo Centralizado de Watchers por Proyecto
+    // Centralized Monitoring of Watchers by Project from SQLite Registry
     let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    if let Ok((_, config)) = load_config() {
+    if let Ok(reg) = ozymem_core::registry::ProjectRegistry::open() {
         println!();
-        println!("Project Environment Watchers:");
+        println!("Project Environment Watchers (SQLite Registry):");
         println!("+-----------------+------------------------------------------+-----------------------+-------------------------------------------------------------+");
         println!("| {:<15} | {:<40} | {:<21} | {:<59} |", "Proyecto", "Ruta Asignada", "Estado", "Ultima Bitacora");
         println!("+-----------------+------------------------------------------+-----------------------+-------------------------------------------------------------+");
         
-        let mut sorted_projects: Vec<(&String, &String)> = config.projects.iter().collect();
-        sorted_projects.sort_by(|a, b| a.0.cmp(b.0));
-        
-        for (name, path) in sorted_projects {
-            let pid_file = home_dir.join(format!(".ozymem-{}.pid", name));
-            let log_file = home_dir.join(format!(".ozymem-{}.log", name));
-            
-            let shortened_path = shorten_path(path, 40);
-            
-            let mut estado = "INACTIVO".to_string();
-            let mut ultima_bitacora = "Watcher no inicializado.".to_string();
-            
-            if pid_file.exists() {
-                if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                        if is_pid_alive(pid) {
-                            estado = format!("ACTIVO (PID: {})", pid);
-                            ultima_bitacora = get_last_log_line(&log_file);
+        if let Ok(projects) = reg.list_projects() {
+            for p in projects {
+                let log_file = home_dir.join(format!(".ozymem-{}.log", p.name));
+                let shortened_path = shorten_path(&p.path, 40);
+                
+                let estado = match p.status {
+                    ozymem_core::registry::ProjectStatus::Active => {
+                        if let Some(pid) = p.watcher_pid {
+                            format!("ACTIVO (PID: {})", pid)
                         } else {
-                            let last_line = get_last_log_line(&log_file);
-                            let is_error = last_line.to_lowercase().contains("error") 
-                                || last_line.to_lowercase().contains("fail") 
-                                || last_line.to_lowercase().contains("panic");
-                            
-                            estado = if is_error { "TUMBADO".to_string() } else { "DETENIDO".to_string() };
-                            
-                            ultima_bitacora = if last_line == "Watcher no inicializado." || last_line == "Bitacora vacia." {
-                                "Proceso terminado inesperadamente.".to_string()
-                            } else if is_error {
-                                format!("Error: {}", last_line)
-                            } else {
-                                format!("Último log: {}", last_line)
-                            };
+                            "ACTIVO".to_string()
                         }
                     }
+                    ozymem_core::registry::ProjectStatus::Sleeping => "SUSPENDIDO".to_string(),
+                    ozymem_core::registry::ProjectStatus::Scanning => "ESCANEO".to_string(),
+                };
+                
+                let mut ultima_bitacora = get_last_log_line(&log_file);
+                if ultima_bitacora == "Watcher no inicializado." && p.status == ozymem_core::registry::ProjectStatus::Sleeping {
+                    ultima_bitacora = "Suspendido en modo Fluido.".to_string();
                 }
+                
+                println!("| {:<15} | {:<40} | {:<21} | {:<59} |", p.name, shortened_path, estado, ultima_bitacora);
             }
-            
-            println!("| {:<15} | {:<40} | {:<21} | {:<59} |", name, shortened_path, estado, ultima_bitacora);
         }
         
-        // Fila dedicada al servicio general del Servidor MCP (ozymem-mcp)
+        // General service row for the MCP Server (ozymem-mcp)
         let mcp_pid_file = home_dir.join(".ozymem-mcp.pid");
         let mcp_log_file = home_dir.join(".ozymem-mcp.log");
         let mut mcp_estado = "INACTIVO".to_string();
@@ -1636,7 +1621,6 @@ async fn print_status(context: &AppContext, json_output: bool) -> anyhow::Result
                         mcp_ultima_bitacora = get_last_log_line(&mcp_log_file);
                     } else {
                         mcp_estado = "TUMBADO".to_string();
-                        // Zombie PID auto-cleanup
                         let _ = std::fs::remove_file(&mcp_pid_file);
                         let last_line = get_last_log_line(&mcp_log_file);
                         mcp_ultima_bitacora = if last_line == "Watcher no inicializado." || last_line == "Bitacora vacia." || last_line == "Servidor no inicializado." {
@@ -1650,7 +1634,6 @@ async fn print_status(context: &AppContext, json_output: bool) -> anyhow::Result
         }
         
         println!("| {:<15} | {:<40} | {:<21} | {:<59} |", "ozymem-mcp", "Servidor Global de Red / Stdio", mcp_estado, mcp_ultima_bitacora);
-        
         println!("+-----------------+------------------------------------------+-----------------------+-------------------------------------------------------------+");
     }
 
@@ -2522,8 +2505,8 @@ async fn run_watch(context: &AppContext, target_path: &str, force: bool) -> anyh
      };
 
     use notify::Watcher;
-    watcher.watch(Path::new(target_path), notify::RecursiveMode::Recursive)?;
-    eprintln!("[WATCHER] Vigilando cambios reactivamente en: {}...", target_path);
+    watcher.watch(&canonical_target, notify::RecursiveMode::Recursive)?;
+    eprintln!("[WATCHER] Vigilando cambios reactivamente en: {}...", canonical_target.display());
 
     // 4. Bucle reactivo de eventos
     for res in rx {
@@ -2995,7 +2978,6 @@ fn is_garbage_file(path: &Path) -> bool {
 }
 
 fn run_start(path_arg: Option<String>, force: bool) -> anyhow::Result<()> {
-    let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let target_path = path_arg.unwrap_or_else(|| ".".to_string());
     
     // Authorization Check
@@ -3011,45 +2993,67 @@ fn run_start(path_arg: Option<String>, force: bool) -> anyhow::Result<()> {
     // Get project identifier
     let (project_name, _) = get_project_identifier(&target_path)?;
 
-    let pid_file = home_dir.join(format!(".ozymem-{}.pid", project_name));
-    if pid_file.exists() {
-        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-            if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                if is_pid_alive(pid) {
-                    println!("[INFO] El watcher para '{}' ya se encuentra activo (PID: {}).", project_name, pid);
-                    return Ok(());
+    // Send wake command to daemon socket
+    let clean_path_str = clean_path(&canonical);
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(async {
+        match send_daemon_command_cli(&serde_json::json!({
+            "action": "wake",
+            "project_name": project_name,
+            "project_path": clean_path_str
+        })).await {
+            Ok(res) => {
+                println!("[SUCCESS] Daemon despertó el proyecto con éxito: {}", serde_json::to_string_pretty(&res).unwrap_or_default());
+            }
+            Err(e) => {
+                println!("[WARNING] No se pudo conectar al daemon central (¿está encendido?). Detalle: {e}");
+                println!("[INFO] Arrancando watcher en modo fallback heredado local...");
+                
+                // Fallback watcher code...
+                let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                let pid_file = home_dir.join(format!(".ozymem-{}.pid", project_name));
+                if pid_file.exists() {
+                    if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+                        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                            if is_pid_alive(pid) {
+                                println!("[INFO] El watcher para '{}' ya se encuentra activo (PID: {}).", project_name, pid);
+                                return;
+                            }
+                        }
+                    }
                 }
+
+                let exe_path = std::env::current_exe().unwrap();
+                let mut cmd = std::process::Command::new(exe_path);
+                cmd.arg("watch").arg(&target_path);
+                if force {
+                    cmd.arg("--force");
+                }
+
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+
+                let log_path = home_dir.join(format!(".ozymem-{}.log", project_name));
+                let log_file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path).unwrap();
+                let stdout_file = log_file.try_clone().unwrap();
+                let stderr_file = log_file.try_clone().unwrap();
+                cmd.stdout(stdout_file);
+                cmd.stderr(stderr_file);
+
+                let child = cmd.spawn().unwrap();
+                let pid = child.id();
+                let _ = std::fs::write(&pid_file, pid.to_string());
+                println!("[SUCCESS] Watcher para '{}' iniciado en segundo plano (PID: {}).", project_name, pid);
             }
         }
-    }
+    });
 
-    let exe_path = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(exe_path);
-    cmd.arg("watch").arg(&target_path);
-    if force {
-        cmd.arg("--force");
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-
-    let log_path = home_dir.join(format!(".ozymem-{}.log", project_name));
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
-    let stdout_file = log_file.try_clone()?;
-    let stderr_file = log_file.try_clone()?;
-    cmd.stdout(stdout_file);
-    cmd.stderr(stderr_file);
-
-    let child = cmd.spawn()?;
-    let pid = child.id();
-    std::fs::write(&pid_file, pid.to_string())?;
-    println!("[SUCCESS] Watcher para '{}' iniciado en segundo plano de forma exitosa (PID: {}).", project_name, pid);
     Ok(())
 }
 
@@ -3058,20 +3062,10 @@ fn check_directory_authorized(target_path: &str) -> anyhow::Result<()> {
     let clean_target = clean_path(&canonical_target);
     let clean_target_lower = clean_target.to_lowercase();
     
-    let (_, config) = load_config()?;
+    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+    let project = reg.get_project_by_path(&clean_target_lower)?;
     
-    let mut is_authorized = false;
-    for (_, registered_path_str) in &config.projects {
-        if let Ok(reg_path_buf) = PathBuf::from(registered_path_str).canonicalize() {
-            let clean_reg_path_lower = clean_path(&reg_path_buf).to_lowercase();
-            if clean_target_lower == clean_reg_path_lower {
-                is_authorized = true;
-                break;
-            }
-        }
-    }
-    
-    if !is_authorized {
+    if project.is_none() {
         return Err(anyhow::anyhow!(
             "Error: Este directorio no está registrado en ozymem. Ejecuta 'ozymem register' primero para autorizarlo."
         ));
@@ -3096,11 +3090,10 @@ fn run_register(name_arg: Option<String>) -> anyhow::Result<()> {
         }
     };
 
-    let (config_path, mut config) = load_config()?;
-    config.projects.insert(name.clone(), cleaned_path.clone());
-    save_config(&config_path, &config)?;
+    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+    let project = reg.register(&name, &cleaned_path)?;
 
-    println!("[SUCCESS] Proyecto '{}' registrado en {}", name, cleaned_path);
+    println!("[SUCCESS] Proyecto '{}' registrado en registry.db en {}", project.name, project.path);
     Ok(())
 }
 
@@ -3229,8 +3222,9 @@ async fn run_deregister(name_arg: Option<String>) -> anyhow::Result<()> {
 }
 
 fn run_list() -> anyhow::Result<()> {
-    let (_, config) = load_config()?;
-    if config.projects.is_empty() {
+    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+    let projects = reg.list_projects()?;
+    if projects.is_empty() {
         println!("[INFO] No hay proyectos registrados todavía. Usa 'ozymem register' para registrar uno.");
         return Ok(());
     }
@@ -3238,8 +3232,8 @@ fn run_list() -> anyhow::Result<()> {
     println!("+---------------------------+------------------------------------------------------------+");
     println!("| Nombre del Proyecto       | Ruta Registrada                                            |");
     println!("+---------------------------+------------------------------------------------------------+");
-    for (name, path) in &config.projects {
-        println!("| {:<25} | {:<58} |", name, path);
+    for p in &projects {
+        println!("| {:<25} | {:<58} |", p.name, p.path);
     }
     println!("+---------------------------+------------------------------------------------------------+");
     Ok(())
@@ -3253,19 +3247,10 @@ fn run_stop(project_arg: Option<String>) -> anyhow::Result<()> {
         None => {
             let current_dir = std::env::current_dir()?;
             let cleaned_curr = clean_path(&current_dir.canonicalize()?);
-            let mut found_name = None;
-            if let Ok((_, config)) = load_config() {
-                for (name, registered_path_str) in &config.projects {
-                    if let Ok(reg_path_buf) = PathBuf::from(registered_path_str).canonicalize() {
-                        if clean_path(&reg_path_buf) == cleaned_curr {
-                            found_name = Some(name.clone());
-                            break;
-                        }
-                    }
-                }
-            }
-            match found_name {
-                Some(name) => name,
+            let reg = ozymem_core::registry::ProjectRegistry::open()?;
+            let found = reg.get_project_by_path(&cleaned_curr)?;
+            match found {
+                Some(p) => p.name,
                 None => {
                     let global_pid = home_dir.join(".ozymem.pid");
                     if global_pid.exists() {
@@ -3283,19 +3268,41 @@ fn run_stop(project_arg: Option<String>) -> anyhow::Result<()> {
         }
     };
 
-    let pid_file = home_dir.join(format!(".ozymem-{}.pid", project_name));
-    if !pid_file.exists() {
-        println!("[ERROR] No se encontró ningún proceso activo para el proyecto '{}'.", project_name);
-        return Ok(());
+    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+    let project = reg.get_project_by_name(&project_name)?;
+    
+    match project {
+        Some(p) => {
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(async {
+                match send_daemon_command_cli(&serde_json::json!({
+                    "action": "sleep",
+                    "project_name": p.name
+                })).await {
+                    Ok(res) => {
+                        println!("[SUCCESS] Daemon suspendió el proyecto '{}': {}", p.name, serde_json::to_string_pretty(&res).unwrap_or_default());
+                    }
+                    Err(e) => {
+                        println!("[WARNING] No se pudo enviar comando al daemon (¿está encendido?). Detalle: {e}");
+                        println!("[INFO] Intentando detener watcher local como fallback...");
+                        let pid_file = home_dir.join(format!(".ozymem-{}.pid", p.name));
+                        if pid_file.exists() {
+                            if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+                                let pid_str = pid_str.trim();
+                                let _ = std::process::Command::new("taskkill")
+                                    .args(&["/PID", pid_str, "/F"])
+                                    .status();
+                                let _ = std::fs::remove_file(&pid_file);
+                                println!("[SUCCESS] Watcher local detenido (PID: {}).", pid_str);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        None => println!("[ERROR] Proyecto '{}' no encontrado en el registro.", project_name)
     }
 
-    let pid_str = std::fs::read_to_string(&pid_file)?.trim().to_string();
-    let _ = std::process::Command::new("taskkill")
-        .args(&["/PID", &pid_str, "/F"])
-        .status()?;
-
-    let _ = std::fs::remove_file(&pid_file);
-    println!("[SUCCESS] Proceso del watcher para '{}' (PID: {}) detenido y limpiado.", project_name, pid_str);
     Ok(())
 }
 
@@ -4609,6 +4616,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
     } else {
         Vec::new()
     };
+    let mut last_db_mtime = db_path.metadata().ok().and_then(|m| m.modified().ok());
     
     let mut selected_index = 0;
     let mut scroll_offset = 0;
@@ -4632,10 +4640,12 @@ async fn run_dashboard() -> anyhow::Result<()> {
     let mut status_message = "Bienvenido a OzyMem Dashboard! Pulse 1, 2 o 3 para navegar por pestañas.".to_string();
     
     // Initial fetches
-    if let Ok((_, config)) = load_config() {
-        let mut projs: Vec<(String, String)> = config.projects.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        projs.sort_by(|a, b| a.0.cmp(&b.0));
-        sorted_projects = projs;
+    if let Ok(reg) = ozymem_core::registry::ProjectRegistry::open() {
+        if let Ok(projects) = reg.list_projects() {
+            let mut projs: Vec<(String, String)> = projects.into_iter().map(|p| (p.name, p.path)).collect();
+            projs.sort_by(|a, b| a.0.cmp(&b.0));
+            sorted_projects = projs;
+        }
     }
     
     // Helper function to load selected project logs
@@ -4695,6 +4705,21 @@ async fn run_dashboard() -> anyhow::Result<()> {
     };
     
     loop {
+        // Auto-reload de vectors.json si hay cambios en disco
+        if let Ok(metadata) = std::fs::metadata(&db_path) {
+            if let Ok(mtime) = metadata.modified() {
+                if Some(mtime) != last_db_mtime {
+                    last_db_mtime = Some(mtime);
+                    if let Ok(data) = std::fs::read_to_string(&db_path) {
+                        if let Ok(parsed) = serde_json::from_str::<Vec<crate::mcp::VectorRecord>>(&data) {
+                            records = parsed;
+                            status_message = "Recuerdos vectoriales actualizados automáticamente.".to_string();
+                        }
+                    }
+                }
+            }
+        }
+
         // Filter records by search query and schema_version == 1
         let filtered_records: Vec<&crate::mcp::VectorRecord> = records.iter()
             .filter(|r| r.schema_version == 1)
@@ -5178,6 +5203,9 @@ async fn run_dashboard() -> anyhow::Result<()> {
         // 4. Event loop poll
         if crossterm::event::poll(std::time::Duration::from_millis(100))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    continue;
+                }
                 if prune_confirm {
                     match key.code {
                         crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') => {
@@ -5509,5 +5537,23 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ra
         ])
         .split(popup_layout[1])[1]
 }
+
+/// Helper function to send commands to the central Go daemon over the TCP socket.
+async fn send_daemon_command_cli(cmd: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    use tokio::net::TcpStream;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    
+    let mut stream = TcpStream::connect("127.0.0.1:17399").await?;
+    let payload = format!("{}\n", serde_json::to_string(cmd)?);
+    stream.write_all(payload.as_bytes()).await?;
+    stream.flush().await?;
+    
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+    let response: serde_json::Value = serde_json::from_str(&line)?;
+    Ok(response)
+}
+
 
 
