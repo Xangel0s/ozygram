@@ -4553,6 +4553,13 @@ async fn run_dashboard() -> anyhow::Result<()> {
         Terminal,
     };
 
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum ActiveTab {
+        Memories,
+        SystemStatus,
+        GraphPRs,
+    }
+
     // 1. Setup terminal raw mode
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
@@ -4578,7 +4585,14 @@ async fn run_dashboard() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     
-    // 2. Load vectors from vectors.json
+    // 2. Setup backend connection
+    let connection = build_backend_client().await?;
+    let display_uri = connection.display_uri();
+    
+    // 3. Application State variables
+    let mut active_tab = ActiveTab::Memories;
+    
+    // Tab 1: Memories state
     let project_path = if let Ok(cwd) = std::env::current_dir() {
         cwd.to_string_lossy().to_string()
     } else {
@@ -4600,9 +4614,85 @@ async fn run_dashboard() -> anyhow::Result<()> {
     let mut scroll_offset = 0;
     let mut search_query = String::new();
     let mut input_mode = false;
-    let mut status_message = "Bienvenido a OzyMem Dashboard! Presione 's' para buscar, 'f' para olvidar, 'p' para depurar huérfanos.".to_string();
     let mut prune_confirm = false;
     let mut prune_list: Vec<String> = Vec::new();
+    
+    // Tab 2: System Status & Watchers state
+    let mut status_ping_ok = Some(connection.ping().await.is_ok());
+    let mut sorted_projects: Vec<(String, String)> = Vec::new();
+    let mut selected_project_idx = 0;
+    let mut log_lines: Vec<String> = Vec::new();
+    
+    // Tab 3: Graph PRs state
+    let mut gpr_list: Vec<ozymem_core::GprRecord> = Vec::new();
+    let mut selected_gpr_idx = 0;
+    let mut active_gpr_details: Option<(String, String, Vec<FileDefinitionMap>, Vec<LessonRecord>)> = None;
+    let mut gpr_scroll_offset = 0;
+    
+    let mut status_message = "Bienvenido a OzyMem Dashboard! Pulse 1, 2 o 3 para navegar por pestañas.".to_string();
+    
+    // Initial fetches
+    if let Ok((_, config)) = load_config() {
+        let mut projs: Vec<(String, String)> = config.projects.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        projs.sort_by(|a, b| a.0.cmp(&b.0));
+        sorted_projects = projs;
+    }
+    
+    // Helper function to load selected project logs
+    let load_current_project_logs = |sorted_projects: &[(String, String)], idx: usize| -> Vec<String> {
+        if let Some((name, _)) = sorted_projects.get(idx) {
+            let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let log_file = home_dir.join(format!(".ozymem-{}.log", name));
+            if log_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(&log_file) {
+                    let mut lines = content.lines()
+                        .rev()
+                        .take(50)
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+                    lines.reverse();
+                    return lines;
+                }
+            }
+        }
+        vec!["No se encontraron bitacoras para este proyecto.".to_string()]
+    };
+    
+    if !sorted_projects.is_empty() {
+        log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
+    }
+    
+    // Helper function to fetch GPR details
+    let fetch_gpr_details_sync = |connection: &BackendClient, gpr_id: i64| -> Option<(String, String, Vec<FileDefinitionMap>, Vec<LessonRecord>)> {
+        // We can execute this synchronously inside event loop / drawer
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            match &connection.mode {
+                BackendMode::Local(conn) => {
+                    conn.get_gpr_diff("local", gpr_id).await.ok().flatten()
+                }
+                BackendMode::Remote { url, token, client } => {
+                    if let Ok(resp) = client.get(format!("{}/api/gpr/diff", url))
+                        .header("Authorization", format!("Bearer {}", token))
+                        .query(&[("gpr_id", gpr_id)])
+                        .send()
+                        .await
+                    {
+                        if resp.status().is_success() {
+                            if let Ok(val) = resp.json::<serde_json::Value>().await {
+                                let message = val.get("message").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+                                let user = val.get("user").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+                                let files: Vec<FileDefinitionMap> = serde_json::from_value(val.get("files").cloned().unwrap_or(serde_json::Value::Array(vec![]))).unwrap_or_default();
+                                let lessons: Vec<LessonRecord> = serde_json::from_value(val.get("lessons").cloned().unwrap_or(serde_json::Value::Array(vec![]))).unwrap_or_default();
+                                return Some((message, user, files, lessons));
+                            }
+                        }
+                    }
+                    None
+                }
+            }
+        })
+    };
     
     loop {
         // Filter records by search query and schema_version == 1
@@ -4627,7 +4717,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
         terminal.draw(|f| {
             let size = f.size();
             
-            // Layout: Title (3 lines), Main (vertical split), Bottom stats/keys (4 lines)
+            // Layout: Title Block (3 lines), Main Area (flexible), Bottom Area (4 lines)
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -4637,141 +4727,366 @@ async fn run_dashboard() -> anyhow::Result<()> {
                 ])
                 .split(size);
                 
-            // 1. Title Block
-            let title_para = Paragraph::new(Line::from(vec![
-                Span::styled(" 🧠 OZYMEM ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::styled("INTELLIGENT HYBRID VECTOR STORE & AUDIT DASHBOARD ", Style::default().fg(Color::White)),
-                Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
-            ]))
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
-            f.render_widget(title_para, chunks[0]);
+            // 1. Title Block with Tabs (No Emojis)
+            let tabs_items = vec![
+                Line::from(" [1] Recuerdos "),
+                Line::from(" [2] Monitoreo y Watchers "),
+                Line::from(" [3] Graph PRs "),
+            ];
             
-            // 2. Main Area (Left: List, Right: Details)
-            let main_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(40),
-                    Constraint::Percentage(60),
-                ])
-                .split(chunks[1]);
-                
-            // 2a. Left: List of memories
-            let list_title = if search_query.is_empty() {
-                format!(" Recuerdos ({}) ", filtered_records.len())
-            } else {
-                format!(" Búsqueda: '{}' ({}) ", search_query, filtered_records.len())
+            let selected_tab_idx = match active_tab {
+                ActiveTab::Memories => 0,
+                ActiveTab::SystemStatus => 1,
+                ActiveTab::GraphPRs => 2,
             };
             
-            let list_block = Block::default()
-                .title(list_title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(if input_mode { Color::Yellow } else { Color::White }));
+            let header_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(45),
+                    Constraint::Percentage(55),
+                ])
+                .split(chunks[0]);
                 
-            let items: Vec<ListItem> = filtered_records.iter().enumerate().map(|(idx, r)| {
-                let symbol_name = r.id.split("::").last().unwrap_or(&r.id);
-                let base_name = std::path::Path::new(&r.source_path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(&r.source_path);
+            let title_para = Paragraph::new(Line::from(vec![
+                Span::styled(" OZYMEM ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("INTELLIGENT HYBRID VECTOR STORE ", Style::default().fg(Color::White)),
+                Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::DarkGray)),
+            ]))
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
+            f.render_widget(title_para, header_layout[0]);
+            
+            let tabs_widget = ratatui::widgets::Tabs::new(tabs_items)
+                .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)))
+                .select(selected_tab_idx)
+                .highlight_style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+            f.render_widget(tabs_widget, header_layout[1]);
+            
+            // 2. Main Area (Depends on Active Tab)
+            match active_tab {
+                ActiveTab::Memories => {
+                    let main_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(40),
+                            Constraint::Percentage(60),
+                        ])
+                        .split(chunks[1]);
+                        
+                    // 2a. Left: List of memories
+                    let list_title = if search_query.is_empty() {
+                        format!(" Recuerdos ({}) ", filtered_records.len())
+                    } else {
+                        format!(" Busqueda: '{}' ({}) ", search_query, filtered_records.len())
+                    };
                     
-                let bg_color = if idx == selected_index { Color::Rgb(30, 60, 90) } else { Color::Reset };
-                let is_selected_style = if idx == selected_index {
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                
-                let cat_color = match r.category.to_lowercase().as_str() {
-                    "lesson" => Color::LightRed,
-                    "fact" => Color::LightGreen,
-                    _ => Color::LightBlue,
-                };
-                
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!(" {:02} ", idx + 1), Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("{:<15} ", base_name), Style::default().fg(Color::Cyan)),
-                    Span::styled(format!(" [{}] ", r.category.to_uppercase()), Style::default().fg(cat_color)),
-                    Span::styled(symbol_name.to_string(), is_selected_style),
-                ]))
-                .style(Style::default().bg(bg_color))
-            }).collect();
-            
-            if items.is_empty() {
-                let empty_para = Paragraph::new("No se encontraron recuerdos en la base de datos.")
-                    .alignment(ratatui::layout::Alignment::Center)
-                    .block(list_block);
-                f.render_widget(empty_para, main_chunks[0]);
-            } else {
-                let mut list_state = ListState::default();
-                list_state.select(Some(selected_index));
-                let list_widget = List::new(items)
-                    .block(list_block)
-                    .highlight_symbol(">> ")
-                    .highlight_style(Style::default().fg(Color::Green).bg(Color::Rgb(30, 60, 90)));
-                f.render_stateful_widget(list_widget, main_chunks[0], &mut list_state);
-            }
-            
-            // 2b. Right: Details pane
-            let details_block = Block::default()
-                .title(" Detalles del Recuerdo ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White));
-                
-            if let Some(r) = filtered_records.get(selected_index) {
-                let mut details_text = Vec::new();
-                details_text.push(Line::from(vec![
-                    Span::styled("ID:          ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(r.id.clone(), Style::default().fg(Color::Yellow)),
-                ]));
-                details_text.push(Line::from(vec![
-                    Span::styled("Procedencia: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(r.source_path.clone(), Style::default().fg(Color::Cyan)),
-                ]));
-                
-                let cat_color = match r.category.to_lowercase().as_str() {
-                    "lesson" => Color::LightRed,
-                    "fact" => Color::LightGreen,
-                    _ => Color::LightBlue,
-                };
-                
-                details_text.push(Line::from(vec![
-                    Span::styled("Categoría:   ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(r.category.to_uppercase(), Style::default().fg(cat_color).add_modifier(Modifier::BOLD)),
-                    Span::styled("  |  Hits: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(r.hit_count.to_string(), Style::default().fg(Color::LightYellow)),
-                    Span::styled("  |  Esquema: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(r.schema_version.to_string(), Style::default().fg(Color::White)),
-                ]));
-                details_text.push(Line::from(vec![
-                    Span::styled("Fecha (Unix):", Style::default().fg(Color::DarkGray)),
-                    Span::styled(r.timestamp.to_string(), Style::default().fg(Color::White)),
-                ]));
-                if let Some(p_id) = &r.parent_id {
-                    details_text.push(Line::from(vec![
-                        Span::styled("Padre ID:    ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(p_id.clone(), Style::default().fg(Color::Magenta)),
+                    let list_block = Block::default()
+                        .title(list_title)
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(if input_mode { Color::Yellow } else { Color::White }));
+                        
+                    let items: Vec<ListItem> = filtered_records.iter().enumerate().map(|(idx, r)| {
+                        let symbol_name = r.id.split("::").last().unwrap_or(&r.id);
+                        let base_name = std::path::Path::new(&r.source_path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&r.source_path);
+                            
+                        let bg_color = if idx == selected_index { Color::Rgb(30, 60, 90) } else { Color::Reset };
+                        let is_selected_style = if idx == selected_index {
+                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        
+                        let cat_color = match r.category.to_lowercase().as_str() {
+                            "lesson" => Color::LightRed,
+                            "fact" => Color::LightGreen,
+                            _ => Color::LightBlue,
+                        };
+                        
+                        ListItem::new(Line::from(vec![
+                            Span::styled(format!(" {:02} ", idx + 1), Style::default().fg(Color::DarkGray)),
+                            Span::styled(format!("{:<15} ", base_name), Style::default().fg(Color::Cyan)),
+                            Span::styled(format!(" [{}] ", r.category.to_uppercase()), Style::default().fg(cat_color)),
+                            Span::styled(symbol_name.to_string(), is_selected_style),
+                        ]))
+                        .style(Style::default().bg(bg_color))
+                    }).collect();
+                    
+                    if items.is_empty() {
+                        let empty_para = Paragraph::new("No se encontraron recuerdos en la base de datos.")
+                            .alignment(ratatui::layout::Alignment::Center)
+                            .block(list_block);
+                        f.render_widget(empty_para, main_chunks[0]);
+                    } else {
+                        let mut list_state = ListState::default();
+                        list_state.select(Some(selected_index));
+                        let list_widget = List::new(items)
+                            .block(list_block)
+                            .highlight_symbol(">> ")
+                            .highlight_style(Style::default().fg(Color::Green).bg(Color::Rgb(30, 60, 90)));
+                        f.render_stateful_widget(list_widget, main_chunks[0], &mut list_state);
+                    }
+                    
+                    // 2b. Right: Details pane
+                    let details_block = Block::default()
+                        .title(" Detalles del Recuerdo ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::White));
+                        
+                    if let Some(r) = filtered_records.get(selected_index) {
+                        let mut details_text = Vec::new();
+                        details_text.push(Line::from(vec![
+                            Span::styled("ID:          ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(r.id.clone(), Style::default().fg(Color::Yellow)),
+                        ]));
+                        details_text.push(Line::from(vec![
+                            Span::styled("Procedencia: ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(r.source_path.clone(), Style::default().fg(Color::Cyan)),
+                        ]));
+                        
+                        let cat_color = match r.category.to_lowercase().as_str() {
+                            "lesson" => Color::LightRed,
+                            "fact" => Color::LightGreen,
+                            _ => Color::LightBlue,
+                        };
+                        
+                        details_text.push(Line::from(vec![
+                            Span::styled("Categoria:   ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(r.category.to_uppercase(), Style::default().fg(cat_color).add_modifier(Modifier::BOLD)),
+                            Span::styled("  |  Hits: ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(r.hit_count.to_string(), Style::default().fg(Color::LightYellow)),
+                            Span::styled("  |  Esquema: ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(r.schema_version.to_string(), Style::default().fg(Color::White)),
+                        ]));
+                        details_text.push(Line::from(vec![
+                            Span::styled("Fecha (Unix):", Style::default().fg(Color::DarkGray)),
+                            Span::styled(r.timestamp.to_string(), Style::default().fg(Color::White)),
+                        ]));
+                        if let Some(p_id) = &r.parent_id {
+                            details_text.push(Line::from(vec![
+                                Span::styled("Padre ID:    ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(p_id.clone(), Style::default().fg(Color::Magenta)),
+                            ]));
+                        }
+                        details_text.push(Line::from(""));
+                        details_text.push(Line::from(Span::styled("Contenido / Codigo:", Style::default().add_modifier(Modifier::UNDERLINED))));
+                        details_text.push(Line::from(""));
+                        
+                        for line_str in r.text.lines() {
+                            details_text.push(Line::from(line_str));
+                        }
+                        
+                        let para = Paragraph::new(details_text)
+                            .block(details_block)
+                            .scroll((scroll_offset, 0))
+                            .wrap(Wrap { trim: false });
+                            
+                        f.render_widget(para, main_chunks[1]);
+                    } else {
+                        let para = Paragraph::new("Selecciona un recuerdo para ver sus detalles.")
+                            .alignment(ratatui::layout::Alignment::Center)
+                            .block(details_block);
+                        f.render_widget(para, main_chunks[1]);
+                    }
+                }
+                ActiveTab::SystemStatus => {
+                    let main_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(40),
+                            Constraint::Percentage(60),
+                        ])
+                        .split(chunks[1]);
+                        
+                    // 2a. Left: List of projects
+                    let proj_block = Block::default()
+                        .title(" Proyectos Configurados ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::White));
+                        
+                    let items: Vec<ListItem> = sorted_projects.iter().enumerate().map(|(idx, (name, path))| {
+                        let bg_color = if idx == selected_project_idx { Color::Rgb(30, 60, 90) } else { Color::Reset };
+                        let is_selected_style = if idx == selected_project_idx {
+                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        
+                        ListItem::new(Line::from(vec![
+                            Span::styled(format!(" {:02} ", idx + 1), Style::default().fg(Color::DarkGray)),
+                            Span::styled(format!("{:<15} ", name), is_selected_style),
+                            Span::styled(path.clone(), Style::default().fg(Color::DarkGray)),
+                        ]))
+                        .style(Style::default().bg(bg_color))
+                    }).collect();
+                    
+                    if items.is_empty() {
+                        let empty_para = Paragraph::new("No hay proyectos registrados en ozymem.toml")
+                            .alignment(ratatui::layout::Alignment::Center)
+                            .block(proj_block);
+                        f.render_widget(empty_para, main_chunks[0]);
+                    } else {
+                        let mut list_state = ListState::default();
+                        list_state.select(Some(selected_project_idx));
+                        let list_widget = List::new(items)
+                            .block(proj_block)
+                            .highlight_symbol(">> ")
+                            .highlight_style(Style::default().fg(Color::Green).bg(Color::Rgb(30, 60, 90)));
+                        f.render_stateful_widget(list_widget, main_chunks[0], &mut list_state);
+                    }
+                    
+                    // 2b. Right: Connection details and log tail
+                    let logs_block = Block::default()
+                        .title(" Monitoreo y Logs en Vivo ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::White));
+                        
+                    let mut status_lines = Vec::new();
+                    status_lines.push(Line::from(vec![
+                        Span::styled("Memgraph DB URL:  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(display_uri.clone(), Style::default().fg(Color::Cyan)),
                     ]));
-                }
-                details_text.push(Line::from(""));
-                details_text.push(Line::from(Span::styled("Contenido / Código:", Style::default().add_modifier(Modifier::UNDERLINED))));
-                details_text.push(Line::from(""));
-                
-                // Add the text lines
-                for line_str in r.text.lines() {
-                    details_text.push(Line::from(line_str));
-                }
-                
-                let para = Paragraph::new(details_text)
-                    .block(details_block)
-                    .scroll((scroll_offset, 0))
-                    .wrap(Wrap { trim: false });
                     
-                f.render_widget(para, main_chunks[1]);
-            } else {
-                let para = Paragraph::new("Selecciona un recuerdo para ver sus detalles.")
-                    .alignment(ratatui::layout::Alignment::Center)
-                    .block(details_block);
-                f.render_widget(para, main_chunks[1]);
+                    let ping_style = match status_ping_ok {
+                        Some(true) => Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+                        Some(false) => Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD),
+                        None => Style::default().fg(Color::DarkGray),
+                    };
+                    let ping_text = match status_ping_ok {
+                        Some(true) => "ACTIVO / RESPONDIENDO PING",
+                        Some(false) => "INACTIVO / SIN CONEXION",
+                        None => "CARGANDO...",
+                    };
+                    status_lines.push(Line::from(vec![
+                        Span::styled("Estado Conexion:  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(ping_text, ping_style),
+                    ]));
+                    status_lines.push(Line::from(""));
+                    status_lines.push(Line::from(Span::styled("Ultimas 50 lineas de Bitacora:", Style::default().add_modifier(Modifier::UNDERLINED))));
+                    status_lines.push(Line::from(""));
+                    
+                    for line_str in &log_lines {
+                        status_lines.push(Line::from(line_str.as_str()));
+                    }
+                    
+                    let para = Paragraph::new(status_lines)
+                        .block(logs_block)
+                        .wrap(Wrap { trim: false });
+                    f.render_widget(para, main_chunks[1]);
+                }
+                ActiveTab::GraphPRs => {
+                    let main_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([
+                            Constraint::Percentage(40),
+                            Constraint::Percentage(60),
+                        ])
+                        .split(chunks[1]);
+                        
+                    // 2a. Left: List of Graph PRs
+                    let gpr_block = Block::default()
+                        .title(format!(" Graph Pull Requests ({}) ", gpr_list.len()))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::White));
+                        
+                    let items: Vec<ListItem> = gpr_list.iter().enumerate().map(|(idx, gpr)| {
+                        let bg_color = if idx == selected_gpr_idx { Color::Rgb(30, 60, 90) } else { Color::Reset };
+                        let is_selected_style = if idx == selected_gpr_idx {
+                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        
+                        ListItem::new(Line::from(vec![
+                            Span::styled(format!(" GPR #{} ", gpr.id), is_selected_style),
+                            Span::styled(format!(" ({}) ", gpr.user), Style::default().fg(Color::DarkGray)),
+                            Span::styled(gpr.message.clone(), Style::default().fg(Color::Cyan)),
+                        ]))
+                        .style(Style::default().bg(bg_color))
+                    }).collect();
+                    
+                    if items.is_empty() {
+                        let empty_para = Paragraph::new("No hay Graph PRs pendientes de fusionar.")
+                            .alignment(ratatui::layout::Alignment::Center)
+                            .block(gpr_block);
+                        f.render_widget(empty_para, main_chunks[0]);
+                    } else {
+                        let mut list_state = ListState::default();
+                        list_state.select(Some(selected_gpr_idx));
+                        let list_widget = List::new(items)
+                            .block(gpr_block)
+                            .highlight_symbol(">> ")
+                            .highlight_style(Style::default().fg(Color::Green).bg(Color::Rgb(30, 60, 90)));
+                        f.render_stateful_widget(list_widget, main_chunks[0], &mut list_state);
+                    }
+                    
+                    // 2b. Right: GPR Diff view
+                    let diff_block = Block::default()
+                        .title(" Auditoria de Cambios del GPR ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::White));
+                        
+                    if let Some((msg, user, files, lessons)) = &active_gpr_details {
+                        let mut details_text = Vec::new();
+                        details_text.push(Line::from(vec![
+                            Span::styled("GPR:         ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(msg.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                        ]));
+                        details_text.push(Line::from(vec![
+                            Span::styled("Autor:       ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(user.clone(), Style::default().fg(Color::White)),
+                        ]));
+                        details_text.push(Line::from(""));
+                        details_text.push(Line::from(Span::styled("Archivos Propuestos:", Style::default().add_modifier(Modifier::UNDERLINED))));
+                        
+                        for file in files {
+                            details_text.push(Line::from(vec![
+                                Span::styled("  - ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(file.file_path.clone(), Style::default().fg(Color::Cyan)),
+                                Span::styled(format!(" ({})", file.language), Style::default().fg(Color::Gray)),
+                            ]));
+                            for symbol in &file.functions {
+                                details_text.push(Line::from(vec![
+                                    Span::styled("      * ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(symbol.name.clone(), Style::default().fg(Color::White)),
+                                    Span::styled(format!(" [{:?}] lineas {}-{}", symbol.kind, symbol.start_line, symbol.end_line), Style::default().fg(Color::DarkGray)),
+                                ]));
+                            }
+                        }
+                        
+                        if !lessons.is_empty() {
+                            details_text.push(Line::from(""));
+                            details_text.push(Line::from(Span::styled("Lecciones Asociadas:", Style::default().add_modifier(Modifier::UNDERLINED))));
+                            for lesson in lessons {
+                                details_text.push(Line::from(vec![
+                                    Span::styled("  - Archivo: ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(lesson.file_path.clone(), Style::default().fg(Color::White)),
+                                ]));
+                                details_text.push(Line::from(vec![
+                                    Span::styled("    Error:   ", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(lesson.error_type.clone(), Style::default().fg(Color::LightRed)),
+                                ]));
+                                details_text.push(Line::from(vec![
+                                    Span::styled("    Solucion:", Style::default().fg(Color::DarkGray)),
+                                    Span::styled(lesson.solution.clone(), Style::default().fg(Color::LightGreen)),
+                                ]));
+                            }
+                        }
+                        
+                        let para = Paragraph::new(details_text)
+                            .block(diff_block)
+                            .scroll((gpr_scroll_offset, 0))
+                            .wrap(Wrap { trim: false });
+                        f.render_widget(para, main_chunks[1]);
+                    } else {
+                        let para = Paragraph::new("Selecciona un GPR para auditar sus cambios.")
+                            .alignment(ratatui::layout::Alignment::Center)
+                            .block(diff_block);
+                        f.render_widget(para, main_chunks[1]);
+                    }
+                }
             }
             
             // 3. Stats / Controls Block
@@ -4785,11 +5100,14 @@ async fn run_dashboard() -> anyhow::Result<()> {
                 
             let stats_block = Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray));
             
-            // Keyboard shortcut instructions
             let input_info = if input_mode {
-                format!("BUSCAR (Escribe texto y pulsa Enter): {}", search_query)
+                format!("BUSCAR (Escribe y pulsa Enter): {}", search_query)
             } else {
-                "[q] Salir  [s] Buscar  [f] Olvidar  [p] Depurar  [Esc] Limpiar  [,] Subir  [.] Bajar".to_string()
+                match active_tab {
+                    ActiveTab::Memories => "[q] Salir  [Tab] Ciclador  [s] Buscar  [f] Olvidar  [p] Depurar  [Esc] Limpiar  [,] Subir  [.] Bajar".to_string(),
+                    ActiveTab::SystemStatus => "[q] Salir  [Tab] Ciclador  [r] Recargar Logs  [↑/↓] Navegar proyectos".to_string(),
+                    ActiveTab::GraphPRs => "[q] Salir  [Tab] Ciclador  [m] Fusionar GPR  [r] Recargar Lista  [,] Subir  [.] Bajar".to_string(),
+                }
             };
             
             let input_style = if input_mode {
@@ -4805,7 +5123,6 @@ async fn run_dashboard() -> anyhow::Result<()> {
             .block(stats_block.clone().title(" Atajos y Estatus "));
             f.render_widget(cmd_para, stats_chunks[0]);
             
-            // Total stats breakdown
             let total_hits: i64 = records.iter().map(|r| r.hit_count).sum();
             let num_lessons = records.iter().filter(|r| r.category.eq_ignore_ascii_case("lesson")).count();
             let num_facts = records.iter().filter(|r| r.category.eq_ignore_ascii_case("fact")).count();
@@ -4829,29 +5146,28 @@ async fn run_dashboard() -> anyhow::Result<()> {
             ];
             
             let stats_para = Paragraph::new(stats_lines)
-                .block(stats_block.title(" Métricas de Memoria "));
+                .block(stats_block.title(" Metricas de Memoria "));
             f.render_widget(stats_para, stats_chunks[1]);
             
-            // Render Prune confirmation popup if active
             if prune_confirm {
                 let block = Block::default()
-                    .title(" Depuración de Huérfanos ")
+                    .title(" Depuracion de Huerfanos ")
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::LightRed));
                     
                 let text = vec![
-                    Line::from(format!("Se han detectado {} recuerdos huérfanos.", prune_list.len())),
+                    Line::from(format!("Se han detectado {} recuerdos huerfanos.", prune_list.len())),
                     Line::from("¿Deseas eliminarlos de forma definitiva?"),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled(" [y] Sí, aplicar depuración ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
+                        Span::styled(" [y] Si, aplicar depuracion ", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)),
                         Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
                         Span::styled(" [n] Cancelar ", Style::default().fg(Color::White)),
                     ]),
                 ];
                 
                 let area = centered_rect(60, 25, size);
-                f.render_widget(Clear, area); // Clear the area before rendering the popup
+                f.render_widget(Clear, area);
                 let popup_para = Paragraph::new(text)
                     .block(block)
                     .alignment(ratatui::layout::Alignment::Center);
@@ -4859,7 +5175,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
             }
         })?;
         
-        // 3. Event Loop poll
+        // 4. Event loop poll
         if crossterm::event::poll(std::time::Duration::from_millis(100))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
                 if prune_confirm {
@@ -4868,14 +5184,14 @@ async fn run_dashboard() -> anyhow::Result<()> {
                             records.retain(|r| !prune_list.contains(&r.id));
                             if let Ok(serialized) = serde_json::to_string_pretty(&records) {
                                 let _ = std::fs::write(&db_path, serialized);
-                                status_message = format!("Depuración ejecutada. {} recuerdos eliminados.", prune_list.len());
+                                status_message = format!("Depuracion ejecutada. {} recuerdos eliminados.", prune_list.len());
                             } else {
                                 status_message = "Error al guardar los cambios en vectors.json".to_string();
                             }
                             prune_confirm = false;
                         }
                         _ => {
-                            status_message = "Depuración cancelada.".to_string();
+                            status_message = "Depuracion cancelada.".to_string();
                             prune_confirm = false;
                         }
                     }
@@ -4887,12 +5203,12 @@ async fn run_dashboard() -> anyhow::Result<()> {
                         crossterm::event::KeyCode::Enter => {
                             input_mode = false;
                             selected_index = 0;
-                            status_message = format!("Búsqueda aplicada: '{}'", search_query);
+                            status_message = format!("Busqueda aplicada: '{}'", search_query);
                         }
                         crossterm::event::KeyCode::Esc => {
                             input_mode = false;
                             search_query.clear();
-                            status_message = "Búsqueda cancelada.".to_string();
+                            status_message = "Busqueda cancelada.".to_string();
                         }
                         crossterm::event::KeyCode::Backspace => {
                             search_query.pop();
@@ -4907,54 +5223,217 @@ async fn run_dashboard() -> anyhow::Result<()> {
                         crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Esc => {
                             break;
                         }
+                        crossterm::event::KeyCode::Tab => {
+                            active_tab = match active_tab {
+                                ActiveTab::Memories => ActiveTab::SystemStatus,
+                                ActiveTab::SystemStatus => ActiveTab::GraphPRs,
+                                ActiveTab::GraphPRs => ActiveTab::Memories,
+                            };
+                            status_message = format!("Pestana activa: {:?}", active_tab);
+                            
+                            // Load corresponding data on tab switch
+                            if active_tab == ActiveTab::SystemStatus {
+                                status_ping_ok = Some(connection.ping().await.is_ok());
+                                if !sorted_projects.is_empty() {
+                                    log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
+                                }
+                            } else if active_tab == ActiveTab::GraphPRs {
+                                gpr_list = fetch_gprs(&connection).await;
+                                if !gpr_list.is_empty() {
+                                    selected_gpr_idx = 0;
+                                    active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[0].id);
+                                } else {
+                                    active_gpr_details = None;
+                                }
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('1') => {
+                            active_tab = ActiveTab::Memories;
+                            status_message = "Pestana activa: Recuerdos".to_string();
+                        }
+                        crossterm::event::KeyCode::Char('2') => {
+                            active_tab = ActiveTab::SystemStatus;
+                            status_message = "Pestana activa: Monitoreo y Watchers".to_string();
+                            status_ping_ok = Some(connection.ping().await.is_ok());
+                            if !sorted_projects.is_empty() {
+                                log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('3') => {
+                            active_tab = ActiveTab::GraphPRs;
+                            status_message = "Pestana activa: Graph PRs".to_string();
+                            gpr_list = fetch_gprs(&connection).await;
+                            if !gpr_list.is_empty() {
+                                selected_gpr_idx = 0;
+                                active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[0].id);
+                            } else {
+                                active_gpr_details = None;
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('r') | crossterm::event::KeyCode::Char('R') => {
+                            match active_tab {
+                                ActiveTab::Memories => {
+                                    if db_path.exists() {
+                                        if let Ok(data) = std::fs::read_to_string(&db_path) {
+                                            records = serde_json::from_str(&data).unwrap_or_default();
+                                            status_message = "Recuerdos vectoriales recargados.".to_string();
+                                        }
+                                    }
+                                }
+                                ActiveTab::SystemStatus => {
+                                    status_ping_ok = Some(connection.ping().await.is_ok());
+                                    if !sorted_projects.is_empty() {
+                                        log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
+                                    }
+                                    status_message = "Monitoreo y logs actualizados.".to_string();
+                                }
+                                ActiveTab::GraphPRs => {
+                                    gpr_list = fetch_gprs(&connection).await;
+                                    if !gpr_list.is_empty() {
+                                        if selected_gpr_idx >= gpr_list.len() {
+                                            selected_gpr_idx = 0;
+                                        }
+                                        active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[selected_gpr_idx].id);
+                                    } else {
+                                        active_gpr_details = None;
+                                    }
+                                    status_message = "Listado de Graph PRs recargado.".to_string();
+                                }
+                            }
+                        }
                         crossterm::event::KeyCode::Up => {
-                            if selected_index > 0 {
-                                selected_index -= 1;
-                                scroll_offset = 0;
+                            match active_tab {
+                                ActiveTab::Memories => {
+                                    if selected_index > 0 {
+                                        selected_index -= 1;
+                                        scroll_offset = 0;
+                                    }
+                                }
+                                ActiveTab::SystemStatus => {
+                                    if selected_project_idx > 0 {
+                                        selected_project_idx -= 1;
+                                        log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
+                                    }
+                                }
+                                ActiveTab::GraphPRs => {
+                                    if selected_gpr_idx > 0 {
+                                        selected_gpr_idx -= 1;
+                                        gpr_scroll_offset = 0;
+                                        active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[selected_gpr_idx].id);
+                                    }
+                                }
                             }
                         }
                         crossterm::event::KeyCode::Down => {
-                            if selected_index + 1 < filtered_records.len() {
-                                selected_index += 1;
-                                scroll_offset = 0;
+                            match active_tab {
+                                ActiveTab::Memories => {
+                                    if selected_index + 1 < filtered_records.len() {
+                                        selected_index += 1;
+                                        scroll_offset = 0;
+                                    }
+                                }
+                                ActiveTab::SystemStatus => {
+                                    if selected_project_idx + 1 < sorted_projects.len() {
+                                        selected_project_idx += 1;
+                                        log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
+                                    }
+                                }
+                                ActiveTab::GraphPRs => {
+                                    if selected_gpr_idx + 1 < gpr_list.len() {
+                                        selected_gpr_idx += 1;
+                                        gpr_scroll_offset = 0;
+                                        active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[selected_gpr_idx].id);
+                                    }
+                                }
                             }
                         }
                         crossterm::event::KeyCode::Char(',') => {
-                            if scroll_offset > 0 {
-                                scroll_offset -= 1;
+                            match active_tab {
+                                ActiveTab::Memories => {
+                                    if scroll_offset > 0 {
+                                        scroll_offset -= 1;
+                                    }
+                                }
+                                ActiveTab::GraphPRs => {
+                                    if gpr_scroll_offset > 0 {
+                                        gpr_scroll_offset -= 1;
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         crossterm::event::KeyCode::Char('.') => {
-                            scroll_offset += 1;
+                            match active_tab {
+                                ActiveTab::Memories => {
+                                    scroll_offset += 1;
+                                }
+                                ActiveTab::GraphPRs => {
+                                    gpr_scroll_offset += 1;
+                                }
+                                _ => {}
+                            }
                         }
                         crossterm::event::KeyCode::Char('s') | crossterm::event::KeyCode::Char('S') => {
-                            input_mode = true;
-                            search_query.clear();
-                            status_message = "Escribe para buscar...".to_string();
+                            if active_tab == ActiveTab::Memories {
+                                input_mode = true;
+                                search_query.clear();
+                                status_message = "Escribe para buscar...".to_string();
+                            }
                         }
                         crossterm::event::KeyCode::Char('f') | crossterm::event::KeyCode::Char('F') => {
-                            if let Some(r) = filtered_records.get(selected_index) {
-                                let id_to_delete = r.id.clone();
-                                records.retain(|rec| rec.id != id_to_delete);
-                                if let Ok(serialized) = serde_json::to_string_pretty(&records) {
-                                    let _ = std::fs::write(&db_path, serialized);
-                                    status_message = format!("Olvidado: {}", id_to_delete);
-                                } else {
-                                    status_message = "Error al guardar cambios en vectors.json".to_string();
+                            if active_tab == ActiveTab::Memories {
+                                if let Some(r) = filtered_records.get(selected_index) {
+                                    let id_to_delete = r.id.clone();
+                                    records.retain(|rec| rec.id != id_to_delete);
+                                    if let Ok(serialized) = serde_json::to_string_pretty(&records) {
+                                        let _ = std::fs::write(&db_path, serialized);
+                                        status_message = format!("Olvidado: {}", id_to_delete);
+                                    } else {
+                                        status_message = "Error al guardar cambios en vectors.json".to_string();
+                                    }
                                 }
                             }
                         }
                         crossterm::event::KeyCode::Char('p') | crossterm::event::KeyCode::Char('P') => {
-                            prune_list.clear();
-                            for r in &records {
-                                if !std::path::Path::new(&r.source_path).exists() {
-                                    prune_list.push(r.id.clone());
+                            if active_tab == ActiveTab::Memories {
+                                prune_list.clear();
+                                for r in &records {
+                                    if !std::path::Path::new(&r.source_path).exists() {
+                                        prune_list.push(r.id.clone());
+                                    }
+                                }
+                                if prune_list.is_empty() {
+                                    status_message = "No se detectaron recuerdos huerfanos.".to_string();
+                                } else {
+                                    prune_confirm = true;
                                 }
                             }
-                            if prune_list.is_empty() {
-                                status_message = "No se detectaron recuerdos huérfanos.".to_string();
-                            } else {
-                                prune_confirm = true;
+                        }
+                        crossterm::event::KeyCode::Char('m') | crossterm::event::KeyCode::Char('M') => {
+                            if active_tab == ActiveTab::GraphPRs {
+                                if let Some(gpr) = gpr_list.get(selected_gpr_idx) {
+                                    let gpr_id = gpr.id;
+                                    let rt = tokio::runtime::Handle::current();
+                                    let merge_res = rt.block_on(async {
+                                        merge_gpr(&connection, gpr_id).await
+                                    });
+                                    match merge_res {
+                                        Ok(_) => {
+                                            status_message = format!("GPR #{} fusionado con exito.", gpr_id);
+                                            // Reload list
+                                            gpr_list = fetch_gprs(&connection).await;
+                                            if !gpr_list.is_empty() {
+                                                selected_gpr_idx = 0;
+                                                active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[0].id);
+                                            } else {
+                                                active_gpr_details = None;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            status_message = format!("Error al fusionar GPR: {:?}", e);
+                                        }
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -4965,6 +5444,49 @@ async fn run_dashboard() -> anyhow::Result<()> {
     }
     
     Ok(())
+}
+
+async fn fetch_gprs(connection: &BackendClient) -> Vec<ozymem_core::GprRecord> {
+    match &connection.mode {
+        BackendMode::Local(conn) => {
+            conn.get_pending_gprs("local").await.unwrap_or_default()
+        }
+        BackendMode::Remote { url, token, client } => {
+            if let Ok(resp) = client.get(format!("{}/api/gpr/list", url))
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    resp.json().await.unwrap_or_default()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+async fn merge_gpr(connection: &BackendClient, gpr_id: i64) -> anyhow::Result<()> {
+    match &connection.mode {
+        BackendMode::Local(conn) => {
+            conn.merge_gpr("local", gpr_id).await
+        }
+        BackendMode::Remote { url, token, client } => {
+            let resp = client.post(format!("{}/api/gpr/merge", url))
+                .header("Authorization", format!("Bearer {}", token))
+                .json(&serde_json::json!({ "gpr_id": gpr_id }))
+                .send()
+                .await?;
+            if resp.status().is_success() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Remote merge returned status {}", resp.status()))
+            }
+        }
+    }
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
@@ -4987,4 +5509,5 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ra
         ])
         .split(popup_layout[1])[1]
 }
+
 
