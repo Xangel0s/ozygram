@@ -90,15 +90,18 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Mostrar el estado logistico de Ozymem, incluyendo la tabla de watchers desde SQLite
     Status {
         #[arg(long)]
         json: bool,
     },
+    /// Ejecutar diagnosticos del entorno Ozymem (Memgraph, directorios y daemon)
     #[command(alias = "check")]
     Doctor {
         #[arg(long)]
         json: bool,
     },
+    /// Escanear un directorio local de manera sincrona e indexarlo en el grafo
     Scan {
         path: String,
 
@@ -108,6 +111,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Ver la base de lecciones aprendidas o errores corregidos
     Lessons {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
@@ -115,23 +119,29 @@ enum Commands {
         #[arg(long)]
         file: Option<String>,
     },
+    /// Mostrar el arbol de dependencias salientes de un archivo indexado
     Tree {
         file_path: String,
 
         #[arg(long, default_value_t = 2)]
         depth: u32,
     },
+    /// Analizar el impacto de cambios (quien depende de este archivo en reversa)
     Trace {
         file_path: String,
 
         #[arg(long, default_value_t = 2)]
         depth: u32,
     },
+    /// Actualizar e indexar cambios de archivos pendientes
     Update,
+    /// Configurar u obtener patrones de ignore (.ozymemignore)
     Ignore,
+    /// Limpiar simbolos y dependencias de un archivo
     Clean {
         path: Option<PathBuf>,
     },
+    /// Iniciar watcher local reactivo en primer plano sobre un directorio
     Watch {
         #[arg(default_value = ".")]
         path: String,
@@ -139,27 +149,34 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Despertar el proyecto en el daemon central (modo Fluido)
     Start {
         path: Option<String>,
 
         #[arg(long)]
         force: bool,
     },
+    /// Suspender o apagar un proyecto en el daemon central (modo Fluido)
     Stop {
         project: Option<String>,
     },
+    /// Ver las bitacoras en vivo de un proyecto o del watcher activo
     Logs {
         project: Option<String>,
     },
+    /// Registrar un nuevo proyecto y autorizar su ruta en el registro SQLite
     Register {
         name: Option<String>,
     },
+    /// Eliminar un proyecto del registro SQLite
     #[command(alias = "unregister", alias = "remove")]
     Deregister {
         name: Option<String>,
     },
+    /// Listar todos los proyectos registrados en registry.db
     #[command(alias = "projects")]
     List,
+    /// Inicializar credenciales y entornos locales de Ozymem
     Init,
     Mcp {
         #[command(subcommand)]
