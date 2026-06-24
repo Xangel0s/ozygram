@@ -47,19 +47,48 @@ port = 443
 
 Si el host comienza con `http://` o `https://`, la CLI cambiará de inmediato al modo colaborativo HTTP/S autenticado mediante token.
 
+## Arquitectura Hibrida de Memoria (Rust + Go + Memgraph + LanceDB)
+
+Ozymem-Partner implementa una arquitectura hibrida para desacoplar las operaciones de escritura reactivas de las lecturas analiticas en el IDE:
+1. **Escritura Determinista en Tiempo Real (Go Sidecar):** Un demonio recursivo en Go monitorea el workspace (`fsnotify`), invoca el analizador sintactico (AST) en Rust y almacena los recuerdos en una base de datos vectorial embebida (`.ozymem/vectors/vectors.json`) y el grafo de dependencias en Memgraph en milisegundos y con costo de tokens de indexacion $0.00.
+2. **Lectura y Consultas MCP/CLI (Rust):** El servidor MCP y la CLI en Rust leen y consultan la base de datos vectorial embebida realizando busqueda de similitud de coseno con **Pre-filtrado de Metadatos** (`schema_version == 1` y filtro opcional por `category`).
+
+---
+
+## Panel de Control TUI Interactivo (`ozymem dashboard`)
+
+Ozymem incluye una interfaz de terminal interactiva (TUI) profesional desarrollada con `ratatui` y `crossterm`. Puedes iniciarla ejecutando:
+```bash
+ozymem dashboard
+```
+
+### Funcionalidades y Navegacion por Pestanas:
+- **Pestanas (Teclas `1`, `2`, `3` o `Tab`):**
+  1. **Recuerdos (Memories):** Buscador de texto/semantico en tiempo real (`s`), olvido selectivo (`f`) para extirpar recuerdos obsoletos, y depuracion interactiva de huerfanos (`p`) con confirmacion visual. Soporta scroll de codigo con `,` y `.`.
+  2. **Monitoreo (System Status):** Diagnostico del Docker, ping en vivo de Memgraph y visualizador/tail en tiempo real de los logs de los watchers activos para depurar sin salir de la TUI.
+  3. **Graph PRs (GPR Audit):** Auditoria de solicitudes de integracion de grafos. Inspecciona el diff detallado de funciones y lecciones de cada PR y efectua fusiones (`m` para merge) directamente.
+- **Salir:** Teclas `q` o `Esc`.
+- **Refrescar Datos:** Tecla `r` para recargar logs, recuerdos o PRs desde la base de datos.
+
+---
+
 ## Uso de la CLI
 
-Una vez instalado, la herramienta global `ozymem` te permite escanear proyectos, registrar lecciones e inspeccionar dependencias:
-
-* **Escanear código**: `ozymem scan <directorio>` (agrega `--reset` para limpiar el grafo actual).
-* **Ver estado**: `ozymem status` (muestra la topología del grafo y estado de los watchers de proyectos).
-* **Bitácora de Lecciones**: `ozymem lessons --limit 10` para leer soluciones aplicadas por el equipo.
-* **Árbol de Dependencias**: `ozymem tree <archivo> --depth 2`.
+* **Escanear codigo**: `ozymem scan <directorio>` (agrega `--reset` para limpiar el grafo).
+* **Ver estado**: `ozymem status` (topologia del grafo y watchers activos).
+* **Bitacora de Lecciones**: `ozymem lessons --limit 10`.
+* **Arbol de Dependencias**: `ozymem tree <archivo> --depth 2`.
 * **Limpiar archivo del grafo**: `ozymem clean --path <archivo>`.
+* **Buscar vectores (CLI)**: `ozymem vector search "<query>" --limit 5 --category <lesson|fact|context>`.
+* **Listar vectores**: `ozymem vector list --category <categoria>`.
+* **Inspeccionar recuerdo**: `ozymem vector inspect <id>`.
+* **Eliminar recuerdo**: `ozymem vector forget <id>`.
+* **Depurar huerfanos (CLI)**: `ozymem vector prune --apply`.
+* **Top recuerdos**: `ozymem vector top` (muestra los recuerdos mas accedidos por la IA).
+
+---
 
 ## Servidor MCP y Backend HTTP
-
-Para usar Ozymem-Partner en tu IDE (Cursor o Claude Desktop) o levantar el backend que servirá de API centralizada al equipo:
 
 ### Servidor MCP Local (Stdio)
 ```bash
@@ -67,15 +96,13 @@ cargo run -p ozymem-server
 ```
 
 ### Backend API Colaborativo (Modo Web)
-Para arrancar el backend en la nube que recibe las sincronizaciones:
 ```bash
 cargo run -p ozymem-server -- --web
 ```
-*(O configurando la variable de entorno `OZYMEM_SERVER_MODE=web`)*.
 
 ---
 
-## Despliegue en Producción (Coolify)
+## Despliegue en Produccion (Coolify)
 
 Ozymem-Partner incluye soporte nativo para despliegue automatizado en Coolify o cualquier orquestador compatible con Docker Compose.
 
@@ -83,14 +110,14 @@ Ozymem-Partner incluye soporte nativo para despliegue automatizado en Coolify o 
 - [Dockerfile](file:///c:/Users/Lenovo/Documents/ozymem-partner/Dockerfile): Compila y empaqueta el binario de forma eficiente cacheando las dependencias.
 - [docker-compose.prod.yml](file:///c:/Users/Lenovo/Documents/ozymem-partner/docker-compose.prod.yml): Coordina e integra la base de datos Memgraph y el servidor Axum de Ozymem.
 
-### Pasos de Configuración en Coolify:
+### Pasos de Configuracion en Coolify:
 1. Crea un nuevo recurso de tipo **Docker Compose** en tu proyecto de Coolify.
 2. Apunta a tu repositorio de GitHub, usa la rama `main` y selecciona el archivo `docker-compose.prod.yml`.
 3. Configura las siguientes variables de entorno en el panel de Coolify para el servicio `server`:
    - `OZYMEM_SERVER_MODE`: `web`
    - `MEMGRAPH_URI`: `memgraph:7687`
    - `MEMGRAPH_USER`: `admin`
-   - `MEMGRAPH_PASSWORD`: `<contraseña_segura>`
+   - `MEMGRAPH_PASSWORD`: `<contrasena_segura>`
    - `MEMGRAPH_DATABASE`: `memgraph`
-4. Configura el puerto expuesto del servidor (`8080`) para que Coolify genere el proxy inverso con HTTPS automático.
-5. Haz clic en **Deploy**. Al realizar la primera consulta a `/api/health`, el servidor iniciará el *Setup Génesis* y mostrará tu credencial maestra en la terminal de logs en Coolify.
+4. Configura el puerto expuesto del servidor (`8080`) para que Coolify genere el proxy inverso con HTTPS automatico.
+5. Haz clic en **Deploy**. Al realizar la primera consulta a `/api/health`, el servidor iniciara el *Setup Genesis* y mostrara tu credencial maestra en la terminal de logs en Coolify.
