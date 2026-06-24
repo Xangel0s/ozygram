@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod mcp_common;
+pub mod registry;
 
 pub struct MemgraphConfig {
     pub uri: String,
