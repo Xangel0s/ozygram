@@ -384,6 +384,25 @@ async fn handle_request(
                             "additionalProperties": false
                         }),
                     },
+                    ToolDefinition {
+                        name: "ozymem_hybrid_search",
+                        description: "Perform hybrid search combining vector embeddings on code snippets and rels.",
+                        input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query to match semantically"
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Maximum number of results to return (default 5)"
+                                }
+                            },
+                            "required": ["query"],
+                            "additionalProperties": false
+                        }),
+                    },
                 ],
             };
 
@@ -508,6 +527,43 @@ async fn handle_request(
                         is_error: None,
                     }
                 }
+                "ozymem_hybrid_search" => {
+                    let query_str = read_string_argument(&tool_call.arguments, "query")?;
+                    let limit = tool_call.arguments.get("limit")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(5) as usize;
+
+                    let embedding_vector = match get_embedding(&query_str).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Ok(Some(error_response(id, -32603, &format!("Embedding error: {:?}", e))));
+                        }
+                    };
+
+                    let matches = match search_vectors(proj_path, &embedding_vector, limit) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            return Ok(Some(error_response(id, -32603, &format!("Search error: {:?}", e))));
+                        }
+                    };
+
+                    let mut body = format!("Resultados de búsqueda híbrida semántica para '{}':\n", query_str);
+                    if matches.is_empty() {
+                        body.push_str("No se encontraron coincidencias vectoriales en el workspace.");
+                    } else {
+                        for (i, (file_path, symbol, score)) in matches.iter().enumerate() {
+                            body.push_str(&format!("{}. Símbolo: {} | Archivo: {} (Confianza: {:.4})\n", i + 1, symbol, file_path, score));
+                        }
+                    }
+
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
+                        is_error: None,
+                    }
+                }
                 _ => {
                     return Ok(Some(error_response(id, -32601, "Unknown tool")));
                 }
@@ -603,6 +659,99 @@ fn error_response(id: Value, code: i64, message: &str) -> JsonRpcResponse {
             message: message.to_string(),
         }),
     }
+}
+
+fn generate_mock_embedding(text: &str) -> Vec<f32> {
+    let dimension = 1536;
+    let mut vector = vec![0.0; dimension];
+    let mut hash: i32 = 0;
+    for c in text.chars() {
+        hash = (c as i32).wrapping_add((hash << 5).wrapping_sub(hash));
+    }
+    for i in 0..dimension {
+        let angle = (hash + i as i32) as f64;
+        vector[i] = angle.sin() as f32 / (i + 1) as f32;
+    }
+    vector
+}
+
+async fn get_embedding(query_str: &str) -> anyhow::Result<Vec<f32>> {
+    let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    if api_key.is_empty() {
+        return Ok(generate_mock_embedding(query_str));
+    }
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
+        api_key
+    );
+    let resp = client.post(&url)
+        .json(&serde_json::json!({
+            "model": "models/text-embedding-004",
+            "content": {
+                "parts": [{"text": query_str}]
+            }
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!("Gemini API returned status {}", resp.status()));
+    }
+    let res: serde_json::Value = resp.json().await?;
+    let values: Vec<f32> = serde_json::from_value(
+        res["embedding"]["values"].clone()
+    )?;
+    Ok(values)
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot_product = 0.0;
+    let mut norm_a = 0.0;
+    let mut norm_b = 0.0;
+    for i in 0..a.len() {
+        dot_product += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot_product / (norm_a.sqrt() * norm_b.sqrt())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct VectorRecord {
+    id: String,
+    file_path: String,
+    symbol: String,
+    code: String,
+    embedding: Vec<f32>,
+}
+
+fn search_vectors(project_path: &str, query_vector: &[f32], limit: usize) -> anyhow::Result<Vec<(String, String, f32)>> {
+    let db_path = std::path::Path::new(project_path)
+        .join(".ozymem")
+        .join("vectors")
+        .join("vectors.json");
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = std::fs::read_to_string(db_path)?;
+    let records: Vec<VectorRecord> = serde_json::from_str(&data)?;
+    
+    let mut matches: Vec<(String, String, f32)> = records.into_iter()
+        .map(|r| {
+            let score = cosine_similarity(query_vector, &r.embedding);
+            (r.file_path, r.symbol, score)
+        })
+        .collect();
+    
+    matches.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    matches.truncate(limit);
+    Ok(matches)
 }
 
 

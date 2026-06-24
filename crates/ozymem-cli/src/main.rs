@@ -181,6 +181,9 @@ enum Commands {
         #[command(subcommand)]
         subcommand: SessionSubcommand,
     },
+    Parse {
+        file_path: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1420,6 +1423,30 @@ async fn main() -> anyhow::Result<()> {
         Commands::Gpr { .. } => unreachable!(),
         Commands::Auth { .. } => unreachable!(),
         Commands::Session { .. } => unreachable!(),
+        Commands::Parse { file_path } => {
+            let path = Path::new(&file_path);
+            let content = std::fs::read_to_string(path)?;
+            let extension = path.extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("");
+            let language = match extension.to_lowercase().as_str() {
+                "py" => SupportedLanguage::Python,
+                "go" => SupportedLanguage::Go,
+                "rs" => SupportedLanguage::Rust,
+                "js" => SupportedLanguage::JavaScript,
+                "ts" | "tsx" => SupportedLanguage::TypeScriptReact,
+                "sql" => SupportedLanguage::SQL,
+                _ => SupportedLanguage::Unknown,
+            };
+            let map = parse_source(&file_path, language, &content)?;
+            let dependency_hints = extract_dependency_hints(&file_path, language, &content)?;
+            
+            let output = serde_json::json!({
+                "definition_map": map,
+                "dependency_hints": dependency_hints,
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        }
     }
 
     Ok(())
