@@ -209,6 +209,37 @@ async fn handle_request(
                 },
             };
 
+            // Reactive Trigger: Extract workspaceFolders if present to wake project
+            if let Some(ref params) = request.params {
+                if let Some(workspace_folders) = params.get("workspaceFolders").and_then(Value::as_array) {
+                    for folder in workspace_folders {
+                        if let Some(uri) = folder.get("uri").and_then(Value::as_str) {
+                            let mut path = uri.trim_start_matches("file://");
+                            // Clean Windows prefix if present (e.g. /C:/Users/...)
+                            if path.starts_with('/') && path.chars().nth(2) == Some(':') {
+                                path = &path[1..];
+                            }
+                            let decoded_path = urlencoding::decode(path).unwrap_or(std::borrow::Cow::Borrowed(path)).into_owned();
+                            let normal_path = decoded_path.replace('/', "\\");
+                            
+                            // Send wake command to daemon socket asynchronously
+                            tokio::spawn(async move {
+                                let registry = ozymem_core::registry::ProjectRegistry::open();
+                                if let Ok(reg) = registry {
+                                    if let Ok(Some(proj)) = reg.get_project_by_path(&normal_path) {
+                                        let _ = send_daemon_command(&json!({
+                                            "action": "wake",
+                                            "project_name": proj.name,
+                                            "project_path": normal_path
+                                        })).await;
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+
             ok_response(id, serde_json::to_value(payload)?)
         }
         "notifications/initialized" => return Ok(None),
@@ -281,6 +312,24 @@ async fn handle_request(
                             "additionalProperties": false
                         }),
                     },
+                    ToolDefinition {
+                        name: "ozymem_project_status",
+                        description: "Get the status (ACTIVE/SLEEPING), scale, PID, and sync statistics of a project by path or name.",
+                        input_schema: json!({
+                            "type": "object",
+                            "properties": {
+                                "project_path": {
+                                    "type": "string",
+                                    "description": "Optional project path to check status"
+                                },
+                                "project_name": {
+                                    "type": "string",
+                                    "description": "Optional project name to check status"
+                                }
+                            },
+                            "additionalProperties": false
+                        }),
+                    },
                 ],
             };
 
@@ -292,16 +341,9 @@ async fn handle_request(
                 .ok_or_else(|| anyhow::anyhow!("missing params for tools/call"))?;
             let tool_call: ToolCallParams = serde_json::from_value(params)?;
 
-            // Establish connection lazily
-            let connection = match get_connection(connection_cell).await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    return Ok(Some(error_response(id, -32603, &format!("Memgraph connection failed: {:?}", e))));
-                }
-            };
-
             let payload = match tool_call.name.as_str() {
                 "file_context" => {
+                    let connection = get_connection(connection_cell).await?;
                     let file_path = read_string_argument(&tool_call.arguments, "file_path")
                         .or_else(|_| read_string_argument(&tool_call.arguments, "path"))?;
                     let context = connection.get_file_context("local", &file_path).await?;
@@ -318,6 +360,7 @@ async fn handle_request(
                     }
                 }
                 "graph_summary" => {
+                    let connection = get_connection(connection_cell).await?;
                     let summary = connection.get_graph_summary("local").await?;
                     ToolCallResult {
                         content: vec![ContentBlock {
@@ -328,6 +371,7 @@ async fn handle_request(
                     }
                 }
                 "record_lesson" => {
+                    let connection = get_connection(connection_cell).await?;
                     let file_path = read_string_argument(&tool_call.arguments, "file_path")?;
                     let symbol_name = tool_call.arguments.get("symbol_name")
                         .and_then(Value::as_str);
@@ -350,6 +394,7 @@ async fn handle_request(
                     }
                 }
                 "file_trace" => {
+                    let connection = get_connection(connection_cell).await?;
                     let file_path = read_string_argument(&tool_call.arguments, "file_path")
                         .or_else(|_| read_string_argument(&tool_call.arguments, "path"))?;
                     let incoming = connection.get_incoming_dependencies("local", &file_path).await?;
@@ -365,6 +410,44 @@ async fn handle_request(
                         content: vec![ContentBlock {
                             kind: "text",
                             text,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "ozymem_project_status" => {
+                    let path_arg = tool_call.arguments.get("project_path").and_then(Value::as_str);
+                    let name_arg = tool_call.arguments.get("project_name").and_then(Value::as_str);
+
+                    let registry = ozymem_core::registry::ProjectRegistry::open()?;
+                    let project = if let Some(path) = path_arg {
+                        registry.get_project_by_path(path)?
+                    } else if let Some(name) = name_arg {
+                        registry.get_project_by_name(name)?
+                    } else {
+                        anyhow::bail!("Either project_path or project_name must be provided");
+                    };
+
+                    let body = match project {
+                        Some(p) => {
+                            let daemon_res = send_daemon_command(&json!({
+                                "action": "status",
+                                "project_name": p.name,
+                                "project_path": p.path
+                            })).await.unwrap_or_else(|e| json!({ "status": "error", "message": e.to_string() }));
+                            
+                            format!(
+                                "Project: {}\nPath: {}\nStatus (DB): {:?}\nScale: {:?}\nPID: {:?}\nFile Count: {}\nDaemon Status: {}",
+                                p.name, p.path, p.status, p.scale, p.watcher_pid, p.file_count,
+                                serde_json::to_string_pretty(&daemon_res).unwrap_or_default()
+                            )
+                        }
+                        None => "Project not found in registry.db".to_string()
+                    };
+
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
                         }],
                         is_error: None,
                     }
@@ -998,3 +1081,23 @@ async fn handle_gpr_merge(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
 }
+
+/// Communicates with the daemon socket (TCP localhost:17399 on Windows, Unix domain socket otherwise).
+async fn send_daemon_command(cmd: &Value) -> anyhow::Result<Value> {
+    use tokio::net::TcpStream;
+    let mut stream = TcpStream::connect("127.0.0.1:17399").await?;
+    
+    // Send command serialized as JSON + newline
+    let payload = format!("{}\n", serde_json::to_string(cmd)?);
+    stream.write_all(payload.as_bytes()).await?;
+    stream.flush().await?;
+    
+    // Read JSON response
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+    let response: Value = serde_json::from_str(&line)?;
+    
+    Ok(response)
+}
+
