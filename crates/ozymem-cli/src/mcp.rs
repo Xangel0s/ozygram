@@ -532,6 +532,8 @@ async fn handle_request(
                     let limit = tool_call.arguments.get("limit")
                         .and_then(Value::as_u64)
                         .unwrap_or(5) as usize;
+                    let category = tool_call.arguments.get("category")
+                        .and_then(Value::as_str);
 
                     let embedding_vector = match get_embedding(&query_str).await {
                         Ok(v) => v,
@@ -540,7 +542,7 @@ async fn handle_request(
                         }
                     };
 
-                    let matches = match search_vectors(proj_path, &embedding_vector, limit) {
+                    let matches = match search_vectors(proj_path, &embedding_vector, limit, category) {
                         Ok(m) => m,
                         Err(e) => {
                             return Ok(Some(error_response(id, -32603, &format!("Search error: {:?}", e))));
@@ -675,7 +677,7 @@ fn generate_mock_embedding(text: &str) -> Vec<f32> {
     vector
 }
 
-async fn get_embedding(query_str: &str) -> anyhow::Result<Vec<f32>> {
+pub(crate) async fn get_embedding(query_str: &str) -> anyhow::Result<Vec<f32>> {
     let api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
     if api_key.is_empty() {
         return Ok(generate_mock_embedding(query_str));
@@ -704,7 +706,7 @@ async fn get_embedding(query_str: &str) -> anyhow::Result<Vec<f32>> {
     Ok(values)
 }
 
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
     }
@@ -722,16 +724,22 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     dot_product / (norm_a.sqrt() * norm_b.sqrt())
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct VectorRecord {
-    id: String,
-    file_path: String,
-    symbol: String,
-    code: String,
-    embedding: Vec<f32>,
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct VectorRecord {
+    pub id: String,
+    pub category: String,
+    pub project: String,
+    pub tenant_id: String,
+    pub source_path: String,
+    pub timestamp: i64,
+    pub hit_count: i64,
+    pub text: String,
+    pub embedding: Vec<f32>,
+    pub schema_version: i64,
+    pub parent_id: Option<String>,
 }
 
-fn search_vectors(project_path: &str, query_vector: &[f32], limit: usize) -> anyhow::Result<Vec<(String, String, f32)>> {
+pub(crate) fn search_vectors(project_path: &str, query_vector: &[f32], limit: usize, category: Option<&str>) -> anyhow::Result<Vec<(String, String, f32)>> {
     let db_path = std::path::Path::new(project_path)
         .join(".ozymem")
         .join("vectors")
@@ -739,18 +747,41 @@ fn search_vectors(project_path: &str, query_vector: &[f32], limit: usize) -> any
     if !db_path.exists() {
         return Ok(Vec::new());
     }
-    let data = std::fs::read_to_string(db_path)?;
-    let records: Vec<VectorRecord> = serde_json::from_str(&data)?;
+    let data = std::fs::read_to_string(&db_path)?;
+    let mut records: Vec<VectorRecord> = serde_json::from_str(&data)?;
     
-    let mut matches: Vec<(String, String, f32)> = records.into_iter()
+    // Metadata Pre-filtering
+    if let Some(cat) = category {
+        records.retain(|r| r.category.eq_ignore_ascii_case(cat));
+    }
+    records.retain(|r| r.schema_version == 1);
+    
+    let mut matches: Vec<(String, String, f32)> = records.iter()
         .map(|r| {
             let score = cosine_similarity(query_vector, &r.embedding);
-            (r.file_path, r.symbol, score)
+            (r.source_path.clone(), r.id.clone(), score)
         })
         .collect();
     
     matches.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     matches.truncate(limit);
+    
+    if !matches.is_empty() {
+        let best_id = &matches[0].1;
+        // Reload, update and save
+        if let Ok(data) = std::fs::read_to_string(&db_path) {
+            let records_res: Result<Vec<VectorRecord>, _> = serde_json::from_str(&data);
+            if let Ok(mut records) = records_res {
+                if let Some(r) = records.iter_mut().find(|rec| &rec.id == best_id) {
+                    r.hit_count += 1;
+                    if let Ok(serialized) = serde_json::to_string_pretty(&records) {
+                        let _ = std::fs::write(&db_path, serialized);
+                    }
+                }
+            }
+        }
+    }
+    
     Ok(matches)
 }
 
