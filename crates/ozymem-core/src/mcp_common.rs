@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use crate::{FileGraphContext, GraphSummary};
+use crate::{FileGraphContext, GraphSummary, graph_backend::{LessonEntry, NeighborInfo}};
 
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
@@ -96,6 +96,14 @@ pub trait McpBackend: Send + Sync {
     async fn record_lesson(&self, file_path: &str, symbol_name: Option<&str>, error_context: &str, solution: &str) -> anyhow::Result<()>;
     async fn get_incoming_dependencies(&self, file_path: &str) -> anyhow::Result<Vec<String>>;
     async fn find_symbol(&self, symbol_name: &str, project_path: &str) -> anyhow::Result<Vec<String>>;
+
+    // New Phase 1 methods
+    async fn search_lessons(&self, query: &str, kind: Option<&str>, limit: usize) -> anyhow::Result<Vec<LessonEntry>>;
+    async fn get_file_lessons(&self, file_path: &str) -> anyhow::Result<Vec<LessonEntry>>;
+    async fn get_symbol_lessons(&self, file_path: &str, symbol_name: &str) -> anyhow::Result<Vec<LessonEntry>>;
+    async fn recent_lessons(&self, kind: Option<&str>, limit: usize) -> anyhow::Result<Vec<LessonEntry>>;
+    async fn get_graph_neighbors(&self, file_path: &str) -> anyhow::Result<NeighborInfo>;
+    async fn record_entry(&self, file_path: &str, symbol_name: Option<&str>, error_context: &str, solution: &str, kind: &str) -> anyhow::Result<()>;
 }
 
 pub fn get_tools_list() -> Vec<ToolDefinition> {

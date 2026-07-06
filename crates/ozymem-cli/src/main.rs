@@ -2,7 +2,8 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use ozymem_core::{
     default_memgraph_database, default_memgraph_uri, FileGraphContext, GraphSummary, LessonRecord,
-    MemgraphConfig, MemgraphConnection, StoredFunction,
+    MemgraphConfig, MemgraphConnection, SqliteBackend, StoredFunction,
+    graph_backend::{legacy_global_db_path, auto_manage_gitignore},
 };
 use ozymem_parser::{
     extract_dependency_hints, is_binary_file, is_internal_dependency_hint, parse_source,
@@ -290,6 +291,7 @@ pub enum SessionSubcommand {
 #[derive(Clone)]
 pub enum BackendMode {
     Local(MemgraphConnection),
+    Sqlite(SqliteBackend),
     Remote {
         url: String,
         token: String,
@@ -305,6 +307,7 @@ pub struct BackendClient {
 impl BackendClient {
     pub fn tenant_id(&self) -> String {
         let token = match &self.mode {
+            BackendMode::Sqlite(_) => return "local".to_string(),
             BackendMode::Local(_) => {
                 std::env::var("OZYBASE_MCP_TOKEN")
                     .ok()
@@ -328,6 +331,7 @@ impl BackendClient {
 
     pub fn display_uri(&self) -> String {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => sqlite.display_name(),
             BackendMode::Local(_) => {
                 let raw_uri = std::env::var("MEMGRAPH_URI").unwrap_or_else(|_| default_memgraph_uri().to_string());
                 if raw_uri.contains("://") {
@@ -342,6 +346,9 @@ impl BackendClient {
 
     pub async fn ping(&self) -> anyhow::Result<i64> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.ping().map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.ping().await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/health", url))
@@ -359,6 +366,9 @@ impl BackendClient {
 
     pub async fn clear_graph(&self) -> anyhow::Result<()> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.clear_graph(&self.tenant_id()).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.clear_graph(&self.tenant_id()).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/clear", url))
@@ -374,8 +384,11 @@ impl BackendClient {
         }
     }
 
-    pub async fn save_file_definition(&self, file_map: &ozymem_parser::FileDefinitionMap) -> anyhow::Result<()> {
+    pub async fn save_file_definition(&self, file_map: &ozymem_parser::FileDefinitionMap, workspace_root: &str) -> anyhow::Result<()> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.save_file_definition(&self.tenant_id(), file_map, workspace_root).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.save_file_definition(&self.tenant_id(), file_map).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/file-definition", url))
@@ -392,8 +405,11 @@ impl BackendClient {
         }
     }
 
-    pub async fn save_dependency_relation(&self, origin_path: &str, destination_path: &str) -> anyhow::Result<()> {
+    pub async fn save_dependency_relation(&self, origin_path: &str, destination_path: &str, workspace_root: &str) -> anyhow::Result<()> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.save_dependency_relation(&self.tenant_id(), origin_path, destination_path, workspace_root).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.save_dependency_relation(&self.tenant_id(), origin_path, destination_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/dependency-relation", url))
@@ -413,8 +429,11 @@ impl BackendClient {
         }
     }
 
-    pub async fn record_lesson(&self, file_path: &str, symbol_name: Option<&str>, error_context: &str, solution: &str) -> anyhow::Result<()> {
+    pub async fn record_lesson(&self, file_path: &str, symbol_name: Option<&str>, error_context: &str, solution: &str, workspace_root: &str) -> anyhow::Result<()> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.record_lesson(&self.tenant_id(), file_path, symbol_name, error_context, solution, workspace_root).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.record_lesson(&self.tenant_id(), file_path, symbol_name, error_context, solution).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/lesson", url))
@@ -438,6 +457,9 @@ impl BackendClient {
 
     pub async fn clear_file_symbols_and_dependencies(&self, file_path: &str) -> anyhow::Result<()> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.clear_file_symbols_and_dependencies(&self.tenant_id(), file_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.clear_file_symbols_and_dependencies(&self.tenant_id(), file_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/clear-file-symbols", url))
@@ -456,6 +478,9 @@ impl BackendClient {
 
     pub async fn delete_file_definition(&self, file_path: &str) -> anyhow::Result<bool> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.delete_file_definition(&self.tenant_id(), file_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.delete_file_definition(&self.tenant_id(), file_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/delete-file", url))
@@ -475,6 +500,9 @@ impl BackendClient {
 
     pub async fn delete_project_files(&self, project_path: &str) -> anyhow::Result<i64> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.delete_project_files(&self.tenant_id(), project_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.delete_project_files(&self.tenant_id(), project_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/delete-project-files", url))
@@ -494,6 +522,9 @@ impl BackendClient {
 
     pub async fn get_all_file_paths(&self) -> anyhow::Result<Vec<String>> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.get_all_file_paths(&self.tenant_id()).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.get_all_file_paths(&self.tenant_id()).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/files", url))
@@ -512,6 +543,9 @@ impl BackendClient {
 
     pub async fn get_historical_engram_solutions(&self, file_path: &str) -> anyhow::Result<Vec<String>> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.get_historical_engram_solutions(&self.tenant_id(), file_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.get_historical_engram_solutions(&self.tenant_id(), file_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/historical-engrams", url))
@@ -531,6 +565,9 @@ impl BackendClient {
 
     pub async fn get_recent_lessons(&self, limit: i64, file_filter: Option<String>) -> anyhow::Result<Vec<LessonRecord>> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.get_recent_lessons(&self.tenant_id(), limit, file_filter).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.get_recent_lessons(&self.tenant_id(), limit, file_filter).await,
             BackendMode::Remote { url, token, client } => {
                 let mut req = client.get(format!("{}/api/lessons", url))
@@ -552,6 +589,9 @@ impl BackendClient {
 
     pub async fn get_outgoing_dependencies(&self, file_path: &str) -> anyhow::Result<Vec<String>> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.get_outgoing_dependencies(&self.tenant_id(), file_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.get_outgoing_dependencies(&self.tenant_id(), file_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/outgoing-dependencies", url))
@@ -571,6 +611,9 @@ impl BackendClient {
 
     pub async fn get_incoming_dependencies(&self, file_path: &str) -> anyhow::Result<Vec<String>> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.get_incoming_dependencies(&self.tenant_id(), file_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.get_incoming_dependencies(&self.tenant_id(), file_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/incoming-dependencies", url))
@@ -590,6 +633,9 @@ impl BackendClient {
 
     pub async fn get_file_context(&self, file_path: &str) -> anyhow::Result<Option<FileGraphContext>> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.get_file_context(&self.tenant_id(), file_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.get_file_context(&self.tenant_id(), file_path).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/file-context", url))
@@ -609,6 +655,9 @@ impl BackendClient {
 
     pub async fn get_graph_summary(&self) -> anyhow::Result<GraphSummary> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.get_graph_summary(&self.tenant_id()).map_err(Into::into)
+            }
             BackendMode::Local(conn) => conn.get_graph_summary(&self.tenant_id()).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/graph-summary", url))
@@ -627,6 +676,9 @@ impl BackendClient {
 
     pub async fn find_symbol(&self, symbol_name: &str, project_path: &str) -> anyhow::Result<Vec<String>> {
         match &self.mode {
+            BackendMode::Sqlite(sqlite) => {
+                sqlite.find_symbol(&self.tenant_id(), symbol_name, project_path).map_err(Into::into)
+            }
             BackendMode::Local(conn) => {
                 let query_str = "MATCH (f:File)-[:CONTAINS]->(fn:Function) \
                                  WHERE f.tenant_id = $tenant_id AND fn.name = $symbol_name AND f.path STARTS WITH $project_path \
@@ -663,6 +715,9 @@ impl BackendClient {
 
     pub async fn create_user(&self, username: &str, role: &str) -> anyhow::Result<String> {
         match &self.mode {
+            BackendMode::Sqlite(_) => {
+                Err(anyhow::anyhow!("Team management not available in SQLite mode"))
+            }
             BackendMode::Local(conn) => {
                 let token_bytes = {
                     use rand::RngCore;
@@ -714,6 +769,7 @@ impl BackendClient {
 
     pub async fn get_active_sessions(&self) -> anyhow::Result<Vec<ozymem_core::SessionRecord>> {
         match &self.mode {
+            BackendMode::Sqlite(_) => Ok(vec![]),
             BackendMode::Local(conn) => conn.get_active_sessions(&self.tenant_id()).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.get(format!("{}/api/sessions", url))
@@ -732,6 +788,7 @@ impl BackendClient {
 
     pub async fn kick_session(&self, session_id: &str) -> anyhow::Result<bool> {
         match &self.mode {
+            BackendMode::Sqlite(_) => Ok(false),
             BackendMode::Local(conn) => conn.kick_session(&self.tenant_id(), session_id).await,
             BackendMode::Remote { url, token, client } => {
                 let resp = client.post(format!("{}/api/sessions/kick", url))
@@ -1162,6 +1219,9 @@ async fn run_gpr_push(message: String) -> anyhow::Result<()> {
     println!("GPR: Enviando {} archivos al servidor con el mensaje '{}'...", files.len(), message);
     
     match &connection.mode {
+        BackendMode::Sqlite(_) => {
+            println!("[WARNING] GPR no soportado en modo SQLite.");
+        }
         BackendMode::Local(conn) => {
             let gpr_id = conn.create_gpr_batch("local", "local_dev", &message, &files).await?;
             println!("[SUCCESS] Graph Pull Request creado localmente con ID: {}", gpr_id);
@@ -1195,6 +1255,9 @@ async fn run_gpr_push(message: String) -> anyhow::Result<()> {
 async fn run_gpr_list() -> anyhow::Result<()> {
     let connection = build_backend_client().await?;
     match &connection.mode {
+        BackendMode::Sqlite(_) => {
+            println!("No hay Graph Pull Requests (SQLite mode).");
+        }
         BackendMode::Local(conn) => {
             let list = conn.get_pending_gprs("local").await?;
             print_gpr_list(&list);
@@ -1233,6 +1296,9 @@ fn print_gpr_list(list: &[ozymem_core::GprRecord]) {
 async fn run_gpr_diff(gpr_id: i64) -> anyhow::Result<()> {
     let connection = build_backend_client().await?;
     match &connection.mode {
+        BackendMode::Sqlite(_) => {
+            println!("GPR no soportado en modo SQLite.");
+        }
         BackendMode::Local(conn) => {
             if let Some((message, user, files, lessons)) = conn.get_gpr_diff("local", gpr_id).await? {
                 print_gpr_diff_details(gpr_id, &message, &user, &files, &lessons);
@@ -1293,6 +1359,9 @@ fn print_gpr_diff_details(
 async fn run_gpr_merge(gpr_id: i64) -> anyhow::Result<()> {
     let connection = build_backend_client().await?;
     match &connection.mode {
+        BackendMode::Sqlite(_) => {
+            println!("GPR no soportado en modo SQLite.");
+        }
         BackendMode::Local(conn) => {
             conn.merge_gpr("local", gpr_id).await?;
             println!("[SUCCESS] GPR #{} fusionado localmente con éxito.", gpr_id);
@@ -1420,11 +1489,23 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let connection = build_backend_client().await?;
+    let is_sqlite = matches!(connection.mode, BackendMode::Sqlite(_));
     let display_uri = connection.display_uri();
     let context = AppContext {
         connection,
         display_uri,
     };
+
+    // Legacy DB warning + .gitignore management (only once per session, on SQLite)
+    if is_sqlite {
+        let legacy = legacy_global_db_path();
+        if legacy.exists() {
+            eprintln!("[ozymem] legacy global DB detected at {}. Use `ozymem lessons --legacy` to view old data.", legacy.display());
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            auto_manage_gitignore(&cwd).ok();
+        }
+    }
 
     match args.command {
         Commands::Status { json } => print_status(&context, json).await?,
@@ -1512,49 +1593,48 @@ async fn main() -> anyhow::Result<()> {
 }
 
 pub async fn build_backend_client() -> anyhow::Result<BackendClient> {
+    // Priority:
+    //   1. Remote mode if OZYMEM_SERVER_URL or OZYBASE_MCP_TOKEN is http(s)://
+    //   2. Local Memgraph mode if MEMGRAPH_URI is explicitly set in env
+    //   3. SQLite mode by default (no Memgraph needed)
     let (_, config) = load_config().unwrap_or_else(|_| (PathBuf::new(), OzymemConfig::default()));
-    
-    let host_env = std::env::var("OZYMEM_SERVER_URL")
-        .ok()
-        .or_else(|| std::env::var("MEMGRAPH_URI").ok());
 
-    let token_env = if let (Ok(server_id), Ok(user_token)) = (std::env::var("OZYMEM_SERVER_ID"), std::env::var("OZYMEM_USER_TOKEN")) {
-        Some(format!("ozy_partner_ctx_{}_usr_{}", server_id, user_token))
-    } else {
-        std::env::var("OZYBASE_MCP_TOKEN")
-            .ok()
-            .or_else(|| config.token.clone())
-    };
+    // Check for explicit remote URL
+    if let Ok(server_url) = std::env::var("OZYMEM_SERVER_URL") {
+        if server_url.starts_with("http://") || server_url.starts_with("https://") {
+            let token = std::env::var("OZYBASE_MCP_TOKEN").ok()
+                .or_else(|| config.token.clone())
+                .unwrap_or_else(|| "ozys_8f7e_8f7e50d578a699177eba16c7".to_string());
+            return Ok(BackendClient {
+                mode: BackendMode::Remote {
+                    url: server_url,
+                    token,
+                    client: reqwest::Client::new(),
+                }
+            });
+        }
+    }
 
-    let host = host_env.unwrap_or_else(|| config.current_brain.clone());
-    let token = token_env.unwrap_or_else(|| "ozys_8f7e_8f7e50d578a699177eba16c7".to_string());
-
-    if host.starts_with("http://") || host.starts_with("https://") {
-        let client = reqwest::Client::new();
-        Ok(BackendClient {
-            mode: BackendMode::Remote {
-                url: host,
-                token,
-                client,
-            }
-        })
-    } else {
-        let (host_str, port) = if let Some(brain_cfg) = config.brains.get(&host) {
-            (brain_cfg.host.clone(), brain_cfg.port)
-        } else {
-            (host.clone(), 7687)
-        };
+    // Check if MEMGRAPH_URI is explicitly set → use Memgraph
+    if let Ok(memgraph_uri) = std::env::var("MEMGRAPH_URI") {
         let memgraph_config = MemgraphConfig {
-            uri: if host_str.contains(':') { host_str } else { format!("{}:{}", host_str, port) },
+            uri: memgraph_uri,
             user: std::env::var("MEMGRAPH_USER").unwrap_or_else(|_| "admin".to_string()),
             password: std::env::var("MEMGRAPH_PASSWORD").unwrap_or_else(|_| "admin".to_string()),
             database: std::env::var("MEMGRAPH_DATABASE").unwrap_or_else(|_| default_memgraph_database().to_string()),
         };
         let connection = MemgraphConnection::connect(memgraph_config).await?;
-        Ok(BackendClient {
+        return Ok(BackendClient {
             mode: BackendMode::Local(connection)
-        })
+        });
     }
+
+    // Default: SQLite mode, project-scoped DB
+    let cwd = std::env::current_dir()?;
+    let sqlite = SqliteBackend::open_for_project(&cwd)?;
+    Ok(BackendClient {
+        mode: BackendMode::Sqlite(sqlite)
+    })
 }
 
 async fn print_status(context: &AppContext, json_output: bool) -> anyhow::Result<()> {
@@ -1843,7 +1923,8 @@ async fn scan_directory(
                     map.functions.len()
                 );
 
-                if let Err(error) = connection.save_file_definition(&map).await {
+                let ws_root = canonical_target.to_string_lossy().to_string();
+                if let Err(error) = connection.save_file_definition(&map, &ws_root).await {
                     eprintln!("Failed to persist {}: {error}", map.file_path);
                 }
 
@@ -1882,8 +1963,9 @@ async fn scan_directory(
             };
 
             let dest_path_cleaned = clean_path(&destination_path);
+            let ws_root_str = project_root.to_string_lossy().to_string();
             if let Err(error) = connection
-                .save_dependency_relation(&batch.origin_path, &dest_path_cleaned)
+                .save_dependency_relation(&batch.origin_path, &dest_path_cleaned, &ws_root_str)
                 .await
             {
                 eprintln!(
@@ -2797,7 +2879,8 @@ async fn index_single_file(connection: &BackendClient, path: &Path) -> anyhow::R
 
     let map = parse_source(&absolute_file_path, language, &source_code)?;
     let _ = connection.clear_file_symbols_and_dependencies(&absolute_file_path).await;
-    connection.save_file_definition(&map).await?;
+    let project_root = resolve_project_root(path).to_string_lossy().to_string();
+    connection.save_file_definition(&map, &project_root).await?;
 
     if matches!(language, SupportedLanguage::Rust) {
         if let Ok(hints) = extract_dependency_hints(&absolute_file_path, language, &source_code) {
@@ -2805,7 +2888,7 @@ async fn index_single_file(connection: &BackendClient, path: &Path) -> anyhow::R
             for hint in internal_hints {
                 if let Some(destination_path) = resolve_dependency_target(&hint, &absolute_file_path) {
                     let dest_path_cleaned = clean_path(&destination_path);
-                    let _ = connection.save_dependency_relation(&absolute_file_path, &dest_path_cleaned).await;
+                    let _ = connection.save_dependency_relation(&absolute_file_path, &dest_path_cleaned, &project_root).await;
                 }
             }
         }
@@ -4268,6 +4351,9 @@ async fn run_auth_reset_token() -> anyhow::Result<()> {
 
     let connection = build_backend_client().await?;
     match &connection.mode {
+        BackendMode::Sqlite(_) => {
+            println!("[WARNING] Auth tokens no aplican a SQLite local. Ignorando.");
+        }
         BackendMode::Local(conn) => {
             conn.create_user(&server_uuid, "admin", "admin", &new_token_hex).await?;
             println!("[INFO] Credencial actualizada en la base de datos local.");
@@ -4339,6 +4425,7 @@ async fn run_session_list() -> anyhow::Result<()> {
     if let BackendMode::Local(ref conn) = connection.mode {
         let _ = conn.clean_zombie_sessions(&connection.tenant_id()).await;
     }
+    // Sqlite mode: no sessions to clean
 
     let sessions = connection.get_active_sessions().await?;
     if sessions.is_empty() {
@@ -4695,6 +4782,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
             match &connection.mode {
+                BackendMode::Sqlite(_) => None,
                 BackendMode::Local(conn) => {
                     conn.get_gpr_diff("local", gpr_id).await.ok().flatten()
                 }
@@ -5493,6 +5581,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
 
 async fn fetch_gprs(connection: &BackendClient) -> Vec<ozymem_core::GprRecord> {
     match &connection.mode {
+        BackendMode::Sqlite(_) => Vec::new(),
         BackendMode::Local(conn) => {
             conn.get_pending_gprs("local").await.unwrap_or_default()
         }
@@ -5516,6 +5605,9 @@ async fn fetch_gprs(connection: &BackendClient) -> Vec<ozymem_core::GprRecord> {
 
 async fn merge_gpr(connection: &BackendClient, gpr_id: i64) -> anyhow::Result<()> {
     match &connection.mode {
+        BackendMode::Sqlite(_) => {
+            Err(anyhow::anyhow!("GPR operations not supported in SQLite mode"))
+        }
         BackendMode::Local(conn) => {
             conn.merge_gpr("local", gpr_id).await
         }

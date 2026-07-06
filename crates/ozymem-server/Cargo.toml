@@ -17,3 +17,6 @@ rand = "0.8"
 axum = "0.7"
 tower-http = { version = "0.5", features = ["cors"] }
 urlencoding = "2.1.3"
+
+[dev-dependencies]
+rusqlite = { version = "0.31", features = ["bundled"] }

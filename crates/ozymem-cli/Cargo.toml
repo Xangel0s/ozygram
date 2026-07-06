@@ -19,7 +19,7 @@ toml = "0.8"
 home = "0.5"
 reqwest = { version = "0.11", features = ["json"] }
 lazy_static = "1.4.0"
-neo4rs = { version = "0.8", workspace = true }
+neo4rs = { workspace = true }
 ozymem-core = { path = "../ozymem-core" }
 ozymem-parser = { path = "../ozymem-parser" }
 tokio.workspace = true

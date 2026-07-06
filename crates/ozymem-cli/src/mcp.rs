@@ -511,9 +511,10 @@ async fn handle_request(
                         .and_then(Value::as_str);
                     let error_context = read_string_argument(&tool_call.arguments, "error_context")?;
                     let solution = read_string_argument(&tool_call.arguments, "solution")?;
+                    let ws_root = SESSION.lock().unwrap().project_path.clone().unwrap_or_default();
 
                     connection
-                        .record_lesson(&file_path, symbol_name, &error_context, &solution)
+                        .record_lesson(&file_path, symbol_name, &error_context, &solution, &ws_root)
                         .await?;
 
                     ToolCallResult {

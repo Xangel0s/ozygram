@@ -688,20 +688,9 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
 }
 
 /// Normalizes a filesystem path for consistent storage.
-/// Strips the `\\?\` prefix that Windows canonicalization adds,
-/// and normalizes separators to backslash on Windows.
+/// Re-exported from `crate::normalize_path`.
 fn normalize_path(path: &str) -> String {
-    let cleaned = if path.starts_with(r"\\?\") {
-        &path[4..]
-    } else {
-        path
-    };
-
-    // Normalize trailing separators
-    cleaned
-        .trim_end_matches('\\')
-        .trim_end_matches('/')
-        .to_string()
+    crate::normalize_path(path)
 }
 
 // ---------------------------------------------------------------------------
