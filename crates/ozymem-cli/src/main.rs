@@ -1,9 +1,9 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use ozymem_core::{
-    default_memgraph_database, default_memgraph_uri, FileGraphContext, GraphSummary, LessonRecord,
-    MemgraphConfig, MemgraphConnection, SqliteBackend, StoredFunction,
-    graph_backend::{legacy_global_db_path, auto_manage_gitignore},
+    FileGraphContext, GraphSummary, LessonRecord,
+    StoredFunction,
+    graph_backend::{SqliteBackend, legacy_global_db_path, auto_manage_gitignore},
 };
 use ozymem_parser::{
     extract_dependency_hints, is_binary_file, is_internal_dependency_hint, parse_source,
@@ -96,7 +96,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Ejecutar diagnosticos del entorno Ozymem (Memgraph, directorios y daemon)
+    /// Run Ozymem environment diagnostics (DB, directories, daemon)
     #[command(alias = "check")]
     Doctor {
         #[arg(long)]
@@ -179,26 +179,7 @@ enum Commands {
     List,
     /// Inicializar credenciales y entornos locales de Ozymem
     Init,
-    Mcp {
-        #[command(subcommand)]
-        subcommand: McpSubcommand,
-    },
-    Team {
-        #[command(subcommand)]
-        subcommand: TeamSubcommand,
-    },
-    Gpr {
-        #[command(subcommand)]
-        subcommand: GprSubcommand,
-    },
-    Auth {
-        #[command(subcommand)]
-        subcommand: AuthSubcommand,
-    },
-    Session {
-        #[command(subcommand)]
-        subcommand: SessionSubcommand,
-    },
+    Mcp,
     Parse {
         file_path: String,
     },
@@ -240,63 +221,11 @@ pub enum VectorSubcommand {
     },
 }
 
-#[derive(Debug, Subcommand)]
-pub enum McpSubcommand {
-    Run,
-    Setup,
-    Start,
-    Stop,
-    Install,
-}
 
-#[derive(Debug, Subcommand)]
-pub enum TeamSubcommand {
-    Create {
-        #[arg(long)]
-        user: String,
-        #[arg(long)]
-        role: String,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum GprSubcommand {
-    Push {
-        #[arg(long)]
-        message: String,
-    },
-    List,
-    Diff {
-        gpr_id: i64,
-    },
-    Merge {
-        gpr_id: i64,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum AuthSubcommand {
-    #[command(name = "reset-token")]
-    ResetToken,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum SessionSubcommand {
-    List,
-    Kick {
-        session_id: String,
-    },
-}
 
 #[derive(Clone)]
 pub enum BackendMode {
-    Local(MemgraphConnection),
     Sqlite(SqliteBackend),
-    Remote {
-        url: String,
-        token: String,
-        client: reqwest::Client,
-    },
 }
 
 #[derive(Clone)]
@@ -306,41 +235,12 @@ pub struct BackendClient {
 
 impl BackendClient {
     pub fn tenant_id(&self) -> String {
-        let token = match &self.mode {
-            BackendMode::Sqlite(_) => return "local".to_string(),
-            BackendMode::Local(_) => {
-                std::env::var("OZYBASE_MCP_TOKEN")
-                    .ok()
-                    .or_else(|| {
-                        let (_, cfg) = load_config().ok()?;
-                        cfg.token
-                    })
-                    .unwrap_or_else(|| "ozys_8f7e_8f7e50d578a699177eba16c7".to_string())
-            }
-            BackendMode::Remote { token, .. } => token.clone(),
-        };
-
-        if token.starts_with("ozy_partner_ctx_") && token.contains("_usr_") {
-            let trimmed = &token["ozy_partner_ctx_".len()..];
-            let parts: Vec<&str> = trimmed.split("_usr_").collect();
-            parts[0].to_string()
-        } else {
-            "local".to_string()
-        }
+        "local".to_string()
     }
 
     pub fn display_uri(&self) -> String {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => sqlite.display_name(),
-            BackendMode::Local(_) => {
-                let raw_uri = std::env::var("MEMGRAPH_URI").unwrap_or_else(|_| default_memgraph_uri().to_string());
-                if raw_uri.contains("://") {
-                    raw_uri
-                } else {
-                    format!("bolt://{raw_uri}")
-                }
-            }
-            BackendMode::Remote { url, .. } => url.clone(),
         }
     }
 
@@ -348,18 +248,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.ping().map_err(Into::into)
-            }
-            BackendMode::Local(conn) => conn.ping().await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/health", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    Ok(1)
-                } else {
-                    Err(anyhow::anyhow!("Remote ping failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -369,18 +257,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.clear_graph(&self.tenant_id()).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.clear_graph(&self.tenant_id()).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/clear", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("Remote clear failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -388,19 +264,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.save_file_definition(&self.tenant_id(), file_map, workspace_root).map_err(Into::into)
-            }
-            BackendMode::Local(conn) => conn.save_file_definition(&self.tenant_id(), file_map).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/file-definition", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(file_map)
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("Remote save_file_definition failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -410,22 +273,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.save_dependency_relation(&self.tenant_id(), origin_path, destination_path, workspace_root).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.save_dependency_relation(&self.tenant_id(), origin_path, destination_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/dependency-relation", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({
-                        "origin_path": origin_path,
-                        "destination_path": destination_path,
-                    }))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("Remote save_dependency_relation failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -433,24 +280,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.record_lesson(&self.tenant_id(), file_path, symbol_name, error_context, solution, workspace_root).map_err(Into::into)
-            }
-            BackendMode::Local(conn) => conn.record_lesson(&self.tenant_id(), file_path, symbol_name, error_context, solution).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/lesson", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({
-                        "file_path": file_path,
-                        "symbol_name": symbol_name,
-                        "error_context": error_context,
-                        "solution": solution,
-                    }))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("Remote record_lesson failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -460,19 +289,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.clear_file_symbols_and_dependencies(&self.tenant_id(), file_path).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.clear_file_symbols_and_dependencies(&self.tenant_id(), file_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/clear-file-symbols", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({ "file_path": file_path }))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("Remote clear_file_symbols_and_dependencies failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -480,20 +296,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.delete_file_definition(&self.tenant_id(), file_path).map_err(Into::into)
-            }
-            BackendMode::Local(conn) => conn.delete_file_definition(&self.tenant_id(), file_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/delete-file", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({ "file_path": file_path }))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let body: serde_json::Value = resp.json().await?;
-                    Ok(body.get("deleted").and_then(serde_json::Value::as_bool).unwrap_or(false))
-                } else {
-                    Err(anyhow::anyhow!("Remote delete_file_definition failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -503,20 +305,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.delete_project_files(&self.tenant_id(), project_path).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.delete_project_files(&self.tenant_id(), project_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/delete-project-files", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({ "project_path": project_path }))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let body: serde_json::Value = resp.json().await?;
-                    Ok(body.get("deleted_count").and_then(serde_json::Value::as_i64).unwrap_or(0))
-                } else {
-                    Err(anyhow::anyhow!("Remote delete_project_files failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -524,19 +312,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.get_all_file_paths(&self.tenant_id()).map_err(Into::into)
-            }
-            BackendMode::Local(conn) => conn.get_all_file_paths(&self.tenant_id()).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/files", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let paths: Vec<String> = resp.json().await?;
-                    Ok(paths)
-                } else {
-                    Err(anyhow::anyhow!("Remote get_all_file_paths failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -546,20 +321,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.get_historical_engram_solutions(&self.tenant_id(), file_path).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.get_historical_engram_solutions(&self.tenant_id(), file_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/historical-engrams", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .query(&[("file_path", file_path)])
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let solutions: Vec<String> = resp.json().await?;
-                    Ok(solutions)
-                } else {
-                    Err(anyhow::anyhow!("Remote get_historical_engram_solutions failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -567,22 +328,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.get_recent_lessons(&self.tenant_id(), limit, file_filter).map_err(Into::into)
-            }
-            BackendMode::Local(conn) => conn.get_recent_lessons(&self.tenant_id(), limit, file_filter).await,
-            BackendMode::Remote { url, token, client } => {
-                let mut req = client.get(format!("{}/api/lessons", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .query(&[("limit", limit)]);
-                if let Some(filter) = file_filter {
-                    req = req.query(&[("file_filter", filter)]);
-                }
-                let resp = req.send().await?;
-                if resp.status().is_success() {
-                    let lessons: Vec<LessonRecord> = resp.json().await?;
-                    Ok(lessons)
-                } else {
-                    Err(anyhow::anyhow!("Remote get_recent_lessons failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -592,20 +337,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.get_outgoing_dependencies(&self.tenant_id(), file_path).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.get_outgoing_dependencies(&self.tenant_id(), file_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/outgoing-dependencies", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .query(&[("file_path", file_path)])
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let paths: Vec<String> = resp.json().await?;
-                    Ok(paths)
-                } else {
-                    Err(anyhow::anyhow!("Remote get_outgoing_dependencies failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -613,20 +344,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.get_incoming_dependencies(&self.tenant_id(), file_path).map_err(Into::into)
-            }
-            BackendMode::Local(conn) => conn.get_incoming_dependencies(&self.tenant_id(), file_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/incoming-dependencies", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .query(&[("file_path", file_path)])
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let paths: Vec<String> = resp.json().await?;
-                    Ok(paths)
-                } else {
-                    Err(anyhow::anyhow!("Remote get_incoming_dependencies failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -636,20 +353,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.get_file_context(&self.tenant_id(), file_path).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.get_file_context(&self.tenant_id(), file_path).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/file-context", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .query(&[("file_path", file_path)])
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let context: Option<FileGraphContext> = resp.json().await?;
-                    Ok(context)
-                } else {
-                    Err(anyhow::anyhow!("Remote get_file_context failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -658,19 +361,6 @@ impl BackendClient {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.get_graph_summary(&self.tenant_id()).map_err(Into::into)
             }
-            BackendMode::Local(conn) => conn.get_graph_summary(&self.tenant_id()).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/graph-summary", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let summary: GraphSummary = resp.json().await?;
-                    Ok(summary)
-                } else {
-                    Err(anyhow::anyhow!("Remote get_graph_summary failed: status {}", resp.status()))
-                }
-            }
         }
     }
 
@@ -678,132 +368,6 @@ impl BackendClient {
         match &self.mode {
             BackendMode::Sqlite(sqlite) => {
                 sqlite.find_symbol(&self.tenant_id(), symbol_name, project_path).map_err(Into::into)
-            }
-            BackendMode::Local(conn) => {
-                let query_str = "MATCH (f:File)-[:CONTAINS]->(fn:Function) \
-                                 WHERE f.tenant_id = $tenant_id AND fn.name = $symbol_name AND f.path STARTS WITH $project_path \
-                                 RETURN f.path AS path, fn.start_line AS start_line";
-                let mut query_result = conn.graph().execute(
-                    neo4rs::query(query_str)
-                        .param("tenant_id", self.tenant_id().as_str())
-                        .param("symbol_name", symbol_name)
-                        .param("project_path", project_path)
-                ).await?;
-                let mut results = Vec::new();
-                while let Ok(Some(row)) = query_result.next().await {
-                    if let (Ok(path), Ok(start_line)) = (row.get::<String>("path"), row.get::<i64>("start_line")) {
-                        results.push(format!("Archivo: {} (Línea: {})", path, start_line));
-                    }
-                }
-                Ok(results)
-            }
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/find-symbol", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .query(&[("symbol_name", symbol_name), ("project_path", project_path)])
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let results: Vec<String> = resp.json().await?;
-                    Ok(results)
-                } else {
-                    Err(anyhow::anyhow!("Remote find_symbol failed: status {}", resp.status()))
-                }
-            }
-        }
-    }
-
-    pub async fn create_user(&self, username: &str, role: &str) -> anyhow::Result<String> {
-        match &self.mode {
-            BackendMode::Sqlite(_) => {
-                Err(anyhow::anyhow!("Team management not available in SQLite mode"))
-            }
-            BackendMode::Local(conn) => {
-                let token_bytes = {
-                    use rand::RngCore;
-                    let mut b = [0u8; 16];
-                    rand::thread_rng().fill_bytes(&mut b);
-                    b
-                };
-                let token_hex: String = token_bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                
-                let token = std::env::var("OZYBASE_MCP_TOKEN")
-                    .ok()
-                    .or_else(|| {
-                        let (_, cfg) = load_config().ok()?;
-                        cfg.token
-                    })
-                    .unwrap_or_else(|| "ozys_8f7e_8f7e50d578a699177eba16c7".to_string());
-                
-                let tenant_id = if token.starts_with("ozy_partner_ctx_") && token.contains("_usr_") {
-                    let trimmed = &token["ozy_partner_ctx_".len()..];
-                    let parts: Vec<&str> = trimmed.split("_usr_").collect();
-                    parts[0].to_string()
-                } else {
-                    "default_tenant".to_string()
-                };
-
-                conn.create_user(&tenant_id, username, role, &token_hex).await?;
-                Ok(format!("ozy_partner_ctx_{}_usr_{}", tenant_id, token_hex))
-            }
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/team/create", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({
-                        "username": username,
-                        "role": role,
-                    }))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let val: serde_json::Value = resp.json().await?;
-                    let cred: &str = val.get("credential").and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| anyhow::anyhow!("Credential not returned by server"))?;
-                    Ok(cred.to_string())
-                } else {
-                    Err(anyhow::anyhow!("Remote team create failed: status {}", resp.status()))
-                }
-            }
-        }
-    }
-
-    pub async fn get_active_sessions(&self) -> anyhow::Result<Vec<ozymem_core::SessionRecord>> {
-        match &self.mode {
-            BackendMode::Sqlite(_) => Ok(vec![]),
-            BackendMode::Local(conn) => conn.get_active_sessions(&self.tenant_id()).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.get(format!("{}/api/sessions", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let list: Vec<ozymem_core::SessionRecord> = resp.json().await?;
-                    Ok(list)
-                } else {
-                    Err(anyhow::anyhow!("Remote get sessions failed: status {}", resp.status()))
-                }
-            }
-        }
-    }
-
-    pub async fn kick_session(&self, session_id: &str) -> anyhow::Result<bool> {
-        match &self.mode {
-            BackendMode::Sqlite(_) => Ok(false),
-            BackendMode::Local(conn) => conn.kick_session(&self.tenant_id(), session_id).await,
-            BackendMode::Remote { url, token, client } => {
-                let resp = client.post(format!("{}/api/sessions/kick", url))
-                    .header("Authorization", format!("Bearer {}", token))
-                    .json(&serde_json::json!({
-                        "session_id": session_id,
-                    }))
-                    .send()
-                    .await?;
-                if resp.status().is_success() {
-                    let val: serde_json::Value = resp.json().await?;
-                    Ok(val.get("kicked").and_then(serde_json::Value::as_bool).unwrap_or(false))
-                } else {
-                    Err(anyhow::anyhow!("Remote kick session failed: status {}", resp.status()))
-                }
             }
         }
     }
@@ -833,556 +397,6 @@ struct StatusMetricsJson {
     engrams_formed: i64,
 }
 
-fn parse_unified_credential(cred: &str) -> Option<(String, String)> {
-    if !cred.starts_with("ozy_partner_ctx_") {
-        return None;
-    }
-    let after_prefix = &cred["ozy_partner_ctx_".len()..];
-    let parts: Vec<&str> = after_prefix.split("_usr_").collect();
-    if parts.len() != 2 {
-        return None;
-    }
-    Some((parts[0].to_string(), parts[1].to_string()))
-}
-
-async fn run_mcp_install() -> anyhow::Result<()> {
-    use dialoguer::{theme::ColorfulTheme, Input};
-
-    println!("=========================================================");
-    println!("     INSTALACIÓN INTERACTIVA DE OZYMEM-PARTNER MCP       ");
-    println!("=========================================================");
-    println!();
-
-    let credential: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Introduce tu Credencial Unificada (ozy_partner_ctx_[server_uuid]_usr_[user_token])")
-        .interact_text()?;
-
-    let (server_uuid, user_token) = match parse_unified_credential(credential.trim()) {
-        Some(pair) => pair,
-        None => {
-            println!("[ERROR] Formato de credencial inválido. Debe seguir el formato:");
-            println!("  ozy_partner_ctx_[server_uuid]_usr_[user_token]");
-            return Ok(());
-        }
-    };
-
-    let server_url: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Introduce la URL del Servidor Central")
-        .default("http://localhost:8080".to_string())
-        .interact_text()?;
-
-    println!("[INFO] Validando conexión con el servidor...");
-    let client = reqwest::Client::new();
-    let ping_res = client.get(format!("{}/api/health", server_url.trim().trim_end_matches('/')))
-        .header("Authorization", format!("Bearer {}", credential.trim()))
-        .send()
-        .await;
-
-    match ping_res {
-        Ok(resp) if resp.status().is_success() => {
-            println!("[SUCCESS] Conexión y credencial validadas con éxito.");
-        }
-        Ok(resp) => {
-            println!("[ERROR] El servidor respondió con estado: {}", resp.status());
-            println!("Por favor verifica la credencial o el estado del servidor.");
-            return Ok(());
-        }
-        Err(e) => {
-            println!("[ERROR] No se pudo conectar al servidor: {:?}", e);
-            println!("Por favor verifica la URL del servidor y tu conexión de red.");
-            return Ok(());
-        }
-    }
-
-    // Guardar en la configuración local .ozymem.toml
-    if let Ok((path, mut config)) = load_config() {
-        let brain_name = format!("remote_{}", server_uuid);
-        config.brains.insert(brain_name.clone(), BrainConfig {
-            host: server_url.trim().to_string(),
-            port: 80,
-        });
-        config.current_brain = brain_name;
-        config.token = Some(credential.trim().to_string());
-        if let Err(e) = save_config(&path, &config) {
-            println!("[WARNING] No se pudo guardar la configuración en .ozymem.toml: {:?}", e);
-        } else {
-            println!("[SUCCESS] Configuración local actualizada en .ozymem.toml");
-        }
-    }
-
-    // Inyectar en Cursor/VS Code
-    let home_dir = home::home_dir().context("No se pudo determinar el directorio home.")?;
-    let cursor_path = if cfg!(target_os = "windows") {
-        let appdata = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home_dir.join("AppData").join("Roaming"));
-        appdata.join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-    } else if cfg!(target_os = "macos") {
-        home_dir.join("Library").join("Application Support").join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-    } else {
-        home_dir.join(".config").join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-    };
-
-    let claude_path = if cfg!(target_os = "windows") {
-        let appdata = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home_dir.join("AppData").join("Roaming"));
-        appdata.join("Claude").join("claude_desktop_config.json")
-    } else if cfg!(target_os = "macos") {
-        home_dir.join("Library").join("Application Support").join("Claude").join("claude_desktop_config.json")
-    } else {
-        home_dir.join(".config").join("Claude").join("claude_desktop_config.json")
-    };
-
-    struct McpTarget {
-        name: &'static str,
-        path: PathBuf,
-    }
-
-    let targets = vec![
-        McpTarget {
-            name: "VS Code (Antigravity / Claude Dev)",
-            path: home_dir.join(".gemini").join("antigravity").join("mcp_config.json"),
-        },
-        McpTarget {
-            name: "Cursor Editor",
-            path: cursor_path,
-        },
-        McpTarget {
-            name: "Claude Desktop",
-            path: claude_path,
-        },
-    ];
-
-    let mut detected = Vec::new();
-    for target in targets {
-        if target.path.exists() {
-            detected.push(target);
-        }
-    }
-
-    let selected_target = if detected.is_empty() {
-        println!("No se detectó ningún archivo de configuración MCP activo.");
-        println!("1) VS Code (Antigravity / Claude Dev)");
-        println!("2) Cursor Editor");
-        println!("3) Claude Desktop");
-        print!("Selecciona una opción para inicializarla (Enter para omitir): ");
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        
-        let mut choice_str = String::new();
-        std::io::stdin().read_line(&mut choice_str)?;
-        let choice = choice_str.trim().parse::<usize>().ok();
-        
-        let targets_all = vec![
-            McpTarget {
-                name: "VS Code (Antigravity / Claude Dev)",
-                path: home_dir.join(".gemini").join("antigravity").join("mcp_config.json"),
-            },
-            McpTarget {
-                name: "Cursor Editor",
-                path: if cfg!(target_os = "windows") {
-                    let appdata = std::env::var("APPDATA")
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|_| home_dir.join("AppData").join("Roaming"));
-                    appdata.join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-                } else if cfg!(target_os = "macos") {
-                    home_dir.join("Library").join("Application Support").join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-                } else {
-                    home_dir.join(".config").join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-                },
-            },
-            McpTarget {
-                name: "Claude Desktop",
-                path: if cfg!(target_os = "windows") {
-                    let appdata = std::env::var("APPDATA")
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|_| home_dir.join("AppData").join("Roaming"));
-                    appdata.join("Claude").join("claude_desktop_config.json")
-                } else if cfg!(target_os = "macos") {
-                    home_dir.join("Library").join("Application Support").join("Claude").join("claude_desktop_config.json")
-                } else {
-                    home_dir.join(".config").join("Claude").join("claude_desktop_config.json")
-                },
-            },
-        ];
-        
-        match choice {
-            Some(1) => targets_all.into_iter().nth(0),
-            Some(2) => targets_all.into_iter().nth(1),
-            Some(3) => targets_all.into_iter().nth(2),
-            _ => None,
-        }
-    } else {
-        println!("Entornos MCP detectados:");
-        for (i, target) in detected.iter().enumerate() {
-            println!("  {}) {}", i + 1, target.name);
-        }
-        print!("Selecciona el número del entorno a configurar (Enter para omitir): ");
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        
-        let mut choice_str = String::new();
-        std::io::stdin().read_line(&mut choice_str)?;
-        let choice = choice_str.trim().parse::<usize>().ok();
-        match choice {
-            Some(idx) if idx > 0 && idx <= detected.len() => {
-                Some(detected.remove(idx - 1))
-            }
-            _ => None,
-        }
-    };
-
-    if let Some(target) = selected_target {
-        let path = target.path;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        
-        let content = if path.exists() {
-            std::fs::read_to_string(&path).unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-        let mut json_val: serde_json::Value = if content.trim().is_empty() {
-            serde_json::json!({
-                "mcpServers": {}
-            })
-        } else {
-            serde_json::from_str(&content).unwrap_or_else(|_| {
-                serde_json::json!({
-                    "mcpServers": {}
-                })
-            })
-        };
-
-        let ozymem_path = home_dir.join(".cargo").join("bin").join(if cfg!(windows) { "ozymem.exe" } else { "ozymem" });
-        let ozymem_cmd = if ozymem_path.exists() {
-            ozymem_path.to_string_lossy().to_string()
-        } else {
-            "ozymem".to_string()
-        };
-
-        let mcp_key = format!("ozymem-partner-{}", server_uuid);
-        let mcp_config_value = serde_json::json!({
-            "command": ozymem_cmd,
-            "args": ["mcp", "run"],
-            "env": {
-                "OZYMEM_SERVER_URL": server_url.trim().to_string(),
-                "OZYMEM_SERVER_ID": server_uuid.clone(),
-                "OZYMEM_USER_TOKEN": user_token.clone()
-            }
-        });
-
-        if let Some(mcp_servers) = json_val.get_mut("mcpServers") {
-            if let Some(mcp_servers_obj) = mcp_servers.as_object_mut() {
-                mcp_servers_obj.insert(mcp_key, mcp_config_value);
-            }
-        } else {
-            if let Some(obj) = json_val.as_object_mut() {
-                obj.insert(
-                    "mcpServers".to_string(),
-                    serde_json::json!({
-                        mcp_key: mcp_config_value
-                    })
-                );
-            }
-        }
-
-        let pretty_json = serde_json::to_string_pretty(&json_val)?;
-        std::fs::write(&path, pretty_json)?;
-        println!("[SUCCESS] Configuración inyectada con éxito en: {}", path.display());
-    }
-
-    Ok(())
-}
-
-async fn run_gpr_push(message: String) -> anyhow::Result<()> {
-    let connection = build_backend_client().await?;
-    let target_path = ".";
-    let canonical_target = canonicalize_target(target_path)?;
-
-    let project_root = resolve_project_root(&canonical_target);
-    let ignore_patterns = load_ignore_patterns_for_project(&project_root);
-    
-    const CARPETAS_EXCLUIDAS: &[&str] = &[
-        "vendor",
-        "node_modules",
-        "target",
-        ".git",
-        "storage",
-    ];
-
-    let should_descend_fn = |entry: &DirEntry| {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            return true;
-        };
-
-        let name_lower = name.to_lowercase();
-        let path_str_lower = path.to_string_lossy().to_lowercase();
-
-        if CARPETAS_EXCLUIDAS.iter().any(|&excl| name_lower == excl) {
-            return false;
-        }
-
-        if name_lower == "appdata"
-            || name_lower == "program files"
-            || name_lower == "programdata"
-            || name_lower == "system32"
-            || name_lower == "windows"
-            || name_lower == ".svn"
-            || name_lower == "node_modules"
-            || name_lower == "__pycache__"
-            || name_lower == ".venv"
-            || name_lower == "env"
-            || name_lower == "target"
-            || name_lower == "dist"
-            || name_lower == "build"
-            || name_lower == "ebwebview"
-            || name_lower == "bravesoftware"
-            || path_str_lower.contains("google/chrome")
-            || path_str_lower.contains("google\\chrome")
-            || path_str_lower.contains("microsoft/edge")
-            || path_str_lower.contains("microsoft\\edge")
-            || name_lower == "cache"
-            || name_lower == "local storage"
-            || name_lower == ".cursor"
-            || name_lower == ".vscode"
-            || name_lower == ".idea"
-            || name_lower == ".config"
-            || name_lower == ".anthropic"
-            || name_lower == ".ollama"
-        {
-            return false;
-        }
-
-        if name.starts_with('.') && name != "." {
-            return false;
-        }
-
-        if is_ignored_by_patterns(path, &ignore_patterns, &project_root) {
-            return false;
-        }
-
-        true
-    };
-
-    println!("GPR: Analizando archivos en el proyecto actual...");
-    let mut files = Vec::new();
-
-    for entry in WalkDir::new(&canonical_target)
-        .into_iter()
-        .filter_entry(should_descend_fn)
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        if is_ignored_by_patterns(path, &ignore_patterns, &project_root) {
-            continue;
-        }
-
-        if is_garbage_file(path) {
-            continue;
-        }
-
-        if is_binary_file(path) {
-            continue;
-        }
-
-        let language = get_language_from_path(path);
-        let absolute_path = match fs::canonicalize(path) {
-            Ok(canonical) => canonical,
-            Err(_) => continue,
-        };
-        let absolute_file_path = clean_path(&absolute_path);
-
-        let source_code = match fs::read_to_string(path) {
-            Ok(contents) => contents,
-            Err(_) => continue,
-        };
-
-        if let Ok(map) = parse_source(&absolute_file_path, language, &source_code) {
-            files.push(map);
-        }
-    }
-
-    if files.is_empty() {
-        println!("No se encontraron archivos de código para incluir en el GPR.");
-        return Ok(());
-    }
-
-    println!("GPR: Enviando {} archivos al servidor con el mensaje '{}'...", files.len(), message);
-    
-    match &connection.mode {
-        BackendMode::Sqlite(_) => {
-            println!("[WARNING] GPR no soportado en modo SQLite.");
-        }
-        BackendMode::Local(conn) => {
-            let gpr_id = conn.create_gpr_batch("local", "local_dev", &message, &files).await?;
-            println!("[SUCCESS] Graph Pull Request creado localmente con ID: {}", gpr_id);
-        }
-        BackendMode::Remote { url, token, client } => {
-            let resp = client.post(format!("{}/api/gpr/push", url))
-                .header("Authorization", format!("Bearer {}", token))
-                .json(&serde_json::json!({
-                    "message": message,
-                    "files": files,
-                }))
-                .send()
-                .await?;
-            if resp.status().is_success() {
-                let res_val: serde_json::Value = resp.json().await?;
-                if res_val.get("status").and_then(serde_json::Value::as_str) == Some("merged") {
-                    println!("[SUCCESS] Cambios fusionados directamente (rol Lead).");
-                } else {
-                    let gpr_id = res_val.get("gpr_id").and_then(serde_json::Value::as_i64).unwrap_or(0);
-                    println!("[SUCCESS] Graph Pull Request enviado con éxito. ID asignado: {}", gpr_id);
-                }
-            } else {
-                eprintln!("[ERROR] Falló el envío del GPR: {}", resp.status());
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_gpr_list() -> anyhow::Result<()> {
-    let connection = build_backend_client().await?;
-    match &connection.mode {
-        BackendMode::Sqlite(_) => {
-            println!("No hay Graph Pull Requests (SQLite mode).");
-        }
-        BackendMode::Local(conn) => {
-            let list = conn.get_pending_gprs("local").await?;
-            print_gpr_list(&list);
-        }
-        BackendMode::Remote { url, token, client } => {
-            let resp = client.get(format!("{}/api/gpr/list", url))
-                .header("Authorization", format!("Bearer {}", token))
-                .send()
-                .await?;
-            if resp.status().is_success() {
-                let list: Vec<ozymem_core::GprRecord> = resp.json().await?;
-                print_gpr_list(&list);
-            } else {
-                eprintln!("[ERROR] Falló al listar GPRs: {}", resp.status());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn print_gpr_list(list: &[ozymem_core::GprRecord]) {
-    if list.is_empty() {
-        println!("No hay Graph Pull Requests pendientes.");
-        return;
-    }
-    println!("Graph Pull Requests Pendientes:");
-    println!("+------+----------------------+----------------------+----------------------+");
-    println!("| ID   | Usuario              | Mensaje              | Fecha                |");
-    println!("+------+----------------------+----------------------+----------------------+");
-    for gpr in list {
-        println!("| {:<4} | {:<20} | {:<20} | {:<20} |", gpr.id, gpr.user, gpr.message, gpr.timestamp);
-    }
-    println!("+------+----------------------+----------------------+----------------------+");
-}
-
-async fn run_gpr_diff(gpr_id: i64) -> anyhow::Result<()> {
-    let connection = build_backend_client().await?;
-    match &connection.mode {
-        BackendMode::Sqlite(_) => {
-            println!("GPR no soportado en modo SQLite.");
-        }
-        BackendMode::Local(conn) => {
-            if let Some((message, user, files, lessons)) = conn.get_gpr_diff("local", gpr_id).await? {
-                print_gpr_diff_details(gpr_id, &message, &user, &files, &lessons);
-            } else {
-                println!("No se encontró el GPR con ID {}", gpr_id);
-            }
-        }
-        BackendMode::Remote { url, token, client } => {
-            let resp = client.get(format!("{}/api/gpr/diff", url))
-                .header("Authorization", format!("Bearer {}", token))
-                .query(&[("gpr_id", gpr_id)])
-                .send()
-                .await?;
-            if resp.status().is_success() {
-                let val: serde_json::Value = resp.json().await?;
-                let message = val.get("message").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
-                let user = val.get("user").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
-                let files: Vec<FileDefinitionMap> = serde_json::from_value(val.get("files").cloned().unwrap_or(serde_json::Value::Array(vec![])))?;
-                let lessons: Vec<LessonRecord> = serde_json::from_value(val.get("lessons").cloned().unwrap_or(serde_json::Value::Array(vec![])))?;
-                print_gpr_diff_details(gpr_id, &message, &user, &files, &lessons);
-            } else {
-                eprintln!("[ERROR] Falló al obtener diff de GPR {}: {}", gpr_id, resp.status());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn print_gpr_diff_details(
-    gpr_id: i64,
-    message: &str,
-    user: &str,
-    files: &[FileDefinitionMap],
-    lessons: &[LessonRecord],
-) {
-    println!("Detalles del Graph Pull Request #{}", gpr_id);
-    println!("========================================");
-    println!("Usuario:   {}", user);
-    println!("Mensaje:   {}", message);
-    println!("Archivos Propuestos ({}):", files.len());
-    for file in files {
-        println!("  - {} ({}): {} símbolos", file.file_path, file.language, file.functions.len());
-        for function in &file.functions {
-            println!("      * {} [{:?}] líneas {}-{}", function.name, function.kind, function.start_line, function.end_line);
-        }
-    }
-    if !lessons.is_empty() {
-        println!("Lecciones Propuestas ({}):", lessons.len());
-        for lesson in lessons {
-            println!("  - Archivo: {}", lesson.file_path);
-            println!("    Error:   {}", lesson.error_type);
-            println!("    Solución: {}", lesson.solution);
-        }
-    }
-    println!("========================================");
-}
-
-async fn run_gpr_merge(gpr_id: i64) -> anyhow::Result<()> {
-    let connection = build_backend_client().await?;
-    match &connection.mode {
-        BackendMode::Sqlite(_) => {
-            println!("GPR no soportado en modo SQLite.");
-        }
-        BackendMode::Local(conn) => {
-            conn.merge_gpr("local", gpr_id).await?;
-            println!("[SUCCESS] GPR #{} fusionado localmente con éxito.", gpr_id);
-        }
-        BackendMode::Remote { url, token, client } => {
-            let resp = client.post(format!("{}/api/gpr/merge", url))
-                .header("Authorization", format!("Bearer {}", token))
-                .json(&serde_json::json!({
-                    "gpr_id": gpr_id,
-                }))
-                .send()
-                .await?;
-            if resp.status().is_success() {
-                println!("[SUCCESS] GPR #{} fusionado con éxito en el servidor.", gpr_id);
-            } else {
-                eprintln!("[ERROR] Falló la fusión del GPR {}: {}", gpr_id, resp.status());
-            }
-        }
-    }
-    Ok(())
-}
 
 mod mcp;
 
@@ -1415,75 +429,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init => {
             return run_init().await;
         }
-        Commands::Mcp { subcommand } => {
-            match subcommand {
-                McpSubcommand::Run => {
-                    return mcp::run_mcp_server().await;
-                }
-                McpSubcommand::Setup => {
-                    return run_mcp_setup().await;
-                }
-                McpSubcommand::Start => {
-                    return run_mcp_start().await;
-                }
-                McpSubcommand::Stop => {
-                    return run_mcp_stop().await;
-                }
-                McpSubcommand::Install => {
-                    return run_mcp_install().await;
-                }
-            }
-        }
-        Commands::Team { subcommand } => {
-            let connection = build_backend_client().await?;
-            match subcommand {
-                TeamSubcommand::Create { user, role } => {
-                    let cred = connection.create_user(user, role).await?;
-                    println!("[SUCCESS] Usuario creado con éxito.");
-                    println!("🔑 CREDENCIAL UNIFICADA: {}", cred);
-                    return Ok(());
-                }
-            }
-        }
-        Commands::Gpr { subcommand } => {
-            match subcommand {
-                GprSubcommand::Push { message } => {
-                    run_gpr_push(message.clone()).await?;
-                    return Ok(());
-                }
-                GprSubcommand::List => {
-                    run_gpr_list().await?;
-                    return Ok(());
-                }
-                GprSubcommand::Diff { gpr_id } => {
-                    run_gpr_diff(*gpr_id).await?;
-                    return Ok(());
-                }
-                GprSubcommand::Merge { gpr_id } => {
-                    run_gpr_merge(*gpr_id).await?;
-                    return Ok(());
-                }
-            }
-        }
-        Commands::Auth { subcommand } => {
-            match subcommand {
-                AuthSubcommand::ResetToken => {
-                    run_auth_reset_token().await?;
-                    return Ok(());
-                }
-            }
-        }
-        Commands::Session { subcommand } => {
-            match subcommand {
-                SessionSubcommand::List => {
-                    run_session_list().await?;
-                    return Ok(());
-                }
-                SessionSubcommand::Kick { session_id } => {
-                    run_session_kick(session_id.clone()).await?;
-                    return Ok(());
-                }
-            }
+        Commands::Mcp => {
+            return mcp::run_mcp_server().await;
         }
         _ => {}
     }
@@ -1553,10 +500,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init => unreachable!(),
         Commands::Mcp { .. } => unreachable!(),
         Commands::Doctor { .. } => unreachable!(),
-        Commands::Team { .. } => unreachable!(),
-        Commands::Gpr { .. } => unreachable!(),
-        Commands::Auth { .. } => unreachable!(),
-        Commands::Session { .. } => unreachable!(),
+
         Commands::Parse { file_path } => {
             let path = Path::new(&file_path);
             let content = std::fs::read_to_string(path)?;
@@ -1595,39 +539,8 @@ async fn main() -> anyhow::Result<()> {
 pub async fn build_backend_client() -> anyhow::Result<BackendClient> {
     // Priority:
     //   1. Remote mode if OZYMEM_SERVER_URL or OZYBASE_MCP_TOKEN is http(s)://
-    //   2. Local Memgraph mode if MEMGRAPH_URI is explicitly set in env
-    //   3. SQLite mode by default (no Memgraph needed)
-    let (_, config) = load_config().unwrap_or_else(|_| (PathBuf::new(), OzymemConfig::default()));
-
-    // Check for explicit remote URL
-    if let Ok(server_url) = std::env::var("OZYMEM_SERVER_URL") {
-        if server_url.starts_with("http://") || server_url.starts_with("https://") {
-            let token = std::env::var("OZYBASE_MCP_TOKEN").ok()
-                .or_else(|| config.token.clone())
-                .unwrap_or_else(|| "ozys_8f7e_8f7e50d578a699177eba16c7".to_string());
-            return Ok(BackendClient {
-                mode: BackendMode::Remote {
-                    url: server_url,
-                    token,
-                    client: reqwest::Client::new(),
-                }
-            });
-        }
-    }
-
-    // Check if MEMGRAPH_URI is explicitly set → use Memgraph
-    if let Ok(memgraph_uri) = std::env::var("MEMGRAPH_URI") {
-        let memgraph_config = MemgraphConfig {
-            uri: memgraph_uri,
-            user: std::env::var("MEMGRAPH_USER").unwrap_or_else(|_| "admin".to_string()),
-            password: std::env::var("MEMGRAPH_PASSWORD").unwrap_or_else(|_| "admin".to_string()),
-            database: std::env::var("MEMGRAPH_DATABASE").unwrap_or_else(|_| default_memgraph_database().to_string()),
-        };
-        let connection = MemgraphConnection::connect(memgraph_config).await?;
-        return Ok(BackendClient {
-            mode: BackendMode::Local(connection)
-        });
-    }
+    //   1. SQLite mode by default (no Memgraph needed)
+    let (_, _config) = load_config().unwrap_or_else(|_| (PathBuf::new(), OzymemConfig::default()));
 
     // Default: SQLite mode, project-scoped DB
     let cwd = std::env::current_dir()?;
@@ -2488,9 +1401,9 @@ async fn run_watch(context: &AppContext, target_path: &str, force: bool) -> anyh
             "Error: No se permite indexar desde la raíz del perfil de usuario por seguridad. Muévete a la carpeta de tu proyecto."
         ));
     }
-    // 1. Healthcheck rápido intentando conectar con Memgraph
+    // 1. Quick health check connecting to the backend
     if let Err(e) = context.connection.ping().await {
-        eprintln!("Error: No se pudo conectar a Memgraph (bolt://127.0.0.1:7687). Detalle: {e}");
+        eprintln!("Error: Could not connect to backend database. {e}");
         return Ok(());
     }
 
@@ -2507,101 +1420,6 @@ async fn run_watch(context: &AppContext, target_path: &str, force: bool) -> anyh
             eprintln!("Watcher channel send error: {:?}", e);
         }
     })?;
-
-    use std::sync::atomic::{AtomicBool, Ordering};
-    let is_connected = std::sync::Arc::new(AtomicBool::new(true));
-    let reconnecting = std::sync::Arc::new(AtomicBool::new(false));
-
-    let append_to_wal = |file_path: &str, action: ozymem_core::WalAction| {
-        let entry = ozymem_core::WalEntry {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            action,
-            file_path: file_path.to_string(),
-        };
-        if let Ok(json_str) = serde_json::to_string(&entry) {
-            use std::io::Write;
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(".ozymem_wal")
-            {
-                let _ = writeln!(file, "{}", json_str);
-            }
-        }
-    };
-
-    let trigger_reconnect = |conn: BackendClient,
-                             is_conn: std::sync::Arc<AtomicBool>,
-                             reconn: std::sync::Arc<AtomicBool>| {
-         if reconn.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-             is_conn.store(false, Ordering::SeqCst);
-             println!("[WARNING] Se ha perdido la conexión con Memgraph (Docker inaccesible).");
-             println!("[WAL MODE ACTIVATED] Entrando en modo de resiliencia local.");
-             tokio::spawn(async move {
-                 let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-                 loop {
-                     interval.tick().await;
-                     if conn.ping().await.is_ok() {
-                         is_conn.store(true, Ordering::SeqCst);
-                         reconn.store(false, Ordering::SeqCst);
-                         println!("[CONNECTED] Conexión restablecida con el cerebro de Memgraph.");
-                         println!("[WAL SYNC] Sincronizando cambios acumulados en estricto orden cronológico...");
-
-                         if let Ok(file) = std::fs::File::open(".ozymem_wal") {
-                             use std::io::{BufRead, BufReader};
-                             let reader = BufReader::new(file);
-                             let mut entries = Vec::new();
-                             for line in reader.lines() {
-                                 if let Ok(line_str) = line {
-                                     if let Ok(entry) = serde_json::from_str::<ozymem_core::WalEntry>(&line_str) {
-                                         entries.push(entry);
-                                     }
-                                 }
-                             }
-
-                             let mut success = true;
-                             for entry in entries {
-                                 match entry.action {
-                                     ozymem_core::WalAction::Upsert => {
-                                         let path_buf = std::path::PathBuf::from(&entry.file_path);
-                                         if path_buf.exists() {
-                                             if let Err(e) = index_single_file(&conn, &path_buf).await {
-                                                eprintln!("Error al re-indexar archivo desde WAL: {:?}", e);
-                                                success = false;
-                                                break;
-                                             }
-                                         }
-                                     }
-                                     ozymem_core::WalAction::Delete => {
-                                         if let Err(e) = conn.delete_file_definition(&entry.file_path).await {
-                                             eprintln!("Error al eliminar archivo desde WAL: {:?}", e);
-                                             success = false;
-                                             break;
-                                         }
-                                     }
-                                 }
-                             }
-
-                             if success {
-                                 if let Ok(f) = std::fs::OpenOptions::new().write(true).truncate(true).open(".ozymem_wal") {
-                                     let _ = f.set_len(0);
-                                 }
-                                 println!("[SUCCESS] Bitácora limpiada con éxito. Volviendo a monitoreo en vivo.");
-                             } else {
-                                 is_conn.store(false, Ordering::SeqCst);
-                                 reconn.store(true, Ordering::SeqCst);
-                                 continue;
-                             }
-                         }
-                         break;
-                     }
-                 }
-             });
-         }
-     };
 
     use notify::Watcher;
     watcher.watch(&canonical_target, notify::RecursiveMode::Recursive)?;
@@ -2624,69 +1442,46 @@ async fn run_watch(context: &AppContext, target_path: &str, force: bool) -> anyh
                 if ignore_changed {
                     eprintln!("[WATCHER] Detectado cambio en archivos de ignore (.ozymemignore / .gitignore). Sincronizando y purgando archivos ignorados del grafo...");
                     ignore_patterns = load_ignore_patterns_for_project(&project_root);
-                    if is_connected.load(Ordering::SeqCst) {
-                        match context.connection.get_all_file_paths().await {
-                            Ok(all_paths) => {
-                                for file_path_str in all_paths {
-                                    let path_obj = Path::new(&file_path_str);
-                                    if is_ignored_by_patterns(path_obj, &ignore_patterns, &project_root) {
-                                        if let Err(_) = context.connection.delete_file_definition(&file_path_str).await {
-                                            append_to_wal(&file_path_str, ozymem_core::WalAction::Delete);
-                                            trigger_reconnect(context.connection.clone(), std::sync::Arc::clone(&is_connected), std::sync::Arc::clone(&reconnecting));
-                                        }
-                                    }
+                    match context.connection.get_all_file_paths().await {
+                        Ok(all_paths) => {
+                            for file_path_str in all_paths {
+                                let path_obj = Path::new(&file_path_str);
+                                if is_ignored_by_patterns(path_obj, &ignore_patterns, &project_root) {
+                                    let _ = context.connection.delete_file_definition(&file_path_str).await;
                                 }
                             }
-                            Err(_) => {
-                                trigger_reconnect(context.connection.clone(), std::sync::Arc::clone(&is_connected), std::sync::Arc::clone(&reconnecting));
-                            }
                         }
+                        Err(_) => {}
                     }
                 }
 
                 if event.kind.is_modify() || event.kind.is_create() {
                     for path in event.paths {
                         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                            if filename == ".ozymemignore" || filename == ".gitignore" || filename == ".ozymem_wal" {
+                            if filename == ".ozymemignore" || filename == ".gitignore" {
                                 continue;
                             }
                         }
                         if should_watch_path(&path, &ignore_patterns, &project_root) {
-                            let absolute_path = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-                            let absolute_file_path = clean_path(&absolute_path);
-                            if is_connected.load(Ordering::SeqCst) {
-                                eprintln!("[WATCHER] Re-indexando incrementalmente: {}", path.display());
-                                if let Err(e) = index_single_file(&context.connection, &path).await {
-                                    eprintln!("Error al indexar archivo {}: {:?}", path.display(), e);
-                                    append_to_wal(&absolute_file_path, ozymem_core::WalAction::Upsert);
-                                    trigger_reconnect(context.connection.clone(), std::sync::Arc::clone(&is_connected), std::sync::Arc::clone(&reconnecting));
-                                }
-                            } else {
-                                eprintln!("[WATCHER] [WAL APPEND] Guardado en bitácora -> [Upsert] {}", absolute_file_path);
-                                append_to_wal(&absolute_file_path, ozymem_core::WalAction::Upsert);
+                            eprintln!("[WATCHER] Re-indexando incrementalmente: {}", path.display());
+                            if let Err(e) = index_single_file(&context.connection, &path).await {
+                                eprintln!("Error al indexar archivo {}: {:?}", path.display(), e);
                             }
                         }
                     }
                 } else if event.kind.is_remove() {
                     for path in event.paths {
                         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                            if filename == ".ozymemignore" || filename == ".gitignore" || filename == ".ozymem_wal" {
+                            if filename == ".ozymemignore" || filename == ".gitignore" {
                                 continue;
                             }
                         }
                         if should_process_delete(&path, &ignore_patterns, &project_root) {
                             let resolved = canonicalize_deleted_path(&path).unwrap_or_else(|| path.clone());
                             let absolute_file_path = clean_path(&resolved);
-                            if is_connected.load(Ordering::SeqCst) {
-                                eprintln!("[WATCHER] Detectada eliminación de: {}. Limpiando grafo...", absolute_file_path);
-                                if let Err(e) = context.connection.delete_file_definition(&absolute_file_path).await {
-                                    eprintln!("Error al limpiar archivo {}: {:?}", absolute_file_path, e);
-                                    append_to_wal(&absolute_file_path, ozymem_core::WalAction::Delete);
-                                    trigger_reconnect(context.connection.clone(), std::sync::Arc::clone(&is_connected), std::sync::Arc::clone(&reconnecting));
-                                }
-                            } else {
-                                eprintln!("[WATCHER] [WAL APPEND] Guardado en bitácora -> [Delete] {}", absolute_file_path);
-                                append_to_wal(&absolute_file_path, ozymem_core::WalAction::Delete);
+                            eprintln!("[WATCHER] Detectada eliminación de: {}. Limpiando grafo...", absolute_file_path);
+                            if let Err(e) = context.connection.delete_file_definition(&absolute_file_path).await {
+                                eprintln!("Error al limpiar archivo {}: {:?}", absolute_file_path, e);
                             }
                         }
                     }
@@ -3297,7 +2092,7 @@ async fn run_deregister(name_arg: Option<String>) -> anyhow::Result<()> {
                 if conn.ping().await.is_ok() {
                     use dialoguer::Confirm;
                     if Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                        .with_prompt("¿Desea eliminar también todos los archivos indexados de este proyecto del grafo en Memgraph?")
+                        .with_prompt("Delete all indexed files for this project from the graph as well?")
                         .default(true)
                         .interact()?
                     {
@@ -3548,22 +2343,6 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_root);
     }
 
-    fn display_memgraph_uri_from(uri: &str) -> String {
-        if uri.contains("://") {
-            uri.to_string()
-        } else {
-            format!("bolt://{}", uri)
-        }
-    }
-
-    #[test]
-    fn formats_status_uri_as_bolt() {
-        assert_eq!(
-            display_memgraph_uri_from(default_memgraph_uri()),
-            format!("bolt://{}", default_memgraph_uri())
-        );
-    }
-
     #[test]
     fn dynamic_ignore_patterns_load_and_check() {
         let temp_root =
@@ -3715,222 +2494,21 @@ fn shorten_path(path_str: &str, max_len: usize) -> String {
     }
 }
 
-async fn run_mcp_setup() -> anyhow::Result<()> {
-    let home_dir = home::home_dir().context("No se pudo determinar el directorio home.")?;
+/// Helper for ratatui popup centering
+fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::prelude::Rect) -> ratatui::prelude::Rect {
+    let popup_layout = ratatui::layout::Layout::vertical([
+        ratatui::layout::Constraint::Length((r.height * (100 - percent_y)) / 200),
+        ratatui::layout::Constraint::Length((r.height * percent_y) / 100),
+        ratatui::layout::Constraint::Length((r.height * (100 - percent_y)) / 200),
+    ])
+    .split(r);
 
-    let cursor_path = if cfg!(target_os = "windows") {
-        let appdata = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home_dir.join("AppData").join("Roaming"));
-        appdata.join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-    } else if cfg!(target_os = "macos") {
-        home_dir.join("Library").join("Application Support").join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-    } else {
-        home_dir.join(".config").join("Cursor").join("User").join("globalStorage").join("saoudrizwan.claude-dev").join("settings").join("mcp_config.json")
-    };
-
-    let claude_path = if cfg!(target_os = "windows") {
-        let appdata = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| home_dir.join("AppData").join("Roaming"));
-        appdata.join("Claude").join("claude_desktop_config.json")
-    } else if cfg!(target_os = "macos") {
-        home_dir.join("Library").join("Application Support").join("Claude").join("claude_desktop_config.json")
-    } else {
-        home_dir.join(".config").join("Claude").join("claude_desktop_config.json")
-    };
-
-    struct McpTarget {
-        name: &'static str,
-        path: PathBuf,
-    }
-
-    let targets = vec![
-        McpTarget {
-            name: "VS Code (Antigravity / Claude Dev)",
-            path: home_dir.join(".gemini").join("antigravity").join("mcp_config.json"),
-        },
-        McpTarget {
-            name: "Cursor Editor",
-            path: cursor_path.clone(),
-        },
-        McpTarget {
-            name: "Claude Desktop",
-            path: claude_path.clone(),
-        },
-    ];
-
-    let mut detected = Vec::new();
-    for target in targets {
-        if target.path.exists() {
-            detected.push(target);
-        }
-    }
-
-    let selected_target = if detected.is_empty() {
-        println!("No se detecto ningun archivo de configuracion MCP activo en las rutas conocidas.");
-        println!("Desea inicializar uno nuevo en alguna de estas rutas?");
-        println!("1) VS Code (Antigravity / Claude Dev)");
-        println!("2) Cursor Editor");
-        println!("3) Claude Desktop");
-        print!("Seleccione una opcion (o presione Enter para salir): ");
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        
-        let mut choice_str = String::new();
-        std::io::stdin().read_line(&mut choice_str)?;
-        let choice = choice_str.trim().parse::<usize>().ok();
-        
-        let targets_all = vec![
-            McpTarget {
-                name: "VS Code (Antigravity / Claude Dev)",
-                path: home_dir.join(".gemini").join("antigravity").join("mcp_config.json"),
-            },
-            McpTarget {
-                name: "Cursor Editor",
-                path: cursor_path,
-            },
-            McpTarget {
-                name: "Claude Desktop",
-                path: claude_path,
-            },
-        ];
-        
-        match choice {
-            Some(1) => targets_all.into_iter().nth(0),
-            Some(2) => targets_all.into_iter().nth(1),
-            Some(3) => targets_all.into_iter().nth(2),
-            _ => {
-                println!("Operacion cancelada.");
-                return Ok(());
-            }
-        }
-    } else if detected.len() == 1 {
-        let target = detected.remove(0);
-        print!("Se detecto un unico entorno configurable: {} [{}]\n¿Desea configurar este entorno? (y/n): ", target.name, target.path.display());
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        let mut confirm_str = String::new();
-        std::io::stdin().read_line(&mut confirm_str)?;
-        if confirm_str.trim().to_lowercase().starts_with('y') {
-            Some(target)
-        } else {
-            println!("Operacion cancelada.");
-            return Ok(());
-        }
-    } else {
-        println!("Se detectaron multiples entornos MCP configurables:");
-        for (i, target) in detected.iter().enumerate() {
-            println!("{}) {} [{}]", i + 1, target.name, target.path.display());
-        }
-        print!("Seleccione el numero del entorno que desea configurar: ");
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        
-        let mut choice_str = String::new();
-        std::io::stdin().read_line(&mut choice_str)?;
-        let choice = choice_str.trim().parse::<usize>().ok();
-        match choice {
-            Some(idx) if idx > 0 && idx <= detected.len() => {
-                Some(detected.remove(idx - 1))
-            }
-            _ => {
-                println!("Seleccion invalida. Operacion cancelada.");
-                return Ok(());
-            }
-        }
-    };
-
-    if let Some(target) = selected_target {
-        let path = target.path;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        
-        let content = if path.exists() {
-            std::fs::read_to_string(&path).unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-        let mut json_val: serde_json::Value = if content.trim().is_empty() {
-            serde_json::json!({
-                "mcpServers": {}
-            })
-        } else {
-            serde_json::from_str(&content).unwrap_or_else(|_| {
-                serde_json::json!({
-                    "mcpServers": {}
-                })
-            })
-        };
-
-        let ozymem_path = home_dir.join(".cargo").join("bin").join(if cfg!(windows) { "ozymem.exe" } else { "ozymem" });
-        let ozymem_cmd = if ozymem_path.exists() {
-            ozymem_path.to_string_lossy().to_string()
-        } else {
-            "ozymem".to_string()
-        };
-
-        let token = std::env::var("OZYBASE_MCP_TOKEN")
-            .ok()
-            .or_else(|| {
-                load_config().ok().and_then(|(_, cfg)| cfg.token)
-            })
-            .unwrap_or_else(|| "ozys_8f7e_8f7e50d578a699177eba16c7".to_string());
-
-        if let Some(mcp_servers) = json_val.get_mut("mcpServers") {
-            if let Some(mcp_servers_obj) = mcp_servers.as_object_mut() {
-                mcp_servers_obj.insert(
-                    "ozybase".to_string(),
-                    serde_json::json!({
-                        "command": ozymem_cmd,
-                        "args": ["mcp", "run"],
-                        "env": {
-                            "OZYBASE_MCP_TOKEN": token
-                        }
-                    })
-                );
-            }
-        } else {
-            if let Some(obj) = json_val.as_object_mut() {
-                obj.insert(
-                    "mcpServers".to_string(),
-                    serde_json::json!({
-                        "ozybase": {
-                            "command": ozymem_cmd,
-                            "args": ["mcp", "run"],
-                            "env": {
-                                "OZYBASE_MCP_TOKEN": token
-                            }
-                        }
-                    })
-                );
-            }
-        }
-
-        let pretty_json = serde_json::to_string_pretty(&json_val)?;
-        std::fs::write(&path, pretty_json)?;
-        println!("[SUCCESS] Configuracion inyectada con exito en: {}", path.display());
-    }
-
-    Ok(())
-}
-
-fn kill_pid(pid: u32) -> anyhow::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .args(&["/PID", &pid.to_string(), "/F"])
-            .status()?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = std::process::Command::new("kill")
-            .args(&["-9", &pid.to_string()])
-            .status()?;
-    }
-    Ok(())
+    ratatui::layout::Layout::horizontal([
+        ratatui::layout::Constraint::Length((r.width * (100 - percent_x)) / 200),
+        ratatui::layout::Constraint::Length((r.width * percent_x) / 100),
+        ratatui::layout::Constraint::Length((r.width * (100 - percent_x)) / 200),
+    ])
+    .split(popup_layout[1])[1]
 }
 
 async fn run_mcp_start() -> anyhow::Result<()> {
@@ -3976,25 +2554,6 @@ async fn run_mcp_start() -> anyhow::Result<()> {
     let pid = child.id();
     std::fs::write(&pid_file, pid.to_string())?;
     println!("[SUCCESS] Servidor MCP iniciado en segundo plano (PID: {})", pid);
-    Ok(())
-}
-
-async fn run_mcp_stop() -> anyhow::Result<()> {
-    let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let pid_file = home_dir.join(".ozymem-mcp.pid");
-    
-    if !pid_file.exists() {
-        println!("[ERROR] No se encontró ningún proceso activo para el servidor MCP.");
-        return Ok(());
-    }
-
-    let pid_str = std::fs::read_to_string(&pid_file)?.trim().to_string();
-    if let Ok(pid) = pid_str.parse::<u32>() {
-        kill_pid(pid)?;
-        println!("[SUCCESS] Proceso del servidor MCP (PID: {}) detenido y limpiado.", pid_str);
-    }
-    
-    let _ = std::fs::remove_file(&pid_file);
     Ok(())
 }
 
@@ -4127,7 +2686,7 @@ async fn run_init() -> anyhow::Result<()> {
     println!("[SUCCESS] ¡Entorno Ozymem inicializado con éxito!");
     println!();
     println!("Resumen de Servicios:");
-    println!("  ✔ Docker / Memgraph: {}", db_status_str);
+    println!("  Backend DB: {}", db_status_str);
     println!("  ✔ Servidor MCP:      {}", mcp_status_str);
     println!("  ✔ Watcher Proyecto:  {} -> {}", watcher_status_str, selected_project_path);
     println!();
@@ -4139,7 +2698,6 @@ async fn run_init() -> anyhow::Result<()> {
 }
 
 async fn run_doctor(json_output: bool) -> anyhow::Result<()> {
-    // 1. Config file check
     let home_dir = home::home_dir().context("No se pudo determinar el directorio home.")?;
     let config_path = home_dir.join(".ozymem.toml");
     let config_exists = config_path.exists();
@@ -4149,43 +2707,6 @@ async fn run_doctor(json_output: bool) -> anyhow::Result<()> {
         false
     };
 
-    // 2. Docker Client check
-    let docker_version_output = std::process::Command::new("docker")
-        .arg("--version")
-        .output();
-    let docker_installed = docker_version_output.is_ok();
-    let docker_version = if let Ok(ref out) = docker_version_output {
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    } else {
-        String::new()
-    };
-
-    // 3. Docker Daemon check
-    let docker_info_output = std::process::Command::new("docker")
-        .arg("info")
-        .output();
-    let docker_running = docker_info_output.is_ok() && docker_info_output.as_ref().unwrap().status.success();
-
-    // 4. Memgraph containers check
-    let mut memgraph_container_running = false;
-    let mut lab_container_running = false;
-    if docker_running {
-        if let Ok(out) = std::process::Command::new("docker")
-            .args(&["ps", "--filter", "name=ozymem-memgraph", "--format", "{{.Names}}:{{.Status}}"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            for line in stdout.lines() {
-                if line.contains("ozymem-memgraph-lab") {
-                    lab_container_running = line.to_lowercase().contains("up");
-                } else if line.contains("ozymem-memgraph") {
-                    memgraph_container_running = line.to_lowercase().contains("up");
-                }
-            }
-        }
-    }
-
-    // 5. Connect and ping check
     let connection_res = build_backend_client().await;
     let (db_connected, db_ping_ok) = match &connection_res {
         Ok(conn) => {
@@ -4195,28 +2716,12 @@ async fn run_doctor(json_output: bool) -> anyhow::Result<()> {
         Err(_) => (false, false),
     };
 
-    // 6. Environment variables
-    let env_uri = std::env::var("MEMGRAPH_URI");
-    let env_user = std::env::var("MEMGRAPH_USER");
-    let env_password = std::env::var("MEMGRAPH_PASSWORD");
-    let env_database = std::env::var("MEMGRAPH_DATABASE");
-
     if json_output {
         let payload = serde_json::json!({
             "config_exists": config_exists,
             "config_valid": config_valid,
-            "docker_installed": docker_installed,
-            "docker_running": docker_running,
-            "memgraph_container_running": memgraph_container_running,
-            "lab_container_running": lab_container_running,
             "db_connected": db_connected,
             "db_ping_ok": db_ping_ok,
-            "env_vars": {
-                "MEMGRAPH_URI": env_uri.ok(),
-                "MEMGRAPH_USER": env_user.ok(),
-                "MEMGRAPH_PASSWORD_SET": env_password.is_ok(),
-                "MEMGRAPH_DATABASE": env_database.ok(),
-            }
         });
         println!("{}", serde_json::to_string(&payload)?);
         return Ok(());
@@ -4227,7 +2732,6 @@ async fn run_doctor(json_output: bool) -> anyhow::Result<()> {
     println!("=========================================");
     println!();
 
-    // Config Check
     if config_exists && config_valid {
         println!("  [✔] Configuración Local: Encontrada y válida (.ozymem.toml)");
     } else if config_exists {
@@ -4236,244 +2740,16 @@ async fn run_doctor(json_output: bool) -> anyhow::Result<()> {
         println!("  [✘] Configuración Local: No encontrada (.ozymem.toml no existe)");
     }
 
-    // Docker installation
-    if docker_installed {
-        println!("  [✔] Cliente Docker: Instalado ({})", docker_version);
-    } else {
-        println!("  [✘] Cliente Docker: No detectado en el PATH");
-    }
-
-    // Docker status
-    if docker_running {
-        println!("  [✔] Docker Daemon: Activo y en ejecución");
-    } else {
-        println!("  [✘] Docker Daemon: Inactivo o inaccesible (¿está Docker abierto?)");
-    }
-
-    // Containers
-    if docker_running {
-        if memgraph_container_running {
-            println!("  [✔] Contenedor ozymem-memgraph: ACTIVO / EJECUTÁNDOSE");
-        } else {
-            println!("  [✘] Contenedor ozymem-memgraph: DETENIDO o INEXISTENTE (usa 'ozymem init' para inicializarlo)");
-        }
-
-        if lab_container_running {
-            println!("  [✔] Contenedor ozymem-memgraph-lab: ACTIVO / EJECUTÁNDOSE");
-        } else {
-            println!("  [✘] Contenedor ozymem-memgraph-lab: DETENIDO o INEXISTENTE");
-        }
-    } else {
-        println!("  [-] Contenedores de Memgraph: No se pudo verificar (Docker no se está ejecutando)");
-    }
-
-    // Memgraph connection
     if db_ping_ok {
-        println!("  [✔] Conexión al Cerebro (Memgraph): EXITOSA (Ping respondido)");
+        println!("  [✔] Conexión a la base de datos: EXITOSA");
     } else if db_connected {
-        println!("  [✘] Conexión al Cerebro (Memgraph): Establecida pero falló el PING (¿puerto bloqueado?)");
+        println!("  [✘] Conexión a la base de datos: Establecida pero falló el PING");
     } else {
-        println!("  [✘] Conexión al Cerebro (Memgraph): CONEXIÓN FALLIDA (¿está Memgraph encendido?)");
+        println!("  [✘] Conexión a la base de datos: CONEXIÓN FALLIDA");
     }
 
-    // Env vars info
-    println!();
-    println!("Variables de Entorno:");
-    println!("  - MEMGRAPH_URI:      {}", env_uri.unwrap_or_else(|_| format!("{} (Por defecto)", default_memgraph_uri())));
-    println!("  - MEMGRAPH_USER:     {}", env_user.unwrap_or_else(|_| format!("{} (Por defecto)", "admin")));
-    println!("  - MEMGRAPH_PASSWORD: {}", if env_password.is_ok() { "[ESTABLECIDA]" } else { "[POR DEFECTO]" });
-    println!("  - MEMGRAPH_DATABASE: {}", env_database.unwrap_or_else(|_| format!("{} (Por defecto)", default_memgraph_database())));
-    println!();
-
-    // Recommendation/Summary
-    let healthy = config_valid && docker_running && memgraph_container_running && db_ping_ok;
-    if healthy {
-        println!("¡ENHORABUENA! Tu entorno de Ozymem está en perfectas condiciones.");
-    } else {
-        println!("ADVERTENCIA: Se han detectado problemas en el entorno.");
-        println!("Soluciones sugeridas:");
-        if !config_exists {
-            println!("  -> Ejecuta un comando básico de ozymem o crea el archivo .ozymem.toml en tu perfil.");
-        }
-        if !docker_running {
-            println!("  -> Asegúrate de que la aplicación Docker Desktop o el servicio Docker esté iniciado.");
-        } else if !memgraph_container_running {
-            println!("  -> Ejecuta 'ozymem init' para arrancar los contenedores del ecosistema.");
-        }
-        if !db_ping_ok && memgraph_container_running {
-            println!("  -> Verifica que el puerto 7687 no esté ocupado por otra base de datos.");
-        }
-    }
     println!("=========================================");
 
-    Ok(())
-}
-
-async fn run_auth_reset_token() -> anyhow::Result<()> {
-    use dialoguer::Confirm;
-    
-    println!("=========================================================");
-    println!("        RESTABLECER TOKEN DE ACCESO DE OZYMEM            ");
-    println!("=========================================================");
-    println!();
-    
-    if !Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-        .with_prompt("¿Estás seguro de que deseas restablecer tu token de acceso? Esto invalidará el token actual.")
-        .default(false)
-        .interact()?
-    {
-        println!("Operación cancelada.");
-        return Ok(());
-    }
-
-    let (config_path, mut config) = load_config()?;
-    let current_token = config.token.clone().unwrap_or_else(|| "ozys_8f7e_8f7e50d578a699177eba16c7".to_string());
-    
-    let server_uuid = if current_token.starts_with("ozy_partner_ctx_") && current_token.contains("_usr_") {
-        let trimmed = &current_token["ozy_partner_ctx_".len()..];
-        let parts: Vec<&str> = trimmed.split("_usr_").collect();
-        parts[0].to_string()
-    } else {
-        let mut u_bytes = [0u8; 8];
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut u_bytes);
-        u_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
-    };
-
-    let new_token_hex = {
-        let mut b = [0u8; 16];
-        use rand::RngCore;
-        rand::thread_rng().fill_bytes(&mut b);
-        b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>()
-    };
-
-    let new_credential = format!("ozy_partner_ctx_{}_usr_{}", server_uuid, new_token_hex);
-
-    let connection = build_backend_client().await?;
-    match &connection.mode {
-        BackendMode::Sqlite(_) => {
-            println!("[WARNING] Auth tokens no aplican a SQLite local. Ignorando.");
-        }
-        BackendMode::Local(conn) => {
-            conn.create_user(&server_uuid, "admin", "admin", &new_token_hex).await?;
-            println!("[INFO] Credencial actualizada en la base de datos local.");
-        }
-        BackendMode::Remote { .. } => {
-            println!("[WARNING] Tu CLI está configurada en modo remoto. El restablecimiento local de tokens no afectará al servidor remoto.");
-        }
-    }
-
-    config.token = Some(new_credential.clone());
-    save_config(&config_path, &config)?;
-    println!("[SUCCESS] Configuración local (.ozymem.toml) actualizada.");
-
-    if let Err(e) = run_mcp_setup().await {
-        println!("[WARNING] No se pudo actualizar automáticamente mcp_config.json: {:?}", e);
-    } else {
-        println!("[SUCCESS] Archivos de configuración de clientes MCP (Cursor/VS Code/Claude) actualizados.");
-    }
-
-    let copied = copy_to_clipboard(&new_credential).is_ok();
-    println!();
-    println!("🔑 NUEVA CREDENCIAL UNIFICADA:");
-    println!("  {}", new_credential);
-    println!();
-    if copied {
-        println!("[INFO] La credencial ha sido copiada automáticamente al portapapeles.");
-    } else {
-        println!("[INFO] Por favor, copia la credencial unificada manualmente.");
-    }
-
-    Ok(())
-}
-
-fn copy_to_clipboard(text: &str) -> anyhow::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::{Command, Stdio};
-        use std::io::Write;
-        let mut child = Command::new("clip")
-            .stdin(Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(text.as_bytes())?;
-        }
-        child.wait()?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        use std::process::{Command, Stdio};
-        use std::io::Write;
-        if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            let _ = child.wait();
-        } else if let Ok(mut child) = Command::new("xclip").args(&["-selection", "clipboard"]).stdin(Stdio::piped()).spawn() {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            let _ = child.wait();
-        }
-        Ok(())
-    }
-}
-
-async fn run_session_list() -> anyhow::Result<()> {
-    let connection = build_backend_client().await?;
-    if let BackendMode::Local(ref conn) = connection.mode {
-        let _ = conn.clean_zombie_sessions(&connection.tenant_id()).await;
-    }
-    // Sqlite mode: no sessions to clean
-
-    let sessions = connection.get_active_sessions().await?;
-    if sessions.is_empty() {
-        println!("[INFO] No hay sesiones activas registradas.");
-        return Ok(());
-    }
-
-    use comfy_table::Table;
-    let mut table = Table::new();
-    table.set_header(vec!["ID de Sesión", "Usuario", "Transporte", "PID", "Última Actividad (Heartbeat)"]);
-
-    for session in sessions {
-        let last_seen_dt = if let Ok(last_seen_secs) = session.last_seen.parse::<u64>() {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let diff = now.saturating_sub(last_seen_secs);
-            if diff < 60 {
-                format!("Hace {}s", diff)
-            } else {
-                format!("Hace {}m {}s", diff / 60, diff % 60)
-            }
-        } else {
-            "N/A".to_string()
-        };
-
-        table.add_row(vec![
-            session.id,
-            session.username,
-            session.transport,
-            session.pid.to_string(),
-            last_seen_dt,
-        ]);
-    }
-
-    println!("{}", table);
-    Ok(())
-}
-
-async fn run_session_kick(session_id: String) -> anyhow::Result<()> {
-    let connection = build_backend_client().await?;
-    let kicked = connection.kick_session(&session_id).await?;
-    if kicked {
-        println!("[SUCCESS] Sesión '{}' revocada con éxito.", session_id);
-    } else {
-        println!("[WARNING] No se encontró ninguna sesión activa con ID '{}'.", session_id);
-    }
     Ok(())
 }
 
@@ -4736,10 +3012,10 @@ async fn run_dashboard() -> anyhow::Result<()> {
     let mut log_lines: Vec<String> = Vec::new();
     
     // Tab 3: Graph PRs state
-    let mut gpr_list: Vec<ozymem_core::GprRecord> = Vec::new();
-    let mut selected_gpr_idx = 0;
-    let mut active_gpr_details: Option<(String, String, Vec<FileDefinitionMap>, Vec<LessonRecord>)> = None;
-    let mut gpr_scroll_offset = 0;
+    let _gpr_list: Vec<()> = Vec::new();
+    let _selected_gpr_idx = 0;
+    let _active_gpr_details: Option<(String, String, Vec<FileDefinitionMap>, Vec<LessonRecord>)> = None;
+    let _gpr_scroll_offset = 0;
     
     let mut status_message = "Bienvenido a OzyMem Dashboard! Pulse 1, 2 o 3 para navegar por pestañas.".to_string();
     
@@ -4776,37 +3052,9 @@ async fn run_dashboard() -> anyhow::Result<()> {
         log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
     }
     
-    // Helper function to fetch GPR details
-    let fetch_gpr_details_sync = |connection: &BackendClient, gpr_id: i64| -> Option<(String, String, Vec<FileDefinitionMap>, Vec<LessonRecord>)> {
-        // We can execute this synchronously inside event loop / drawer
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            match &connection.mode {
-                BackendMode::Sqlite(_) => None,
-                BackendMode::Local(conn) => {
-                    conn.get_gpr_diff("local", gpr_id).await.ok().flatten()
-                }
-                BackendMode::Remote { url, token, client } => {
-                    if let Ok(resp) = client.get(format!("{}/api/gpr/diff", url))
-                        .header("Authorization", format!("Bearer {}", token))
-                        .query(&[("gpr_id", gpr_id)])
-                        .send()
-                        .await
-                    {
-                        if resp.status().is_success() {
-                            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                                let message = val.get("message").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
-                                let user = val.get("user").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
-                                let files: Vec<FileDefinitionMap> = serde_json::from_value(val.get("files").cloned().unwrap_or(serde_json::Value::Array(vec![]))).unwrap_or_default();
-                                let lessons: Vec<LessonRecord> = serde_json::from_value(val.get("lessons").cloned().unwrap_or(serde_json::Value::Array(vec![]))).unwrap_or_default();
-                                return Some((message, user, files, lessons));
-                            }
-                        }
-                    }
-                    None
-                }
-            }
-        })
+    // Helper function to fetch GPR details (no-op in SQLite mode)
+    let _fetch_gpr_details_sync = |_connection: &BackendClient, _gpr_id: i64| -> Option<(String, String, Vec<FileDefinitionMap>, Vec<LessonRecord>)> {
+        None
     };
     
     loop {
@@ -4861,7 +3109,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
             let tabs_items = vec![
                 Line::from(" [1] Recuerdos "),
                 Line::from(" [2] Monitoreo y Watchers "),
-                Line::from(" [3] Graph PRs "),
+                Line::from(" (Graph PRs no disponible) "),
             ];
             
             let selected_tab_idx = match active_tab {
@@ -5075,7 +3323,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                         
                     let mut status_lines = Vec::new();
                     status_lines.push(Line::from(vec![
-                        Span::styled("Memgraph DB URL:  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("Backend DB URL:  ", Style::default().fg(Color::DarkGray)),
                         Span::styled(display_uri.clone(), Style::default().fg(Color::Cyan)),
                     ]));
                     
@@ -5107,115 +3355,17 @@ async fn run_dashboard() -> anyhow::Result<()> {
                     f.render_widget(para, main_chunks[1]);
                 }
                 ActiveTab::GraphPRs => {
-                    let main_chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([
-                            Constraint::Percentage(40),
-                            Constraint::Percentage(60),
-                        ])
-                        .split(chunks[1]);
-                        
-                    // 2a. Left: List of Graph PRs
                     let gpr_block = Block::default()
-                        .title(format!(" Graph Pull Requests ({}) ", gpr_list.len()))
+                        .title(" Graph PRs ")
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(Color::White));
-                        
-                    let items: Vec<ListItem> = gpr_list.iter().enumerate().map(|(idx, gpr)| {
-                        let bg_color = if idx == selected_gpr_idx { Color::Rgb(30, 60, 90) } else { Color::Reset };
-                        let is_selected_style = if idx == selected_gpr_idx {
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::White)
-                        };
-                        
-                        ListItem::new(Line::from(vec![
-                            Span::styled(format!(" GPR #{} ", gpr.id), is_selected_style),
-                            Span::styled(format!(" ({}) ", gpr.user), Style::default().fg(Color::DarkGray)),
-                            Span::styled(gpr.message.clone(), Style::default().fg(Color::Cyan)),
-                        ]))
-                        .style(Style::default().bg(bg_color))
-                    }).collect();
-                    
-                    if items.is_empty() {
-                        let empty_para = Paragraph::new("No hay Graph PRs pendientes de fusionar.")
-                            .alignment(ratatui::layout::Alignment::Center)
-                            .block(gpr_block);
-                        f.render_widget(empty_para, main_chunks[0]);
-                    } else {
-                        let mut list_state = ListState::default();
-                        list_state.select(Some(selected_gpr_idx));
-                        let list_widget = List::new(items)
-                            .block(gpr_block)
-                            .highlight_symbol(">> ")
-                            .highlight_style(Style::default().fg(Color::Green).bg(Color::Rgb(30, 60, 90)));
-                        f.render_stateful_widget(list_widget, main_chunks[0], &mut list_state);
-                    }
-                    
-                    // 2b. Right: GPR Diff view
-                    let diff_block = Block::default()
-                        .title(" Auditoria de Cambios del GPR ")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::White));
-                        
-                    if let Some((msg, user, files, lessons)) = &active_gpr_details {
-                        let mut details_text = Vec::new();
-                        details_text.push(Line::from(vec![
-                            Span::styled("GPR:         ", Style::default().fg(Color::DarkGray)),
-                            Span::styled(msg.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                        ]));
-                        details_text.push(Line::from(vec![
-                            Span::styled("Autor:       ", Style::default().fg(Color::DarkGray)),
-                            Span::styled(user.clone(), Style::default().fg(Color::White)),
-                        ]));
-                        details_text.push(Line::from(""));
-                        details_text.push(Line::from(Span::styled("Archivos Propuestos:", Style::default().add_modifier(Modifier::UNDERLINED))));
-                        
-                        for file in files {
-                            details_text.push(Line::from(vec![
-                                Span::styled("  - ", Style::default().fg(Color::DarkGray)),
-                                Span::styled(file.file_path.clone(), Style::default().fg(Color::Cyan)),
-                                Span::styled(format!(" ({})", file.language), Style::default().fg(Color::Gray)),
-                            ]));
-                            for symbol in &file.functions {
-                                details_text.push(Line::from(vec![
-                                    Span::styled("      * ", Style::default().fg(Color::DarkGray)),
-                                    Span::styled(symbol.name.clone(), Style::default().fg(Color::White)),
-                                    Span::styled(format!(" [{:?}] lineas {}-{}", symbol.kind, symbol.start_line, symbol.end_line), Style::default().fg(Color::DarkGray)),
-                                ]));
-                            }
-                        }
-                        
-                        if !lessons.is_empty() {
-                            details_text.push(Line::from(""));
-                            details_text.push(Line::from(Span::styled("Lecciones Asociadas:", Style::default().add_modifier(Modifier::UNDERLINED))));
-                            for lesson in lessons {
-                                details_text.push(Line::from(vec![
-                                    Span::styled("  - Archivo: ", Style::default().fg(Color::DarkGray)),
-                                    Span::styled(lesson.file_path.clone(), Style::default().fg(Color::White)),
-                                ]));
-                                details_text.push(Line::from(vec![
-                                    Span::styled("    Error:   ", Style::default().fg(Color::DarkGray)),
-                                    Span::styled(lesson.error_type.clone(), Style::default().fg(Color::LightRed)),
-                                ]));
-                                details_text.push(Line::from(vec![
-                                    Span::styled("    Solucion:", Style::default().fg(Color::DarkGray)),
-                                    Span::styled(lesson.solution.clone(), Style::default().fg(Color::LightGreen)),
-                                ]));
-                            }
-                        }
-                        
-                        let para = Paragraph::new(details_text)
-                            .block(diff_block)
-                            .scroll((gpr_scroll_offset, 0))
-                            .wrap(Wrap { trim: false });
-                        f.render_widget(para, main_chunks[1]);
-                    } else {
-                        let para = Paragraph::new("Selecciona un GPR para auditar sus cambios.")
-                            .alignment(ratatui::layout::Alignment::Center)
-                            .block(diff_block);
-                        f.render_widget(para, main_chunks[1]);
-                    }
+
+                    let para = Paragraph::new(
+                        "GPR functionality is not available in local mode."
+                    )
+                    .alignment(ratatui::layout::Alignment::Center)
+                    .block(gpr_block);
+                    f.render_widget(para, chunks[1]);
                 }
             }
             
@@ -5236,7 +3386,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                 match active_tab {
                     ActiveTab::Memories => "[q] Salir  [Tab] Ciclador  [s] Buscar  [f] Olvidar  [p] Depurar  [Esc] Limpiar  [,] Subir  [.] Bajar".to_string(),
                     ActiveTab::SystemStatus => "[q] Salir  [Tab] Ciclador  [r] Recargar Logs  [↑/↓] Navegar proyectos".to_string(),
-                    ActiveTab::GraphPRs => "[q] Salir  [Tab] Ciclador  [m] Fusionar GPR  [r] Recargar Lista  [,] Subir  [.] Bajar".to_string(),
+                    ActiveTab::GraphPRs => "[q] Salir  [Tab] Ciclador".to_string(),
                 }
             };
             
@@ -5359,7 +3509,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                         crossterm::event::KeyCode::Tab => {
                             active_tab = match active_tab {
                                 ActiveTab::Memories => ActiveTab::SystemStatus,
-                                ActiveTab::SystemStatus => ActiveTab::GraphPRs,
+                                ActiveTab::SystemStatus => ActiveTab::Memories,
                                 ActiveTab::GraphPRs => ActiveTab::Memories,
                             };
                             status_message = format!("Pestana activa: {:?}", active_tab);
@@ -5369,14 +3519,6 @@ async fn run_dashboard() -> anyhow::Result<()> {
                                 status_ping_ok = Some(connection.ping().await.is_ok());
                                 if !sorted_projects.is_empty() {
                                     log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
-                                }
-                            } else if active_tab == ActiveTab::GraphPRs {
-                                gpr_list = fetch_gprs(&connection).await;
-                                if !gpr_list.is_empty() {
-                                    selected_gpr_idx = 0;
-                                    active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[0].id);
-                                } else {
-                                    active_gpr_details = None;
                                 }
                             }
                         }
@@ -5393,15 +3535,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                             }
                         }
                         crossterm::event::KeyCode::Char('3') => {
-                            active_tab = ActiveTab::GraphPRs;
-                            status_message = "Pestana activa: Graph PRs".to_string();
-                            gpr_list = fetch_gprs(&connection).await;
-                            if !gpr_list.is_empty() {
-                                selected_gpr_idx = 0;
-                                active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[0].id);
-                            } else {
-                                active_gpr_details = None;
-                            }
+                            status_message = "Graph PRs no disponible en modo local.".to_string();
                         }
                         crossterm::event::KeyCode::Char('r') | crossterm::event::KeyCode::Char('R') => {
                             match active_tab {
@@ -5421,16 +3555,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                                     status_message = "Monitoreo y logs actualizados.".to_string();
                                 }
                                 ActiveTab::GraphPRs => {
-                                    gpr_list = fetch_gprs(&connection).await;
-                                    if !gpr_list.is_empty() {
-                                        if selected_gpr_idx >= gpr_list.len() {
-                                            selected_gpr_idx = 0;
-                                        }
-                                        active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[selected_gpr_idx].id);
-                                    } else {
-                                        active_gpr_details = None;
-                                    }
-                                    status_message = "Listado de Graph PRs recargado.".to_string();
+                                    status_message = "Graph PRs no disponible en modo local.".to_string();
                                 }
                             }
                         }
@@ -5448,13 +3573,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                                         log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
                                     }
                                 }
-                                ActiveTab::GraphPRs => {
-                                    if selected_gpr_idx > 0 {
-                                        selected_gpr_idx -= 1;
-                                        gpr_scroll_offset = 0;
-                                        active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[selected_gpr_idx].id);
-                                    }
-                                }
+                                ActiveTab::GraphPRs => {}
                             }
                         }
                         crossterm::event::KeyCode::Down => {
@@ -5471,13 +3590,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                                         log_lines = load_current_project_logs(&sorted_projects, selected_project_idx);
                                     }
                                 }
-                                ActiveTab::GraphPRs => {
-                                    if selected_gpr_idx + 1 < gpr_list.len() {
-                                        selected_gpr_idx += 1;
-                                        gpr_scroll_offset = 0;
-                                        active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[selected_gpr_idx].id);
-                                    }
-                                }
+                                ActiveTab::GraphPRs => {}
                             }
                         }
                         crossterm::event::KeyCode::Char(',') => {
@@ -5487,11 +3600,6 @@ async fn run_dashboard() -> anyhow::Result<()> {
                                         scroll_offset -= 1;
                                     }
                                 }
-                                ActiveTab::GraphPRs => {
-                                    if gpr_scroll_offset > 0 {
-                                        gpr_scroll_offset -= 1;
-                                    }
-                                }
                                 _ => {}
                             }
                         }
@@ -5499,9 +3607,6 @@ async fn run_dashboard() -> anyhow::Result<()> {
                             match active_tab {
                                 ActiveTab::Memories => {
                                     scroll_offset += 1;
-                                }
-                                ActiveTab::GraphPRs => {
-                                    gpr_scroll_offset += 1;
                                 }
                                 _ => {}
                             }
@@ -5544,29 +3649,7 @@ async fn run_dashboard() -> anyhow::Result<()> {
                         }
                         crossterm::event::KeyCode::Char('m') | crossterm::event::KeyCode::Char('M') => {
                             if active_tab == ActiveTab::GraphPRs {
-                                if let Some(gpr) = gpr_list.get(selected_gpr_idx) {
-                                    let gpr_id = gpr.id;
-                                    let rt = tokio::runtime::Handle::current();
-                                    let merge_res = rt.block_on(async {
-                                        merge_gpr(&connection, gpr_id).await
-                                    });
-                                    match merge_res {
-                                        Ok(_) => {
-                                            status_message = format!("GPR #{} fusionado con exito.", gpr_id);
-                                            // Reload list
-                                            gpr_list = fetch_gprs(&connection).await;
-                                            if !gpr_list.is_empty() {
-                                                selected_gpr_idx = 0;
-                                                active_gpr_details = fetch_gpr_details_sync(&connection, gpr_list[0].id);
-                                            } else {
-                                                active_gpr_details = None;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            status_message = format!("Error al fusionar GPR: {:?}", e);
-                                        }
-                                    }
-                                }
+                                status_message = "GPR merge no disponible en modo local.".to_string();
                             }
                         }
                         _ => {}
@@ -5577,74 +3660,6 @@ async fn run_dashboard() -> anyhow::Result<()> {
     }
     
     Ok(())
-}
-
-async fn fetch_gprs(connection: &BackendClient) -> Vec<ozymem_core::GprRecord> {
-    match &connection.mode {
-        BackendMode::Sqlite(_) => Vec::new(),
-        BackendMode::Local(conn) => {
-            conn.get_pending_gprs("local").await.unwrap_or_default()
-        }
-        BackendMode::Remote { url, token, client } => {
-            if let Ok(resp) = client.get(format!("{}/api/gpr/list", url))
-                .header("Authorization", format!("Bearer {}", token))
-                .send()
-                .await
-            {
-                if resp.status().is_success() {
-                    resp.json().await.unwrap_or_default()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            }
-        }
-    }
-}
-
-async fn merge_gpr(connection: &BackendClient, gpr_id: i64) -> anyhow::Result<()> {
-    match &connection.mode {
-        BackendMode::Sqlite(_) => {
-            Err(anyhow::anyhow!("GPR operations not supported in SQLite mode"))
-        }
-        BackendMode::Local(conn) => {
-            conn.merge_gpr("local", gpr_id).await
-        }
-        BackendMode::Remote { url, token, client } => {
-            let resp = client.post(format!("{}/api/gpr/merge", url))
-                .header("Authorization", format!("Bearer {}", token))
-                .json(&serde_json::json!({ "gpr_id": gpr_id }))
-                .send()
-                .await?;
-            if resp.status().is_success() {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Remote merge returned status {}", resp.status()))
-            }
-        }
-    }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
-    use ratatui::layout::{Constraint, Direction, Layout};
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-        
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
 
 /// Helper function to send commands to the central Go daemon over the TCP socket.

@@ -423,7 +423,7 @@ async fn handle_request(
             let connection = match get_connection(connection_cell).await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    return Ok(Some(error_response(id, -32603, &format!("Memgraph connection failed: {:?}", e))));
+                    return Ok(Some(error_response(id, -32603, &format!("Backend connection failed: {:?}", e))));
                 }
             };
 
@@ -432,7 +432,7 @@ async fn handle_request(
                     let summary = match connection.get_graph_summary().await {
                         Ok(s) => s,
                         Err(e) => {
-                            return Ok(Some(error_response(id, -32603, &format!("Memgraph query error: {:?}", e))));
+                            return Ok(Some(error_response(id, -32603, &format!("Backend query error: {:?}", e))));
                         }
                     };
 

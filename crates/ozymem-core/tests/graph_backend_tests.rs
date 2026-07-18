@@ -417,7 +417,7 @@ async fn test_p1_record_lesson_updates_analyze_impact() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     // main.rs → lib.rs (outgoing edge via `mod lib;`).
     // analyze_impact on main_path finds lib.rs at depth 1.
@@ -472,7 +472,7 @@ async fn test_p2_scanning_flag_blocks_reload() {
 
     // scanning=false → full_scan works normally
     backend.scanning.store(false, Ordering::SeqCst);
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     assert!(!backend.analyze_impact(&main_path, 3).is_empty(),
         "after full_scan, analyze_impact should find results");
@@ -489,7 +489,7 @@ async fn test_p5_rebuild_after_file_deletion() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let main_path = full_path(&root, "main.rs");
     let lib_path = full_path(&root, "lib.rs");
@@ -500,7 +500,7 @@ async fn test_p5_rebuild_after_file_deletion() {
 
     // Delete main.rs and re-scan
     std::fs::remove_file(&main_path).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     // Deleted file returns empty impact
     assert!(
@@ -540,7 +540,7 @@ async fn test_edge_noise_dir_exclusion() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     // Real file must be present — use file_context to check (analyze_impact
     // returns empty for leaf files with no outgoing deps)
@@ -581,7 +581,7 @@ async fn test_edge_debounce_500ms() {
     backend.set_project_path(Some(&root));
 
     // First scan — 1 file
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
     assert_eq!(backend.get_graph_summary().await.unwrap().file_count, 1);
 
     // Add a new file
@@ -672,7 +672,7 @@ async fn test_context_for_task_composition() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let main_path = full_path(&root, "main.rs");
     let lib_path = full_path(&root, "lib.rs");
@@ -722,7 +722,7 @@ async fn test_lesson_entry_stale_fields() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let lib_path = full_path(&root, "lib.rs");
 
@@ -770,7 +770,7 @@ async fn test_search_lessons_empty_query() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     // Query matching nothing
     let results = backend.search_lessons("xyznonexistent", None, 10).await.unwrap();
@@ -806,7 +806,7 @@ async fn test_search_lessons_bm25_ranking() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     // Three lessons, each with "overflow" in a different column only.
     let lib = full_path(&root, "lib.rs");
@@ -849,7 +849,7 @@ async fn test_search_lessons_bm25_respects_stale_filter() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let lib = full_path(&root, "lib.rs");
 
@@ -892,7 +892,7 @@ async fn test_search_lessons_stale_filter_before_limit() {
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let lib = full_path(&root, "lib.rs");
 
@@ -943,7 +943,7 @@ fn test_rebuild_graph_stable_deps() {
 
     let backend = GraphBackend::open_for_project(root).unwrap();
     let root_str = root.to_string_lossy().to_string();
-    backend.full_scan(&root_str).unwrap();
+    backend.full_scan(&root_str, None).unwrap();
 
     let a_abs = a_path.to_string_lossy().to_string();
     let b_abs = b_path.to_string_lossy().to_string();
@@ -981,7 +981,7 @@ fn test_dependency_edges_survive_path_normalization() {
 
     let backend = GraphBackend::open_for_project(root).unwrap();
     let root_str = root.to_string_lossy().to_string();
-    backend.full_scan(&root_str).unwrap();
+    backend.full_scan(&root_str, None).unwrap();
 
     // After rebuild_graph (called by full_scan), verify edges exist
     let lib_abs = ozymem_core::normalize_path(&root.join("lib.rs").to_string_lossy());
@@ -1047,4 +1047,35 @@ async fn test_similar_lessons_ranking() {
         "top result should have meaningful similarity: score={:.3}",
         results[0].score,
     );
+}
+
+#[test]
+fn test_full_scan_progress_callback() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("proj");
+    std::fs::create_dir_all(&root).unwrap();
+
+    // Write two Rust source files
+    let mut f1 = std::fs::File::create(root.join("main.rs")).unwrap();
+    write!(f1, "fn main() {{ println!(\"hello\"); }}").unwrap();
+    let mut f2 = std::fs::File::create(root.join("lib.rs")).unwrap();
+    write!(f2, "pub fn add(a: i32, b: i32) -> i32 {{ a + b }}").unwrap();
+
+    // Create .ozymem directory so GraphBackend::open can create the DB
+    std::fs::create_dir_all(root.join(".ozymem")).unwrap();
+    let db_path = root.join(".ozymem").join("memory.db");
+    let backend = GraphBackend::open(Some(&db_path.to_string_lossy())).unwrap();
+    backend.set_project_path(Some(&root.to_string_lossy()));
+
+    let calls = std::sync::Mutex::new(Vec::new());
+    backend.full_scan(&root.to_string_lossy(), Some(&|processed, total| {
+        calls.lock().unwrap().push((processed, total));
+    })).unwrap();
+
+    let history = calls.lock().unwrap().clone();
+    assert!(!history.is_empty(), "progress callback should be called at least once");
+    // Last call should report all files
+    let last = history.last().unwrap();
+    assert_eq!(last.0, last.1, "final progress should show all files processed");
+    assert_eq!(last.0, 2, "expected 2 files to be scanned");
 }

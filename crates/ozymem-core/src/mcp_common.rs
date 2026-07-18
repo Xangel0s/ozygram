@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use crate::{FileGraphContext, GraphSummary, graph_backend::{LessonEntry, NeighborInfo}};
 
+// ---------------------------------------------------------------------------
+// JSON-RPC wire types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
@@ -25,7 +29,13 @@ pub struct JsonRpcResponse {
 pub struct JsonRpcError {
     pub code: i64,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
+
+// ---------------------------------------------------------------------------
+// Initialize / Capabilities
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
 pub struct InitializeResult {
@@ -39,6 +49,16 @@ pub struct InitializeResult {
 #[derive(Debug, Serialize)]
 pub struct ServerCapabilities {
     pub tools: ToolsCapability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourcesCapability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptsCapability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logging: Option<LoggingCapability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<SamplingCapability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completions: Option<CompletionsCapability>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,14 +68,38 @@ pub struct ToolsCapability {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ResourcesCapability {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subscribe: Option<bool>,
+    #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
+    pub list_changed: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PromptsCapability {
+    #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
+    pub list_changed: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoggingCapability {}
+
+#[derive(Debug, Serialize)]
 pub struct ServerInfo {
     pub name: &'static str,
     pub version: &'static str,
 }
 
+// ---------------------------------------------------------------------------
+// Tools
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Serialize)]
 pub struct ToolListResult {
     pub tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,6 +131,289 @@ pub struct ToolCallParams {
     pub arguments: Map<String, Value>,
 }
 
+// ---------------------------------------------------------------------------
+// Resources
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct ListResourcesResult {
+    pub resources: Vec<ResourceDescription>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResourceDescription {
+    pub uri: String,
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum ResourceContents {
+    Text {
+        uri: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        text: String,
+    },
+    Blob {
+        uri: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        blob: String, // base64
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReadResourceResult {
+    pub contents: Vec<ResourceContents>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadResourceParams {
+    pub uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListResourcesParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "cursor")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListResourceTemplatesResult {
+    #[serde(rename = "resourceTemplates")]
+    pub resource_templates: Vec<ResourceTemplate>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResourceTemplate {
+    #[serde(rename = "uriTemplate")]
+    pub uri_template: String,
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Prompts
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct ListPromptsResult {
+    pub prompts: Vec<PromptDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListPromptsParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "cursor")]
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PromptDefinition {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Vec<PromptArgument>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PromptArgument {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetPromptParams {
+    pub name: String,
+    #[serde(default)]
+    pub arguments: Map<String, Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetPromptResult {
+    pub messages: Vec<PromptMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PromptMessage {
+    pub role: &'static str,
+    pub content: PromptContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PromptContent {
+    Text {
+        #[serde(rename = "type")]
+        kind: String,
+        text: String,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct LoggingMessageNotification {
+    pub method: &'static str,
+    pub params: LoggingMessageParams,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoggingMessageParams {
+    pub level: &'static str,
+    pub logger: String,
+    pub data: Value,
+}
+
+// ---------------------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct PaginatedResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "nextCursor")]
+    pub next_cursor: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Completions
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct CompletionsCapability {}
+
+#[derive(Debug, Deserialize)]
+pub struct CompletionParams {
+    #[serde(default)]
+    pub argument: CompletionArgument,
+    #[serde(rename = "ref")]
+    pub ref_param: CompletionRef,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CompletionArgument {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum CompletionRef {
+    #[serde(rename = "ref/prompt")]
+    Prompt { name: String },
+    #[serde(rename = "ref/resource")]
+    Resource { uri: String },
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompletionResult {
+    pub completion: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<String>>,
+    #[serde(rename = "hasMore", skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
+    #[serde(rename = "total", skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// Sampling
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct SamplingCapability {}
+
+#[derive(Debug, Serialize)]
+pub struct CreateMessageRequest {
+    pub method: &'static str,
+    pub params: CreateMessageParams,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateMessageParams {
+    pub messages: Vec<SamplingMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "systemPrompt")]
+    pub system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "includeContext")]
+    pub include_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "temperature")]
+    pub temperature: Option<f64>,
+    #[serde(rename = "maxTokens")]
+    pub max_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "stopSequences")]
+    pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(rename = "modelPreferences", skip_serializing_if = "Option::is_none")]
+    pub model_preferences: Option<ModelPreferences>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SamplingMessage {
+    pub role: &'static str,
+    pub content: PromptContent,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelPreferences {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hints: Option<Vec<ModelHint>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "costPriority")]
+    pub cost_priority: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "speedPriority")]
+    pub speed_priority: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "intelligencePriority")]
+    pub intelligence_priority: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelHint {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMessageResult {
+    pub role: String,
+    pub content: PromptContent,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "stopReason")]
+    pub stop_reason: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// McpBackend trait
+// ---------------------------------------------------------------------------
+
 #[async_trait::async_trait]
 pub trait McpBackend: Send + Sync {
     fn tenant_id(&self) -> String;
@@ -97,7 +424,6 @@ pub trait McpBackend: Send + Sync {
     async fn get_incoming_dependencies(&self, file_path: &str) -> anyhow::Result<Vec<String>>;
     async fn find_symbol(&self, symbol_name: &str, project_path: &str) -> anyhow::Result<Vec<String>>;
 
-    // New Phase 1 methods
     async fn search_lessons(&self, query: &str, kind: Option<&str>, limit: usize) -> anyhow::Result<Vec<LessonEntry>>;
     async fn get_file_lessons(&self, file_path: &str) -> anyhow::Result<Vec<LessonEntry>>;
     async fn get_symbol_lessons(&self, file_path: &str, symbol_name: &str) -> anyhow::Result<Vec<LessonEntry>>;
@@ -105,6 +431,10 @@ pub trait McpBackend: Send + Sync {
     async fn get_graph_neighbors(&self, file_path: &str) -> anyhow::Result<NeighborInfo>;
     async fn record_entry(&self, file_path: &str, symbol_name: Option<&str>, error_context: &str, solution: &str, kind: &str) -> anyhow::Result<()>;
 }
+
+// ---------------------------------------------------------------------------
+// Tools list (legacy, for ozymem-cli)
+// ---------------------------------------------------------------------------
 
 pub fn get_tools_list() -> Vec<ToolDefinition> {
     vec![
@@ -200,6 +530,10 @@ pub fn get_tools_list() -> Vec<ToolDefinition> {
         },
     ]
 }
+
+// ---------------------------------------------------------------------------
+// Tool call dispatching (legacy, for ozymem-cli)
+// ---------------------------------------------------------------------------
 
 pub async fn handle_mcp_tool_call(
     backend: &dyn McpBackend,

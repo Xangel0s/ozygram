@@ -33,7 +33,7 @@ async fn test_e2e_graph_summary() {
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let summary = backend.get_graph_summary().await.unwrap();
 
@@ -60,7 +60,7 @@ async fn test_e2e_analyze_impact_on_core() {
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let core_src = path_in_root(&root, &["crates", "ozymem-core", "src", "graph_backend.rs"]);
     let impacts = backend.analyze_impact(&core_src, 3);
@@ -88,7 +88,7 @@ async fn test_e2e_file_context() {
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let core_src = path_in_root(&root, &["crates", "ozymem-core", "src", "graph_backend.rs"]);
     let ctx = backend.get_file_context(&core_src).await.unwrap();
@@ -116,7 +116,7 @@ async fn test_e2e_record_lesson_and_history() {
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
-    backend.full_scan(&root).unwrap();
+    backend.full_scan(&root, None).unwrap();
 
     let lib_rs = path_in_root(&root, &["crates", "ozymem-core", "src", "lib.rs"]);
 

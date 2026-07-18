@@ -16,7 +16,6 @@ publish = false
 [workspace.dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-neo4rs = "0.8"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }

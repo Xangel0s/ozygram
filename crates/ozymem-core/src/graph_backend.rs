@@ -1,12 +1,4 @@
 //! petgraph (RAM) + SQLite (disco) backend for Ozymem MCP.
-//!
-//! Replaces Memgraph (neo4j/Bolt) for local/single-binary mode.
-//!
-//! ## Tech debt
-//! - `ozymem-cli` and `--web` mode still use `MemgraphConnection`
-//!   (see `crates/ozymem-core/src/lib.rs`). They write to Memgraph via Bolt.
-//!   Running CLI and MCP server simultaneously creates TWO sources of truth.
-//!   Future: unify both under `GraphBackend` or make CLI write to SQLite too.
 
 use crate::{FileGraphContext, GraphSummary, StoredFunction};
 use crate::mcp_common::McpBackend;
@@ -372,9 +364,16 @@ impl GraphBackend {
         }
 
         let mut changed = false;
+        let proj_ref = Path::new(proj_path);
+        let ignore_patterns = load_ignore_patterns(proj_ref);
+        let has_ignores = !ignore_patterns.is_empty();
         for entry in walkdir::WalkDir::new(proj_path)
             .into_iter()
-            .filter_entry(|e| !is_noise_dir(e.path()))
+            .filter_entry(|e| {
+                if is_noise_dir(e.path()) { return false; }
+                if has_ignores && path_matches_ignore(e.path(), &ignore_patterns, proj_ref) { return false; }
+                true
+            })
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
@@ -393,18 +392,22 @@ impl GraphBackend {
         if changed {
             eprintln!("[graph] changes detected, rescanning...");
             self.scanning.store(true, Ordering::SeqCst);
-            if let Err(e) = self.full_scan(proj_path) {
+            if let Err(e) = self.full_scan(proj_path, None) {
                 eprintln!("[graph] scan error: {e}");
             }
             self.scanning.store(false, Ordering::SeqCst);
         }
     }
 
-    pub fn full_scan(&self, project_path: &str) -> Result<()> {
+    pub fn full_scan(&self, project_path: &str, progress: Option<&dyn Fn(u64, u64)>) -> Result<()> {
         self.scanning.store(true, Ordering::SeqCst);
 
         // Collect scanned file paths for staleness comparison
         let mut scanned_files: HashSet<String> = HashSet::new();
+
+        // Load ignore patterns from .ozymignore and .gitignore
+        let ignore_patterns = load_ignore_patterns(Path::new(project_path));
+        let has_ignores = !ignore_patterns.is_empty();
 
         // Clear stale data for this tenant before re-scan
         {
@@ -414,17 +417,39 @@ impl GraphBackend {
             inner.sqlite.execute("DELETE FROM files WHERE tenant_id = ?1", params![self.tenant_id])?;
         }
 
+        let proj_root = Path::new(project_path);
+
+        // Pre-count total files for progress reporting
+        let total_file_count: u64 = walkdir::WalkDir::new(project_path)
+            .into_iter()
+            .filter_entry(|e| {
+                if is_noise_dir(e.path()) { return false; }
+                if has_ignores && path_matches_ignore(e.path(), &ignore_patterns, proj_root) { return false; }
+                true
+            })
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file() && !is_binary_file(e.path()))
+            .count() as u64;
+
         let mut file_count = 0i64;
         let mut skipped_noise = 0u64;
+        let mut skipped_ignore = 0u64;
         let mut skipped_binary = 0u64;
         let mut skipped_read = 0u64;
         let mut skipped_parse = 0u64;
+        let mut processed: u64 = 0;
         for entry in walkdir::WalkDir::new(project_path)
             .into_iter()
             .filter_entry(|e| {
                 let noise = is_noise_dir(e.path());
                 if noise && e.path().is_dir() {
                     skipped_noise += 1;
+                }
+                if !noise && has_ignores && path_matches_ignore(e.path(), &ignore_patterns, proj_root) {
+                    if e.path().is_dir() {
+                        skipped_ignore += 1;
+                    }
+                    return false;
                 }
                 !noise
             })
@@ -436,6 +461,10 @@ impl GraphBackend {
             }
             if is_binary_file(path) {
                 skipped_binary += 1;
+                if let Some(cb) = progress {
+                    processed += 1;
+                    cb(processed, total_file_count);
+                }
                 continue;
             }
             let abs_path = crate::normalize_path(&path.to_string_lossy());
@@ -444,7 +473,7 @@ impl GraphBackend {
 
             let source = match std::fs::read_to_string(path) {
                 Ok(s) => s,
-                Err(_) => { skipped_read += 1; continue; }
+                Err(_) => { skipped_read += 1; if let Some(cb) = progress { processed += 1; cb(processed, total_file_count); } continue; }
             };
             let lang = detect_language(path);
             let parsed = match parse_source(&abs_path, lang, &source) {
@@ -452,6 +481,7 @@ impl GraphBackend {
                 Err(e) => {
                     eprintln!("[graph] parse error {abs_path}: {e}");
                     skipped_parse += 1;
+                    if let Some(cb) = progress { processed += 1; cb(processed, total_file_count); }
                     continue;
                 }
             };
@@ -486,6 +516,10 @@ impl GraphBackend {
             }
 
             file_count += 1;
+            if let Some(cb) = progress {
+                processed += 1;
+                cb(processed, total_file_count);
+            }
         }
 
         // Mark stale lessons — only for files that were part of this scan
@@ -501,7 +535,7 @@ impl GraphBackend {
 
         self.scanning.store(false, Ordering::SeqCst);
         let inner = self.inner.lock().unwrap();
-        eprintln!("[graph] scan complete: indexed={file_count}, noise_dirs={skipped_noise}, binary={skipped_binary}, read_err={skipped_read}, parse_err={skipped_parse}; graph: {} nodes, {} edges",
+        eprintln!("[graph] scan complete: indexed={file_count}, noise_dirs={skipped_noise}, ignore_pat={skipped_ignore}, binary={skipped_binary}, read_err={skipped_read}, parse_err={skipped_parse}; graph: {} nodes, {} edges",
             inner.graph.node_count(),
             inner.graph.edge_count());
         Ok(())
@@ -635,8 +669,68 @@ impl GraphBackend {
 
     pub async fn scan_project_background(self: Arc<Self>, project_path: String) {
         self.set_project_path(Some(&project_path));
-        self.full_scan(&project_path).ok();
+        self.full_scan(&project_path, None).ok();
         eprintln!("[scan] complete for {project_path}");
+    }
+
+    /// Autocomplete a file path fragment against the indexed files table.
+    /// Returns up to `limit` matching paths.
+    pub fn complete_file_path(&self, fragment: &str, limit: usize) -> Result<Vec<String>> {
+        let inner = self.inner.lock().unwrap();
+        let pattern = format!("%{}%", fragment);
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT path FROM files WHERE tenant_id = ?1 AND path LIKE ?2 ORDER BY path ASC LIMIT ?3"
+        )?;
+        let rows = stmt.query_map(params![self.tenant_id, pattern, limit as i64], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Return all indexed file paths for the current tenant.
+    pub fn list_all_files(&self) -> Result<Vec<String>> {
+        let inner = self.inner.lock().unwrap();
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT path FROM files WHERE tenant_id = ?1 ORDER BY path"
+        )?;
+        let rows = stmt.query_map(params![self.tenant_id], |row| row.get::<_, String>(0))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// Delete all indexed data (files, functions, dependencies) but NOT lessons.
+    pub fn clear_data(&self) -> Result<()> {
+        let inner = self.inner.lock().unwrap();
+        inner.sqlite.execute(
+            "DELETE FROM file_dependencies WHERE tenant_id = ?1",
+            params![self.tenant_id],
+        )?;
+        inner.sqlite.execute(
+            "DELETE FROM functions WHERE tenant_id = ?1",
+            params![self.tenant_id],
+        )?;
+        inner.sqlite.execute(
+            "DELETE FROM files WHERE tenant_id = ?1",
+            params![self.tenant_id],
+        )?;
+        Ok(())
+    }
+
+    /// Count lessons for the current tenant.
+    pub fn lesson_count(&self) -> Result<i64> {
+        let inner = self.inner.lock().unwrap();
+        inner.sqlite.query_row(
+            "SELECT COUNT(*) FROM lessons WHERE tenant_id = ?1",
+            params![self.tenant_id],
+            |row| row.get(0),
+        ).map_err(Into::into)
     }
 }
 
@@ -1223,11 +1317,8 @@ impl GraphBackend {
     }
 }
 
-/// A lightweight SQLite backend that mirrors `MemgraphConnection`'s methods.
-///
-/// Used by `ozymem-cli` to write scan results directly to the same SQLite
-/// database that `GraphBackend` (MCP server) reads from, eliminating the
-/// dual-source-of-truth problem between Memgraph and SQLite.
+/// A lightweight SQLite backend for writing scan results directly to the
+/// shared SQLite database that `GraphBackend` (MCP server) reads from.
 ///
 /// All methods are synchronous (rusqlite). The caller is responsible for
 /// running them on a blocking-aware executor if needed.
@@ -1892,7 +1983,7 @@ impl SqliteBackend {
     }
 }
 
-fn is_noise_dir(path: &Path) -> bool {
+pub fn is_noise_dir(path: &Path) -> bool {
     if !path.is_dir() {
         return false;
     }
@@ -1906,6 +1997,53 @@ fn is_noise_dir(path: &Path) -> bool {
     } else {
         false
     }
+}
+
+/// Load ignore patterns from `.ozymemignore` and `.gitignore` in the project root.
+pub fn load_ignore_patterns(project_root: &Path) -> Vec<String> {
+    let mut patterns = Vec::new();
+    for filename in &[".ozymemignore", ".gitignore"] {
+        let path = project_root.join(filename);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            for line in content.lines() {
+                let t = line.trim();
+                if !t.is_empty() && !t.starts_with('#') {
+                    patterns.push(t.to_string());
+                }
+            }
+        }
+    }
+    patterns
+}
+
+/// Check if a path matches any ignore pattern.
+pub fn path_matches_ignore(path: &Path, patterns: &[String], project_root: &Path) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let relative = path.strip_prefix(project_root).unwrap_or(path);
+    let rel = relative.to_string_lossy().replace('\\', "/");
+    let rel_lower = rel.to_lowercase();
+
+    for p in patterns {
+        let pat = p.trim().replace('\\', "/");
+        if pat.is_empty() { continue; }
+        let pat_lower = pat.to_lowercase();
+
+        // Exact match or directory prefix
+        if rel_lower == pat_lower || rel_lower.starts_with(&format!("{}/", pat_lower)) {
+            return true;
+        }
+        // Match any path component (e.g. "coverage" matches "src/coverage/index.html")
+        for component in relative.components() {
+            if let Some(comp) = component.as_os_str().to_str() {
+                if comp.to_lowercase() == pat_lower {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn detect_language(path: &Path) -> SupportedLanguage {
