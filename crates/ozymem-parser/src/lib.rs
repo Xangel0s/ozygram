@@ -684,7 +684,7 @@ pub fn connect() {}
 mod internal;
 
 use crate::domain::User;
-use ozymem_core::MemgraphConnection;
+use ozymem_core::GraphBackend;
 "#;
 
         let hints = extract_dependency_hints("src/lib.rs", SupportedLanguage::Rust, source)
@@ -700,7 +700,7 @@ use ozymem_core::MemgraphConnection;
         assert!(labels.contains("router"));
         assert!(labels.contains("internal"));
         assert!(labels.contains("crate::domain::User"));
-        assert!(labels.contains("ozymem_core::MemgraphConnection"));
+        assert!(labels.contains("ozymem_core::GraphBackend"));
     }
 
     #[test]

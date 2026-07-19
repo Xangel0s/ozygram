@@ -19,34 +19,14 @@ use std::pin::Pin;
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BrainConfig {
-    pub host: String,
-    pub port: u16,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct OzymemConfig {
-    pub current_brain: String,
-    pub brains: std::collections::HashMap<String, BrainConfig>,
     pub projects: std::collections::HashMap<String, String>,
-    pub token: Option<String>,
 }
 
 impl Default for OzymemConfig {
     fn default() -> Self {
-        let mut brains = std::collections::HashMap::new();
-        brains.insert(
-            "local_docker".to_string(),
-            BrainConfig {
-                host: "127.0.0.1".to_string(),
-                port: 7687,
-            },
-        );
         Self {
-            current_brain: "local_docker".to_string(),
-            brains,
             projects: std::collections::HashMap::new(),
-            token: None,
         }
     }
 }
@@ -2584,67 +2564,10 @@ async fn run_init() -> anyhow::Result<()> {
 
     println!("[INFO] Inicializando entorno para el proyecto '{}'...", selected_project_name);
 
-    // Paso 1: Levantar e indexar la base de datos (Docker / Memgraph)
-    let mut db_connected = false;
-    let mut db_uri = String::new();
-
-    // Primer chequeo de conexión
-    if let Ok(conn) = build_backend_client().await {
-        if conn.ping().await.is_ok() {
-            db_connected = true;
-            db_uri = conn.display_uri();
-        }
-    }
-
-    if !db_connected {
-        println!("[INFO] No se pudo conectar a Memgraph. Intentando arrancar contenedores Docker...");
-        
-        // Intentar docker start
-        let start_status = std::process::Command::new("docker")
-            .args(&["start", "ozymem-memgraph", "ozymem-memgraph-lab"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-
-        let mut _docker_started = match start_status {
-            Ok(status) => status.success(),
-            Err(_) => false,
-        };
-
-        if !_docker_started {
-            // Intentar docker compose up -d en la ruta de ozymem
-            if let Some(ozymem_path) = config.projects.get("ozymem") {
-                let compose_status = std::process::Command::new("docker")
-                    .args(&["compose", "up", "-d"])
-                    .current_dir(ozymem_path)
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-                if let Ok(status) = compose_status {
-                    _docker_started = status.success();
-                }
-            }
-        }
-
-        // Bucle de re-intentos (retry loop)
-        for attempt in 1..=5 {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            if let Ok(conn) = build_backend_client().await {
-                if conn.ping().await.is_ok() {
-                    db_connected = true;
-                    db_uri = conn.display_uri();
-                    break;
-                }
-            }
-            println!("[INFO] Re-intentando conexión a Memgraph (intento {}/5)...", attempt);
-        }
-    }
-
-    let db_status_str = if db_connected {
-        format!("CONECTADO ({})", db_uri)
-    } else {
-        "MODO WAL (Resiliencia local / Desconectado)".to_string()
-    };
+    // Paso 1: Inicializar backend SQLite
+    let conn = build_backend_client().await?;
+    let db_uri = conn.display_uri();
+    let db_status_str = format!("CONECTADO ({})", db_uri);
 
     // Paso 2: Iniciar Servidor MCP en segundo plano (si la DB está activa o de forma resiliente)
     let mcp_res = run_mcp_start().await;

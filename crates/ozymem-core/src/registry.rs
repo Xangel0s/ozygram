@@ -423,7 +423,7 @@ impl ProjectRegistry {
     // Sync Queue (replaces .ozymem_wal)
     // -----------------------------------------------------------------------
 
-    /// Enqueues a file change for later synchronization with Memgraph/LanceDB.
+    /// Enqueues a file change for later synchronization (e.g., embedding regeneration).
     pub fn enqueue_sync(&self, project_id: i64, action: &str, file_path: &str) -> Result<()> {
         self.db.execute(
             "INSERT INTO pending_syncs (project_id, action, file_path) VALUES (?1, ?2, ?3)",

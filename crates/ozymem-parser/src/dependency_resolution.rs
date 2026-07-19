@@ -302,8 +302,8 @@ mod tests {
                 .to_string_lossy()
                 .to_string(),
             kind: DependencyHintKind::UseDeclaration,
-            label: "ozymem_core::MemgraphConnection".to_string(),
-            raw_text: "use ozymem_core::MemgraphConnection;".to_string(),
+            label: "ozymem_core::GraphBackend".to_string(),
+            raw_text: "use ozymem_core::GraphBackend;".to_string(),
             start_line: 1,
             end_line: 1,
         };

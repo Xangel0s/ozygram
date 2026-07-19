@@ -311,7 +311,7 @@ async fn handle_request(
                 tools: vec![
                     ToolDefinition {
                         name: "ozymem_get_schema",
-                        description: "Obtener esquema general de archivos e idiomas del proyecto actual registrado en Memgraph.",
+                        description: "Obtener esquema general de archivos e idiomas del proyecto actual indexado en SQLite.",
                         input_schema: json!({
                             "type": "object",
                             "properties": {},

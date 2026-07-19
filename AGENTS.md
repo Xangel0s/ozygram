@@ -1,7 +1,7 @@
 # Ozymem Developer Agent Guidelines
 
 ## Arquitectura y Monorepo
-- `crates/ozymem-core`: Acceso a la base de datos Memgraph y lógica central.
+- `crates/ozymem-core`: Almacenamiento persistente (SQLite), indexación multi-lenguaje (tree-sitter), búsqueda semántica (fastembed), análisis de grafo (petgraph).
 - `crates/ozymem-parser`: Parsers de código fuente estructurado (Python, Go, Rust, JS/TS, SQL).
 - `crates/ozymem-cli`: Herramienta de línea de comandos del ecosistema.
 - `crates/ozymem-server`: Servidor de comunicación MCP.

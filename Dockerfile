@@ -41,13 +41,4 @@ WORKDIR /app
 
 COPY --from=builder /usr/src/ozymem/target/release/ozymem-server /app/ozymem-server
 
-ENV PORT=8080
-ENV OZYMEM_SERVER_MODE=web
-ENV MEMGRAPH_URI=memgraph:7687
-ENV MEMGRAPH_USER=admin
-ENV MEMGRAPH_PASSWORD=admin
-ENV MEMGRAPH_DATABASE=memgraph
-
-EXPOSE 8080
-
-CMD ["/app/ozymem-server", "--web"]
+CMD ["/app/ozymem-server"]
