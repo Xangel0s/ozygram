@@ -1093,6 +1093,8 @@ async fn handle_request(
                         }
                     }
                 }
+                // Creates or updates .ozymignore, appends patterns, re-scans the project.
+                // Falls back to the active backend's project_path if no explicit path given.
                 "create_ozymignore" => {
                     let patterns = match tool_call.arguments.get("patterns").and_then(Value::as_array) {
                         Some(arr) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>(),
@@ -1103,8 +1105,15 @@ async fn handle_request(
                     }
                     let explicit_path = tool_call.arguments.get("project_path")
                         .and_then(Value::as_str).map(|s| s.to_string());
-                    let resolved = match resolve_project_root(explicit_path, None) {
+                    let resolved = match resolve_project_root(explicit_path.clone(), None) {
                         Ok(p) => p,
+                        Err(_) if explicit_path.is_none() => {
+                            match backend.project_path() {
+                                Some(p) => PathBuf::from(p),
+                                None => return Ok(Some(error_response(id, -32602,
+                                    "No project path set. Provide project_path or ensure initialize was sent with workspaceFolders."))),
+                            }
+                        }
                         Err(msg) => return Ok(Some(error_response(id, -32602, &msg))),
                     };
                     let ozymemignore_path = resolved.join(".ozymignore");
@@ -2404,17 +2413,34 @@ async fn handle_package_tool(
             // Run package manager init
             match proj_type {
                 "node" => {
-                    let pnpm = std::process::Command::new("pnpm")
-                        .args(["init"])
-                        .current_dir(&project_dir)
-                        .output()
-                        .map(|o| o.status.success())
-                        .unwrap_or(false);
-                    if !pnpm {
-                        std::process::Command::new("npm")
+                    let init_cmd = if cfg!(target_os = "windows") {
+                        std::process::Command::new("cmd")
+                            .args(["/C", "pnpm", "init", "-y"])
+                            .current_dir(&project_dir)
+                            .output()
+                            .map(|o| o.status.success())
+                            .unwrap_or(false)
+                    } else {
+                        std::process::Command::new("pnpm")
                             .args(["init", "-y"])
                             .current_dir(&project_dir)
-                            .output()?;
+                            .output()
+                            .map(|o| o.status.success())
+                            .unwrap_or(false)
+                    };
+                    if !init_cmd {
+                        let fallback = if cfg!(target_os = "windows") {
+                            std::process::Command::new("cmd")
+                                .args(["/C", "npm", "init", "-y"])
+                                .current_dir(&project_dir)
+                                .output()
+                        } else {
+                            std::process::Command::new("npm")
+                                .args(["init", "-y"])
+                                .current_dir(&project_dir)
+                                .output()
+                        };
+                        fallback?;
                     }
                 }
                 "rust" => {
@@ -2777,9 +2803,11 @@ async fn handle_package_tool(
 
             // Scan source files for imports
             let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+            // Regex to extract module names from import statements
             let import_re = regex::Regex::new(r#"(?:from\s+['"]|require\s*\(\s*['"]|import\s+['"])([^'"]+)"#)
                 .map_err(|e| anyhow::anyhow!("regex error: {e}"))?;
 
+            // Walk source files, ignoring noise and .ozymignore/.gitignore patterns
             let ignore_patterns = ozymem_core::graph_backend::load_ignore_patterns(project_dir);
             let has_ignores = !ignore_patterns.is_empty();
 
