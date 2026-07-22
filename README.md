@@ -10,7 +10,7 @@
 - **Servidor MCP**: 38 tools para exploración, memoria, paquetes, git y búsqueda inteligente.
 - **Smart Search**: Búsqueda unificada que combina símbolos (tree-sitter), texto completo (FTS5) y embeddings semánticos en una sola llamada.
 - **Learn from Changes**: Generación automática de lecciones desde git diff usando tree-sitter (detecta funciones nuevas, borradas o modificadas) con análisis de impacto en el grafo.
-- **Impact Analysis enriquecido**: Severidad por heurísticas (🔴 breaking, 🟡 warning, 🟢 info) y nombres de funciones afectadas por archivo.
+- **Impact Analysis enriquecido**: Severidad por heurísticas (`[BREAKING]`, `[WARN]`, `[INFO]`) y nombres de funciones afectadas por archivo.
 - **File Context enriquecido**: Por archivo devuelve funciones, dependientes, dependencias, último commit git y lecciones asociadas.
 - **Graph Path**: Encuentra caminos de dependencia entre dos archivos usando petgraph `all_simple_paths`.
 - **Ignora ruido**: `node_modules/`, `target/`, `build/`, `dist/`, `.git/` excluidos automáticamente. Soporta `.ozymignore` personalizado.
@@ -87,11 +87,11 @@ git_blame_line, recent_changes_with_impact
 
 ### `analyze_impact` — Severidad y funciones
 El análisis de impacto ahora clasifica cada archivo afectado con severidad heurística:
-- **🔴 breaking**: Schemas, modelos, DTOs, entidades, interfaces, types
-- **🟡 warning**: Archivos con lecciones registradas, +15 funciones, o profundidad ≤ 1
-- **🟢 info**: Cambios en implementaciones sin efectos secundarios conocidos
+- **`[BREAKING]`**: Schemas, modelos, DTOs, entidades, interfaces, types
+- **`[WARN]`**: Archivos con lecciones registradas, +15 funciones, o profundidad ≤ 1
+- **`[INFO]`**: Cambios en implementaciones sin efectos secundarios conocidos
 
-Además lista las funciones clave de cada archivo impactado y muestra un resumen tipo `"3 🔴 breaking | 5 🟡 warning | 2 🟢 info"`.
+Además lista las funciones clave de cada archivo impactado y muestra un resumen tipo `"3 [BREAKING] | 5 [WARN] | 2 [INFO]"`.
 
 ### `learn_from_changes` — Lecciones desde git diff
 Usa tree-sitter para comparar el AST del código antes y después de un commit:

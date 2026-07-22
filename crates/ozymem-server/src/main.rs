@@ -264,7 +264,7 @@ async fn handle_request(
             let tools = vec![
                 mcp_common::ToolDefinition {
                     name: "analyze_impact",
-                    description: "Analyze transitive impact of changing a file (BFS with severity: 🔴breaking/🟡warning/🟢info — shows affected functions per file)",
+                    description: "Analyze transitive impact of changing a file (BFS with severity: [BREAKING]/[WARN]/[INFO] — shows affected functions per file)",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -2210,14 +2210,14 @@ fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
             current_depth = entry.depth;
             text.push_str(&format!("\n  Depth {}:\n", current_depth));
         }
-        let sev_icon = match entry.severity.as_str() {
-            "breaking" => { breaking += 1; "🔴" }
-            "warning" => { warnings += 1; "🟡" }
-            _ => { infos += 1; "🟢" }
+        let sev_tag = match entry.severity.as_str() {
+            "breaking" => { breaking += 1; "[BREAKING]" }
+            "warning" => { warnings += 1; "[WARN]" }
+            _ => { infos += 1; "[INFO]" }
         };
         text.push_str(&format!(
-            "    {} {} [{} | {} funcs, {} lessons]\n",
-            sev_icon, entry.file_path, entry.language, entry.function_count, entry.lesson_count
+            "    {:>10} {} [{} | {} funcs, {} lessons]\n",
+            sev_tag, entry.file_path, entry.language, entry.function_count, entry.lesson_count
         ));
 
         // Show key functions if available
@@ -2237,7 +2237,7 @@ fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
 
     // Summary bar
     text.push_str(&format!(
-        "Severity: {} 🔴 breaking | {} 🟡 warning | {} 🟢 info",
+        "Severity: {} [BREAKING] | {} [WARN] | {} [INFO]",
         breaking, warnings, infos
     ));
 

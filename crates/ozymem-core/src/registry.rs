@@ -100,12 +100,12 @@ impl ProjectStatus {
         }
     }
 
-    /// Returns an emoji indicator for display.
+    /// Returns a terminal-friendly status indicator.
     pub fn icon(&self) -> &'static str {
         match self {
-            ProjectStatus::Active => "🟢",
-            ProjectStatus::Sleeping => "💤",
-            ProjectStatus::Scanning => "🔍",
+            ProjectStatus::Active => "[ACTIVE]",
+            ProjectStatus::Sleeping => "[SLEEP]",
+            ProjectStatus::Scanning => "[SCAN]",
         }
     }
 }
