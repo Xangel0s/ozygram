@@ -3,6 +3,7 @@ use ozymem_core::mcp_common;
 use ozymem_core::mcp_common::{ContentBlock, ToolCallResult};
 use ozymem_core::registry::ProjectRegistry;
 use ozymem_core::McpBackend;
+use ozymem_parser::parse_source;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -263,7 +264,7 @@ async fn handle_request(
             let tools = vec![
                 mcp_common::ToolDefinition {
                     name: "analyze_impact",
-                    description: "Analyze transitive impact of changing a file",
+                    description: "Analyze transitive impact of changing a file (BFS with severity: 🔴breaking/🟡warning/🟢info — shows affected functions per file)",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -276,7 +277,7 @@ async fn handle_request(
                 },
                 mcp_common::ToolDefinition {
                     name: "file_context",
-                    description: "Indexed file context (language + functions)",
+                    description: "Indexed file context (language + functions + graph neighbors + lessons + last git commit)",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -702,6 +703,66 @@ async fn handle_request(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "find_symbol",
+                    description: "Find symbol definitions (functions, classes) indexed by tree-sitter — no grep noise",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "symbol_name": { "type": "string", "description": "Symbol name to search for (supports LIKE patterns: % for wildcard)" },
+                            "kind": { "type": "string", "description": "Filter by symbol kind", "enum": ["Function", "Class"] },
+                            "max_results": { "type": "integer", "description": "Max results", "default": 20, "minimum": 1, "maximum": 100 }
+                        },
+                        "required": ["symbol_name"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "learn_from_changes",
+                    description: "Auto-generate lessons from git diff (tree-sitter detects new/removed/modified functions, embeddings auto-computed, includes graph impact analysis)",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "message": { "type": "string", "description": "Context about the change (used as error_context for generated entries)" },
+                            "from": { "type": "string", "description": "Base git ref", "default": "HEAD~1" },
+                            "to": { "type": "string", "description": "Target git ref", "default": "HEAD" },
+                            "project_path": { "type": "string", "description": "Git repo root (auto-discovered from active project if omitted)" },
+                            "preview": { "type": "boolean", "description": "Preview only — no entries recorded", "default": false },
+                            "max_impact": { "type": "integer", "description": "Max dependents to show per file in impact section", "default": 5 }
+                        },
+                        "required": ["message"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "graph_path",
+                    description: "Find dependency paths between two files using petgraph (shortest connection in the project graph)",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "from": { "type": "string", "description": "Start file path" },
+                            "to": { "type": "string", "description": "End file path" },
+                            "max_paths": { "type": "integer", "description": "Max paths to return", "default": 1, "minimum": 1, "maximum": 10 },
+                            "max_hops": { "type": "integer", "description": "Max intermediate hops", "default": 10, "minimum": 1, "maximum": 50 }
+                        },
+                        "required": ["from", "to"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "smart_search",
+                    description: "Unified search across symbols (tree-sitter), lessons (FTS5), and embeddings (semantic) — best match across all indexes",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "Search query (used for symbol LIKE, FTS5 text, and embedding similarity)" },
+                            "max_results": { "type": "integer", "description": "Max results", "default": 10, "minimum": 1, "maximum": 30 },
+                            "min_score": { "type": "number", "description": "Minimum similarity score (0-1)", "default": 0.3 }
+                        },
+                        "required": ["query"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 50;
@@ -1049,12 +1110,22 @@ async fn handle_request(
 
                     let ctx = backend.get_file_context(file_path).await?;
                     let history = backend.get_historical_engram_solutions(file_path).await?;
-                    let body = format_file_context(ctx.as_ref(), file_path);
+
+                    // Enriched: graph neighbors (dependent count)
+                    let neighbor_info = backend.get_graph_neighbors(file_path).await.ok();
+
+                    // Enriched: last git commit
+                    let last_git = get_last_commit(file_path).await;
+
+                    let body = format_file_context_enriched(
+                        ctx.as_ref(),
+                        file_path,
+                        &history,
+                        neighbor_info.as_ref(),
+                        last_git.as_deref(),
+                    );
                     ToolCallResult {
-                        content: vec![ContentBlock {
-                            kind: "text",
-                            text: prepend_history(&history, body),
-                        }],
+                        content: vec![ContentBlock { kind: "text", text: body }],
                         is_error: None,
                     }
                 }
@@ -1368,6 +1439,58 @@ async fn handle_request(
                         is_error: None,
                     }
                 }
+                "find_symbol" => {
+                    backend.reload_if_stale();
+
+                    let symbol_name = tool_call.arguments.get("symbol_name")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing symbol_name"))?;
+                    let kind_filter = tool_call.arguments.get("kind").and_then(Value::as_str);
+                    let max_results = tool_call.arguments.get("max_results")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(20) as usize;
+
+                    let project_path = backend.project_path()
+                        .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
+
+                    let results = backend.find_symbol(symbol_name, &project_path).await?;
+
+                    // Post-filter by kind (parsed from "[Kind]" in result string)
+                    let filtered: Vec<&String> = if let Some(kind) = kind_filter {
+                        results.iter().filter(|r| {
+                            r.split('[').nth(1)
+                                .and_then(|s| s.split(']').next())
+                                .map(|k| k == kind)
+                                .unwrap_or(false)
+                        }).collect()
+                    } else {
+                        results.iter().collect()
+                    };
+
+                    let truncated: Vec<&&String> = filtered.iter().take(max_results).collect();
+
+                    let body = if truncated.is_empty() {
+                        format!("No definitions found for '{}'{}",
+                            symbol_name,
+                            kind_filter.map_or(String::new(), |k| format!(" (kind: {k})")))
+                    } else {
+                        let mut text = format!("Definitions matching '{}' ({} total, filtered to {}, showing {}):\n",
+                            symbol_name, results.len(), filtered.len(), truncated.len());
+                        for (i, entry) in truncated.iter().enumerate() {
+                            text.push_str(&format!("{}. {}\n", i + 1, entry));
+                        }
+                        text
+                    };
+
+                    ToolCallResult {
+                        content: vec![ContentBlock { kind: "text", text: body }],
+                        is_error: None,
+                    }
+                }
+                "learn_from_changes" => {
+                    let result = handle_learn_from_changes(backend, &tool_call, notifier, subscribed).await?;
+                    result
+                }
                 "context_for_task" => {
                     backend.reload_if_stale();
 
@@ -1457,6 +1580,96 @@ async fn handle_request(
                                     imp.file_path, imp.function_count, imp.lesson_count));
                             }
                         }
+                    }
+
+                    ToolCallResult {
+                        content: vec![ContentBlock { kind: "text", text: body }],
+                        is_error: None,
+                    }
+                }
+                "graph_path" => {
+                    backend.reload_if_stale();
+
+                    let from = tool_call.arguments.get("from")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing from"))?;
+                    let to = tool_call.arguments.get("to")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing to"))?;
+                    let max_paths = tool_call.arguments.get("max_paths")
+                        .and_then(Value::as_u64).unwrap_or(1) as usize;
+                    let max_hops = tool_call.arguments.get("max_hops")
+                        .and_then(Value::as_u64).unwrap_or(10) as usize;
+
+                    let paths = backend.find_graph_path(from, to, max_paths, max_hops);
+
+                    let body = if paths.is_empty() {
+                        format!("No path found between '{}' and '{}' (they may not be connected in the dependency graph)", from, to)
+                    } else {
+                        let mut text = format!("Found {} path(s) between '{}' and '{}' (max {} hops):\n", paths.len(), from, to, max_hops);
+                        for (i, path) in paths.iter().enumerate() {
+                            let hops = path.len() - 1;
+                            text.push_str(&format!("\nPath {} ({} hop(s)):\n", i + 1, hops));
+                            for (j, file) in path.iter().enumerate() {
+                                let arrow = if j < path.len() - 1 { " → " } else { "" };
+                                text.push_str(&format!("  {}{}", file, arrow));
+                                if j < path.len() - 1 { text.push('\n'); }
+                            }
+                            text.push('\n');
+                        }
+                        text
+                    };
+
+                    ToolCallResult {
+                        content: vec![ContentBlock { kind: "text", text: body }],
+                        is_error: None,
+                    }
+                }
+                "smart_search" => {
+                    backend.reload_if_stale();
+
+                    let query = tool_call.arguments.get("query")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing query"))?;
+                    let max_results = tool_call.arguments.get("max_results")
+                        .and_then(Value::as_u64).unwrap_or(10) as usize;
+                    let min_score = tool_call.arguments.get("min_score")
+                        .and_then(Value::as_f64).unwrap_or(0.3) as f32;
+
+                    let project_path = backend.project_path()
+                        .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
+
+                    // Run searches in parallel
+                    let (symbols, lessons, semantic) = tokio::join!(
+                        backend.find_symbol(query, &project_path),
+                        backend.search_lessons(query, None, max_results),
+                        async {
+                            backend.similar_lessons(&format!("search:{}", query), max_results, min_score)
+                                .unwrap_or_default()
+                        }
+                    );
+
+                    let symbol_results = symbols.unwrap_or_default();
+                    let lesson_results = lessons.unwrap_or_default();
+
+                    let mut body = format!("Smart search for '{}':\n", query);
+
+                    // Symbols section
+                    body.push_str(&format!("\n── Symbol definitions ({}):\n", symbol_results.len()));
+                    for (i, s) in symbol_results.iter().enumerate().take(max_results) {
+                        body.push_str(&format!("  {}. {}\n", i + 1, s));
+                    }
+
+                    // Lesson section (FTS5)
+                    body.push_str(&format!("\n── Lessons (FTS5, {}):\n", lesson_results.len()));
+                    for (i, l) in lesson_results.iter().enumerate().take(max_results) {
+                        body.push_str(&format!("  {}. [{}] {} :: {}\n     {}\n", i + 1, l.kind, l.symbol_name, l.error_context, l.solution));
+                    }
+
+                    // Semantic section
+                    body.push_str(&format!("\n── Semantic (embeddings, {}):\n", semantic.len()));
+                    for (i, s) in semantic.iter().enumerate().take(max_results) {
+                        body.push_str(&format!("  {}. [score: {:.2}] [{}] {} :: {}\n     {}\n", i + 1, s.score, s.lesson.kind, s.lesson.symbol_name, s.lesson.error_context, s.lesson.solution));
                     }
 
                     ToolCallResult {
@@ -1979,7 +2192,6 @@ fn format_lessons_list(results: &[ozymem_core::graph_backend::LessonEntry]) -> S
     }
     body
 }
-
 fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
     if impacts.is_empty() {
         return format!("No impact found for {}", file_path);
@@ -1987,29 +2199,58 @@ fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
 
     let mut text = format!("Impact analysis for {}:\n", file_path);
     let mut current_depth = 0u32;
+
+    // Count by severity
+    let mut breaking = 0usize;
+    let mut warnings = 0usize;
+    let mut infos = 0usize;
+
     for entry in impacts {
         if entry.depth != current_depth {
             current_depth = entry.depth;
             text.push_str(&format!("\n  Depth {}:\n", current_depth));
         }
+        let sev_icon = match entry.severity.as_str() {
+            "breaking" => { breaking += 1; "🔴" }
+            "warning" => { warnings += 1; "🟡" }
+            _ => { infos += 1; "🟢" }
+        };
         text.push_str(&format!(
-            "    {} [{} | {} funcs, {} lessons]\n",
-            entry.file_path, entry.language, entry.function_count, entry.lesson_count
+            "    {} {} [{} | {} funcs, {} lessons]\n",
+            sev_icon, entry.file_path, entry.language, entry.function_count, entry.lesson_count
         ));
+
+        // Show key functions if available
+        if !entry.functions.is_empty() {
+            for f in &entry.functions {
+                text.push_str(&format!("       ├── {}\n", f));
+            }
+        }
     }
 
     let total_funcs: i64 = impacts.iter().map(|e| e.function_count).sum();
     let total_lessons: i64 = impacts.iter().map(|e| e.lesson_count).sum();
     text.push_str(&format!(
-        "\nTotal: {} files affected, {} functions, {} lessons registered",
-        impacts.len(),
-        total_funcs,
-        total_lessons
+        "\nTotal: {} files affected, {} functions, {} lessons registered\n",
+        impacts.len(), total_funcs, total_lessons
     ));
+
+    // Summary bar
+    text.push_str(&format!(
+        "Severity: {} 🔴 breaking | {} 🟡 warning | {} 🟢 info",
+        breaking, warnings, infos
+    ));
+
     text
 }
 
-fn format_file_context(context: Option<&ozymem_core::FileGraphContext>, file_path: &str) -> String {
+fn format_file_context_enriched(
+    context: Option<&ozymem_core::FileGraphContext>,
+    file_path: &str,
+    history: &[String],
+    neighbors: Option<&ozymem_core::graph_backend::NeighborInfo>,
+    last_commit: Option<&str>,
+) -> String {
     let Some(context) = context else {
         return format!("No indexed file found for {file_path}");
     };
@@ -2027,20 +2268,52 @@ fn format_file_context(context: Option<&ozymem_core::FileGraphContext>, file_pat
             function.name, function.kind, function.start_line, function.end_line, function.strategy
         ));
     }
+
+    // Graph neighbors section
+    if let Some(n) = neighbors {
+        output.push_str(&format!("\n\nDependents (files that import this): {}", n.incoming.len()));
+        for dep in n.incoming.iter().take(5) {
+            output.push_str(&format!("\n  ← {}", dep));
+        }
+        if n.incoming.len() > 5 {
+            output.push_str(&format!("\n  ... and {} more", n.incoming.len() - 5));
+        }
+        output.push_str(&format!("\nDepends on (files this imports): {}", n.outgoing.len()));
+        for dep in n.outgoing.iter().take(5) {
+            output.push_str(&format!("\n  → {}", dep));
+        }
+        if n.outgoing.len() > 5 {
+            output.push_str(&format!("\n  ... and {} more", n.outgoing.len() - 5));
+        }
+    }
+
+    // Last git commit
+    if let Some(commit) = last_commit {
+        output.push_str(&format!("\n\nLast commit touching this file: {}", commit));
+    }
+
+    // Lessons for this file
+    if !history.is_empty() {
+        output.push_str(&format!("\n\nLessons recorded for this file ({}):", history.len()));
+        for solution in history {
+            output.push_str(&format!("\n- {}", solution));
+        }
+    }
+
     output
 }
 
-fn prepend_history(history: &[String], body: String) -> String {
-    if history.is_empty() {
-        return body;
+async fn get_last_commit(file_path: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%h %s (%ar)", "--", file_path])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !s.is_empty() { Some(s) } else { None }
+    } else {
+        None
     }
-    let mut output = String::from("[LESSONS FOR THIS FILE:\n");
-    for solution in history {
-        output.push_str(&format!("- {solution}\n"));
-    }
-    output.push_str("]\n\n");
-    output.push_str(&body);
-    output
 }
 
 fn format_summary(summary: &ozymem_core::GraphSummary) -> String {
@@ -2930,6 +3203,239 @@ fn days_since_str(date_str: Option<&str>) -> i64 {
         .unwrap_or(0);
 
     (now_days - total).max(0)
+}
+
+/// Detect tree-sitter language from file path.
+fn detect_lang(path: &str) -> ozymem_parser::SupportedLanguage {
+    match Path::new(path).extension().and_then(|e| e.to_str()) {
+        Some("py") => ozymem_parser::SupportedLanguage::Python,
+        Some("go") => ozymem_parser::SupportedLanguage::Go,
+        Some("rs") => ozymem_parser::SupportedLanguage::Rust,
+        Some("js") | Some("jsx") => ozymem_parser::SupportedLanguage::JavaScript,
+        Some("ts") | Some("tsx") => ozymem_parser::SupportedLanguage::TypeScriptReact,
+        Some("sql") => ozymem_parser::SupportedLanguage::SQL,
+        _ => ozymem_parser::SupportedLanguage::Unknown,
+    }
+}
+
+async fn handle_learn_from_changes(
+    backend: &GraphBackend,
+    tool_call: &mcp_common::ToolCallParams,
+    notifier: Option<&Notifier>,
+    subscribed: Option<&Arc<Mutex<HashSet<String>>>>,
+) -> anyhow::Result<ToolCallResult> {
+    let message = tool_call.arguments.get("message")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing message"))?;
+    let from = tool_call.arguments.get("from")
+        .and_then(Value::as_str)
+        .unwrap_or("HEAD~1");
+    let to = tool_call.arguments.get("to")
+        .and_then(Value::as_str)
+        .unwrap_or("HEAD");
+    let preview = tool_call.arguments.get("preview")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let max_impact = tool_call.arguments.get("max_impact")
+        .and_then(Value::as_u64)
+        .unwrap_or(5) as usize;
+
+    let project_path = backend.project_path()
+        .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
+
+    if !Path::new(&project_path).join(".git").exists() {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock { kind: "text", text: "Not a git repository — learn_from_changes requires git".to_string() }],
+            is_error: Some(true),
+        });
+    }
+
+    let output = std::process::Command::new("git")
+        .args(["diff", "--name-only", "--diff-filter=ACDMR", from, to, "--"])
+        .current_dir(&project_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock { kind: "text", text: format!("Git diff failed: {stderr}") }],
+            is_error: Some(true),
+        });
+    }
+
+    let files: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    if files.is_empty() {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock { kind: "text", text: "No changes detected between the specified refs".to_string() }],
+            is_error: None,
+        });
+    }
+
+    let mut entries: Vec<String> = Vec::new();
+    let mut parsed_files: Vec<String> = Vec::new();
+
+    for file in &files {
+        let lang = detect_lang(file);
+        if lang == ozymem_parser::SupportedLanguage::Unknown { continue; }
+
+        let old_output = std::process::Command::new("git")
+            .args(["show", &format!("{from}:{file}")])
+            .current_dir(&project_path)
+            .output();
+
+        let old_source = match old_output {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+            _ => continue,
+        };
+
+        let new_output = std::process::Command::new("git")
+            .args(["show", &format!("{to}:{file}")])
+            .current_dir(&project_path)
+            .output();
+
+        let new_source = match new_output {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+            _ => String::new(),
+        };
+
+        let old_parsed = parse_source(file, lang, &old_source).ok();
+        let new_parsed = parse_source(file, lang, &new_source).ok();
+
+        let old_funcs: Vec<&ozymem_parser::ExtractedFunction> = old_parsed.iter()
+            .flat_map(|p| p.functions.iter())
+            .collect();
+        let new_funcs: Vec<&ozymem_parser::ExtractedFunction> = new_parsed.iter()
+            .flat_map(|p| p.functions.iter())
+            .collect();
+
+        let old_names: HashSet<&str> = old_funcs.iter().map(|f| f.name.as_str()).collect();
+        let new_names: HashSet<&str> = new_funcs.iter().map(|f| f.name.as_str()).collect();
+
+        let mut file_had_changes = false;
+
+        // New functions → lesson
+        for f in &new_funcs {
+            if !old_names.contains(f.name.as_str()) {
+                file_had_changes = true;
+                let kind_str = match f.kind {
+                    ozymem_parser::SymbolKind::Function => "Function",
+                    ozymem_parser::SymbolKind::Class => "Class",
+                };
+                let solution = format!("New {} `{}` at line {} in {}", kind_str, f.name, f.start_line, file);
+                if !preview {
+                    backend.record_entry(file, Some(&f.name), message, &solution, "lesson").await?;
+                }
+                entries.push(format!("📘 {}: {} `{}` (line {})", file, kind_str, f.name, f.start_line));
+            }
+        }
+
+        // Removed functions → decision
+        for f in &old_funcs {
+            if !new_names.contains(f.name.as_str()) {
+                file_had_changes = true;
+                let kind_str = match f.kind {
+                    ozymem_parser::SymbolKind::Function => "Function",
+                    ozymem_parser::SymbolKind::Class => "Class",
+                };
+                let solution = format!("{} `{}` was removed from {} (was at line {})", kind_str, f.name, file, f.start_line);
+                if !preview {
+                    backend.record_entry(file, Some(&f.name), message, &solution, "decision").await?;
+                }
+                entries.push(format!("📗 {}: removed {} `{}`", file, kind_str, f.name));
+            }
+        }
+
+        // Modified functions (same name, different line range) → convention
+        for f in &new_funcs {
+            if let Some(old_f) = old_funcs.iter().find(|o| o.name == f.name && (o.start_line != f.start_line || o.end_line != f.end_line)) {
+                file_had_changes = true;
+                let kind_str = match f.kind {
+                    ozymem_parser::SymbolKind::Function => "Function",
+                    ozymem_parser::SymbolKind::Class => "Class",
+                };
+                let solution = format!("{} `{}` in {} changed (was L{}-L{}, now L{}-L{})",
+                    kind_str, f.name, file, old_f.start_line, old_f.end_line, f.start_line, f.end_line);
+                if !preview {
+                    backend.record_entry(file, Some(&f.name), message, &solution, "convention").await?;
+                }
+                entries.push(format!("📙 {}: {} `{}` modified (L{}-L{} → L{}-L{})",
+                    file, kind_str, f.name, old_f.start_line, old_f.end_line, f.start_line, f.end_line));
+            }
+        }
+
+        if file_had_changes {
+            parsed_files.push(file.clone());
+        }
+    }
+
+    // Impact analysis via graph neighbors
+    let mut impact_lines: Vec<String> = Vec::new();
+    for file in &parsed_files {
+        if let Ok(neighbors) = backend.get_graph_neighbors(file).await {
+            let dependent_count = neighbors.incoming.len();
+            let dep_on_count = neighbors.outgoing.len();
+            if dependent_count > 0 || dep_on_count > 0 {
+                let mut line = format!("  {file}:");
+                if dependent_count > 0 {
+                    let show: Vec<&String> = neighbors.incoming.iter().take(max_impact).collect();
+                    for p in &show {
+                        line.push_str(&format!("\n    ← {}", p));
+                    }
+                    if dependent_count > max_impact {
+                        line.push_str(&format!("\n    ... and {} more dependents", dependent_count - max_impact));
+                    }
+                }
+                if dep_on_count > 0 {
+                    let show: Vec<&String> = neighbors.outgoing.iter().take(max_impact).collect();
+                    for p in &show {
+                        line.push_str(&format!("\n    → {}", p));
+                    }
+                    if dep_on_count > max_impact {
+                        line.push_str(&format!("\n    ... and {} more dependencies", dep_on_count - max_impact));
+                    }
+                }
+                impact_lines.push(line);
+            }
+        }
+    }
+
+    if !preview && !entries.is_empty() {
+        notify_subscribed(subscribed, notifier, &["ozymem://summary", "ozymem://recent-lessons"]);
+    }
+
+    let body = if entries.is_empty() {
+        format!("No function-level changes detected in {} files (diff {from}..{to})", files.len())
+    } else {
+        let header = if preview {
+            format!("🔍 PREVIEW — {} entries from {} files (diff {from}..{to}):\n", entries.len(), parsed_files.len())
+        } else {
+            format!("Recorded {} entries from {} files (diff {from}..{to}):\n", entries.len(), parsed_files.len())
+        };
+        let mut body = header;
+        for e in &entries {
+            body.push_str(e);
+            body.push('\n');
+        }
+        if !impact_lines.is_empty() {
+            body.push_str("\n═══ Impact (graph neighbors) ═══\n");
+            for l in &impact_lines {
+                body.push_str(l);
+                body.push('\n');
+            }
+            body.push_str("⚠ Run analyze_impact for full transitive depth.\n");
+        }
+        body
+    };
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock { kind: "text", text: body }],
+        is_error: None,
+    })
 }
 
 #[cfg(test)]

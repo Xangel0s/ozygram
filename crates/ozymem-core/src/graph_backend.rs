@@ -9,6 +9,7 @@ use ozymem_parser::{
 };
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::Bfs;
+use petgraph::algo::all_simple_paths;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -616,15 +617,15 @@ impl GraphBackend {
         let mut results = Vec::new();
         let mut bfs = Bfs::new(&inner.graph, start);
 
-        // Track each node's depth. Bfs yields start first, then its
-        // discovered neighbors. We must insert depth BEFORE the next
-        // bfs.next() call so visited[&node] always exists.
         let mut visited: HashMap<NodeIndex, u32> = HashMap::new();
         visited.insert(start, 0);
 
+        // Prepare function query for enriching results
+        let mut func_stmt = inner.sqlite.prepare(
+            "SELECT name FROM functions WHERE file_path = ?1 AND tenant_id = ?2 ORDER BY start_line LIMIT 5"
+        ).ok();
+
         while let Some(node) = bfs.next(&inner.graph) {
-            // Discover neighbors on first encounter (before processing node)
-            // so depth is available for the next bfs.next() call.
             let d = *visited.get(&node).unwrap_or(&0);
             for neighbor in inner.graph.neighbors(node) {
                 visited.entry(neighbor).or_insert(d + 1);
@@ -633,12 +634,37 @@ impl GraphBackend {
             if node == start { continue; }
             if d > depth { continue; }
             if let Some(fn_data) = inner.graph.node_weight(node) {
+                let path = &fn_data.path;
+
+                // Compute severity based on path heuristics and metadata
+                let lower = path.to_lowercase();
+                let severity = if lower.contains("schema") || lower.contains("model")
+                    || lower.contains("dto") || lower.contains("entity")
+                    || lower.contains("interface") || lower.contains("type")
+                {
+                    "breaking"
+                } else if fn_data.lesson_count > 0 || fn_data.function_count > 15 || d <= 1 {
+                    "warning"
+                } else {
+                    "info"
+                };
+
+                // Get top function names for this file
+                let functions: Vec<String> = func_stmt.as_mut()
+                    .and_then(|stmt| {
+                        stmt.query_map(params![path, self.tenant_id], |row| row.get::<_, String>(0)).ok()
+                    })
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
+
                 results.push(ImpactEntry {
-                    file_path: fn_data.path.clone(),
+                    file_path: path.clone(),
                     depth: d,
                     function_count: fn_data.function_count,
                     lesson_count: fn_data.lesson_count,
                     language: fn_data.language.clone(),
+                    severity: severity.to_string(),
+                    functions,
                 });
             }
         }
@@ -705,6 +731,40 @@ impl GraphBackend {
         Ok(results)
     }
 
+    /// Find simple paths between two files in the dependency graph.
+    /// Returns up to `max_paths` paths, each as a list of file paths from `from` to `to`.
+    /// Path length is limited to `max_hops` intermediate nodes.
+    pub fn find_graph_path(&self, from: &str, to: &str, max_paths: usize, max_hops: usize) -> Vec<Vec<String>> {
+        let inner = self.inner.lock().unwrap();
+        let start = match inner.file_index.get(from) {
+            Some(n) => *n,
+            None => return Vec::new(),
+        };
+        let end = match inner.file_index.get(to) {
+            Some(n) => *n,
+            None => return Vec::new(),
+        };
+
+        let paths = all_simple_paths::<Vec<NodeIndex>, &DiGraph<FileNode, FileEdge>>(
+            &inner.graph,
+            start,
+            end,
+            0,
+            Some(max_hops),
+        );
+
+        let mut results = Vec::new();
+        for (i, path) in paths.enumerate() {
+            if i >= max_paths { break; }
+            let file_paths: Vec<String> = path.iter()
+                .filter_map(|n| inner.graph.node_weight(*n))
+                .map(|n| n.path.clone())
+                .collect();
+            results.push(file_paths);
+        }
+        results
+    }
+
     /// Delete all indexed data (files, functions, dependencies) but NOT lessons.
     pub fn clear_data(&self) -> Result<()> {
         let inner = self.inner.lock().unwrap();
@@ -741,6 +801,8 @@ pub struct ImpactEntry {
     pub function_count: i64,
     pub lesson_count: i64,
     pub language: String,
+    pub severity: String,
+    pub functions: Vec<String>,
 }
 
 #[async_trait::async_trait]
@@ -1172,15 +1234,20 @@ impl McpBackend for GraphBackend {
 
     async fn find_symbol(&self, symbol_name: &str, project_path: &str) -> Result<Vec<String>> {
         let inner = self.inner.lock().unwrap();
-        let mut stmt = inner.sqlite.prepare(
-            "SELECT f.path, fn.start_line FROM functions fn
-             JOIN files f ON f.path = fn.file_path AND f.tenant_id = fn.tenant_id
-             WHERE fn.name = ?1 AND fn.tenant_id = ?2 AND f.path LIKE ?3"
-        )?;
         let like = format!("{}%", project_path);
+        // Use LIKE for partial matching (supports % wildcards in symbol_name)
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT f.path, fn.start_line, fn.kind FROM functions fn
+             JOIN files f ON f.path = fn.file_path AND f.tenant_id = fn.tenant_id
+             WHERE fn.name LIKE ?1 AND fn.tenant_id = ?2 AND f.path LIKE ?3
+             ORDER BY fn.name LIMIT 100"
+        )?;
         let results: Vec<String> = stmt
             .query_map(params![symbol_name, self.tenant_id, like], |row| {
-                Ok(format!("{} (line {})", row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                let path: String = row.get(0)?;
+                let line: i64 = row.get(1)?;
+                let kind: String = row.get(2)?;
+                Ok(format!("{} [{}] (line {})", path, kind, line))
             })?
             .filter_map(|r| r.ok())
             .collect();
@@ -1792,13 +1859,17 @@ impl SqliteBackend {
         let conn = self.conn.lock().unwrap();
         let like = format!("{}%", project_path);
         let mut stmt = conn.prepare(
-            "SELECT f.path, fn.start_line FROM functions fn
+            "SELECT f.path, fn.start_line, fn.kind FROM functions fn
              JOIN files f ON f.path = fn.file_path AND f.tenant_id = fn.tenant_id
-             WHERE fn.name = ?1 AND fn.tenant_id = ?2 AND f.path LIKE ?3"
+             WHERE fn.name LIKE ?1 AND fn.tenant_id = ?2 AND f.path LIKE ?3
+             ORDER BY fn.name LIMIT 100"
         )?;
         let results: Vec<String> = stmt
             .query_map(params![symbol_name, tenant_id, like], |row| {
-                Ok(format!("Archivo: {} (Línea: {})", row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                let path: String = row.get(0)?;
+                let line: i64 = row.get(1)?;
+                let kind: String = row.get(2)?;
+                Ok(format!("{} [{}] (Línea: {})", path, kind, line))
             })?
             .filter_map(|r| r.ok())
             .collect();
