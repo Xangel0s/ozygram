@@ -1320,6 +1320,18 @@ impl GraphBackend {
         }).as_ref()
     }
 
+    /// Pre-initialize the text embedder at startup.
+    /// Call this in a spawn_blocking after server initialize to avoid blocking the tokio runtime.
+    /// Safe to call multiple times (OnceLock ensures single initialization).
+    pub fn init_embedder(&self) {
+        self.get_embedder();
+    }
+
+    /// Check if the embedder is initialized and ready.
+    pub fn embedder_ready(&self) -> bool {
+        self.embedder.get().map(|v| v.is_some()).unwrap_or(false)
+    }
+
     /// Generate embedding bytes for text (outside lock).
     /// Returns (raw f32 LE bytes, model_name) or (None, "") if embedder unavailable.
     fn embed_text(&self, texts: &[&str]) -> (Option<Vec<u8>>, &'static str) {
@@ -1364,6 +1376,11 @@ impl GraphBackend {
             if count == 0 {
                 return Ok(Vec::new());
             }
+        }
+
+        // Skip if embedder not initialized (avoids blocking on model download)
+        if !self.embedder_ready() {
+            return Ok(Vec::new());
         }
 
         // Generate query embedding (outside inner lock)

@@ -216,6 +216,18 @@ async fn handle_request(
                     }
                     drop(guard);
 
+                    // Pre-initialize text embedder in background (downloads ~20MB model on first run)
+                    let gb_clone2 = backend.clone();
+                    let n2 = notifier.cloned();
+                    tokio::spawn(async move {
+                        let guard = gb_clone2.lock().unwrap();
+                        if let Some(ref gb) = *guard {
+                            log_spawn("info", "[ozymem-server] pre-initializing text embedder...".into(), &n2);
+                            gb.init_embedder();
+                            log_spawn("info", "[ozymem-server] text embedder ready".into(), &n2);
+                        }
+                    });
+
                     let gb_clone = backend.clone();
                     let p = proj_path.to_string_lossy().to_string();
                     let n = notifier.cloned();
