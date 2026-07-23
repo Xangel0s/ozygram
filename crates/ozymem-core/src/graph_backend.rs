@@ -622,7 +622,12 @@ impl GraphBackend {
 
         // Prepare function query for enriching results
         let mut func_stmt = inner.sqlite.prepare(
-            "SELECT name FROM functions WHERE file_path = ?1 AND tenant_id = ?2 ORDER BY start_line LIMIT 5"
+            "SELECT name, start_line FROM functions WHERE file_path = ?1 AND tenant_id = ?2 ORDER BY start_line LIMIT 10"
+        ).ok();
+
+        // Prepare line-range query
+        let mut range_stmt = inner.sqlite.prepare(
+            "SELECT COALESCE(MIN(start_line),0), COALESCE(MAX(end_line),0) FROM functions WHERE file_path = ?1 AND tenant_id = ?2"
         ).ok();
 
         while let Some(node) = bfs.next(&inner.graph) {
@@ -635,27 +640,50 @@ impl GraphBackend {
             if d > depth { continue; }
             if let Some(fn_data) = inner.graph.node_weight(node) {
                 let path = &fn_data.path;
-
-                // Compute severity based on path heuristics and metadata
                 let lower = path.to_lowercase();
-                let severity = if lower.contains("schema") || lower.contains("model")
+
+                // Severity
+                let (severity, reason) = if lower.contains("schema") || lower.contains("model")
                     || lower.contains("dto") || lower.contains("entity")
                     || lower.contains("interface") || lower.contains("type")
                 {
-                    "breaking"
-                } else if fn_data.lesson_count > 0 || fn_data.function_count > 15 || d <= 1 {
-                    "warning"
+                    ("breaking", "Contains schema/model/dto/entity/interface/type definitions — changes here affect data contracts".to_string())
+                } else if fn_data.lesson_count > 0 {
+                    ("warning", format!("Has {} known lesson(s) registered — previous issues found in this file", fn_data.lesson_count))
+                } else if fn_data.function_count > 15 {
+                    ("warning", format!("Large file ({} functions) — high risk of cascading changes", fn_data.function_count))
+                } else if d <= 1 {
+                    ("warning", "Direct dependency at depth 1 — changes propagate immediately".to_string())
                 } else {
-                    "info"
+                    ("info", "Indirect dependency — unlikely to require changes".to_string())
                 };
 
-                // Get top function names for this file
+                let suggestion = match severity {
+                    "breaking" => "Review and update all imports, type definitions, and data contracts in dependent files".to_string(),
+                    "warning" => "Check for cascading changes in consuming code; verify tests still pass".to_string(),
+                    _ => "Monitor for indirect effects; no immediate action required".to_string(),
+                };
+
+                // Get function names with line numbers
                 let functions: Vec<String> = func_stmt.as_mut()
                     .and_then(|stmt| {
-                        stmt.query_map(params![path, self.tenant_id], |row| row.get::<_, String>(0)).ok()
+                        stmt.query_map(params![path, self.tenant_id], |row| {
+                            let name: String = row.get(0)?;
+                            let line: i64 = row.get(1)?;
+                            Ok(format!("{}:{}", name, line))
+                        }).ok()
                     })
                     .map(|rows| rows.filter_map(|r| r.ok()).collect())
                     .unwrap_or_default();
+
+                // Get line range for this file
+                let (start_line, end_line) = range_stmt.as_mut()
+                    .and_then(|stmt| stmt.query_row(params![path, self.tenant_id], |row| {
+                        let s: i64 = row.get(0)?;
+                        let e: i64 = row.get(1)?;
+                        Ok((s, e))
+                    }).ok())
+                    .unwrap_or((0, 0));
 
                 results.push(ImpactEntry {
                     file_path: path.clone(),
@@ -665,6 +693,10 @@ impl GraphBackend {
                     language: fn_data.language.clone(),
                     severity: severity.to_string(),
                     functions,
+                    start_line,
+                    end_line,
+                    reason,
+                    suggestion,
                 });
             }
         }
@@ -803,6 +835,10 @@ pub struct ImpactEntry {
     pub language: String,
     pub severity: String,
     pub functions: Vec<String>,
+    pub start_line: i64,
+    pub end_line: i64,
+    pub reason: String,
+    pub suggestion: String,
 }
 
 #[async_trait::async_trait]

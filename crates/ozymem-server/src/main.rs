@@ -264,7 +264,7 @@ async fn handle_request(
             let tools = vec![
                 mcp_common::ToolDefinition {
                     name: "analyze_impact",
-                    description: "Analyze transitive impact of changing a file (BFS with severity: [BREAKING]/[WARN]/[INFO] — shows affected functions per file)",
+                    description: "Analyze transitive impact of changing a file (BFS with severity: [BREAKING]/[WARN]/[INFO] — shows affected functions per file with line ranges, reasons, and suggestions)",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -369,6 +369,7 @@ async fn handle_request(
                         "type": "object",
                         "properties": {
                             "query": { "type": "string", "description": "Free-text description of the situation" },
+                            "kind": { "type": "string", "description": "Filter by kind (optional)", "enum": ["lesson", "decision", "convention", "gotcha", "module_rule"] },
                             "limit": { "type": "integer", "description": "Max results", "default": 10, "minimum": 1, "maximum": 50 },
                             "min_score": { "type": "number", "description": "Minimum similarity score (0.0-1.0)", "default": 0.5 }
                         },
@@ -1323,16 +1324,23 @@ async fn handle_request(
                     };
                     let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize;
                     let min_score = tool_call.arguments.get("min_score").and_then(Value::as_f64).unwrap_or(0.5) as f32;
+                    let kind_filter = tool_call.arguments.get("kind").and_then(Value::as_str);
                     match backend.similar_lessons(query, limit, min_score) {
                         Ok(results) => {
-                            if results.is_empty() {
+                            let filtered: Vec<&ozymem_core::graph_backend::SimilarLesson> = if let Some(kind) = kind_filter {
+                                results.iter().filter(|r| r.lesson.kind == kind).collect()
+                            } else {
+                                results.iter().collect()
+                            };
+                            if filtered.is_empty() {
                                 ToolCallResult {
-                                    content: vec![ContentBlock { kind: "text", text: format!("No semantically similar lessons found for \"{query}\"") }],
+                                    content: vec![ContentBlock { kind: "text", text: format!("No semantically similar lessons found for \"{query}\"{}",
+                                        kind_filter.map_or(String::new(), |k| format!(" (kind: {k})"))) }],
                                     is_error: None,
                                 }
                             } else {
                                 let mut body = format!("Lessons semantically similar to \"{query}\" (min score {min_score}):\n");
-                                for (i, sl) in results.iter().enumerate() {
+                                for (i, sl) in filtered.iter().enumerate() {
                                     body.push_str(&format!(
                                         "\n{}. [score: {:.3}] [{}] {} :: {}\n   context: {}\n   solution: {}\n   created: {}\n",
                                         i + 1, sl.score, sl.lesson.kind, sl.lesson.file_path, sl.lesson.symbol_name,
@@ -1606,10 +1614,12 @@ async fn handle_request(
                     let body = if paths.is_empty() {
                         format!("No path found between '{}' and '{}' (they may not be connected in the dependency graph)", from, to)
                     } else {
-                        let mut text = format!("Found {} path(s) between '{}' and '{}' (max {} hops):\n", paths.len(), from, to, max_hops);
+                        let shortest = paths.iter().map(|p| p.len()).min().unwrap_or(0).saturating_sub(1);
+                        let mut text = format!("Found {} path(s) between '{}' and '{}' (shortest: {} hops, max allowed: {}):\n", paths.len(), from, to, shortest, max_hops);
                         for (i, path) in paths.iter().enumerate() {
                             let hops = path.len() - 1;
-                            text.push_str(&format!("\nPath {} ({} hop(s)):\n", i + 1, hops));
+                            let marker = if hops == shortest { " ◀ SHORTEST" } else { "" };
+                            text.push_str(&format!("\nPath {} ({} hop(s)){}:\n", i + 1, hops, marker));
                             for (j, file) in path.iter().enumerate() {
                                 let arrow = if j < path.len() - 1 { " → " } else { "" };
                                 text.push_str(&format!("  {}{}", file, arrow));
@@ -2216,14 +2226,19 @@ fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
             _ => { infos += 1; "[INFO]" }
         };
         text.push_str(&format!(
-            "    {:>10} {} [{} | {} funcs, {} lessons]\n",
-            sev_tag, entry.file_path, entry.language, entry.function_count, entry.lesson_count
+            "    {:>10} {} (L{}-L{}) [{} | {} funcs, {} lessons]\n",
+            sev_tag, entry.file_path, entry.start_line, entry.end_line,
+            entry.language, entry.function_count, entry.lesson_count
         ));
+
+        // Reason and suggestion
+        text.push_str(&format!("           ├── reason: {}\n", entry.reason));
+        text.push_str(&format!("           └── suggestion: {}\n", entry.suggestion));
 
         // Show key functions if available
         if !entry.functions.is_empty() {
             for f in &entry.functions {
-                text.push_str(&format!("       ├── {}\n", f));
+                text.push_str(&format!("                ├── {}\n", f));
             }
         }
     }
@@ -3318,7 +3333,7 @@ async fn handle_learn_from_changes(
 
         let mut file_had_changes = false;
 
-        // New functions → lesson
+        // New functions → lesson (confidence: 0.92 — tree-sitter confirms new AST nodes)
         for f in &new_funcs {
             if !old_names.contains(f.name.as_str()) {
                 file_had_changes = true;
@@ -3330,11 +3345,11 @@ async fn handle_learn_from_changes(
                 if !preview {
                     backend.record_entry(file, Some(&f.name), message, &solution, "lesson").await?;
                 }
-                entries.push(format!("📘 {}: {} `{}` (line {})", file, kind_str, f.name, f.start_line));
+                entries.push(format!("📘 {}: {} `{}` (line {}) [confidence: 0.92]", file, kind_str, f.name, f.start_line));
             }
         }
 
-        // Removed functions → decision
+        // Removed functions → decision (confidence: 0.88 — tree-sitter confirms absence)
         for f in &old_funcs {
             if !new_names.contains(f.name.as_str()) {
                 file_had_changes = true;
@@ -3346,11 +3361,12 @@ async fn handle_learn_from_changes(
                 if !preview {
                     backend.record_entry(file, Some(&f.name), message, &solution, "decision").await?;
                 }
-                entries.push(format!("📗 {}: removed {} `{}`", file, kind_str, f.name));
+                entries.push(format!("📗 {}: removed {} `{}` [confidence: 0.88]", file, kind_str, f.name));
             }
         }
 
         // Modified functions (same name, different line range) → convention
+        // Confidence proportional to line-range delta: more change = higher confidence
         for f in &new_funcs {
             if let Some(old_f) = old_funcs.iter().find(|o| o.name == f.name && (o.start_line != f.start_line || o.end_line != f.end_line)) {
                 file_had_changes = true;
@@ -3358,13 +3374,18 @@ async fn handle_learn_from_changes(
                     ozymem_parser::SymbolKind::Function => "Function",
                     ozymem_parser::SymbolKind::Class => "Class",
                 };
+                let old_len = old_f.end_line - old_f.start_line;
+                let new_len = f.end_line - f.start_line;
+                let delta = new_len.abs_diff(old_len);
+                let max_len = old_len.max(new_len).max(1);
+                let confidence = 0.65 + 0.30 * (delta as f64 / max_len as f64).min(1.0);
                 let solution = format!("{} `{}` in {} changed (was L{}-L{}, now L{}-L{})",
                     kind_str, f.name, file, old_f.start_line, old_f.end_line, f.start_line, f.end_line);
                 if !preview {
                     backend.record_entry(file, Some(&f.name), message, &solution, "convention").await?;
                 }
-                entries.push(format!("📙 {}: {} `{}` modified (L{}-L{} → L{}-L{})",
-                    file, kind_str, f.name, old_f.start_line, old_f.end_line, f.start_line, f.end_line));
+                entries.push(format!("📙 {}: {} `{}` modified (L{}-L{} → L{}-L{}) [confidence: {:.2}]",
+                    file, kind_str, f.name, old_f.start_line, old_f.end_line, f.start_line, f.end_line, confidence));
             }
         }
 
