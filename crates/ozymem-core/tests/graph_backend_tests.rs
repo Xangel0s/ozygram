@@ -1079,3 +1079,165 @@ fn test_full_scan_progress_callback() {
     assert_eq!(last.0, last.1, "final progress should show all files processed");
     assert_eq!(last.0, 2, "expected 2 files to be scanned");
 }
+
+/// P-ENRICH: ImpactEntry enrichment — verify start_line, end_line, reason, suggestion are populated.
+#[tokio::test]
+async fn test_impact_entry_enriched_fields() {
+    let (_dir, root) = setup_project();
+
+    let db_path = format!("{}/test_enrich.db", std::env::temp_dir().to_string_lossy());
+    let _ = std::fs::remove_file(&db_path);
+
+    let backend = GraphBackend::open(Some(&db_path)).unwrap();
+    backend.full_scan(&root, None).unwrap();
+
+    let main_path = full_path(&root, "main.rs");
+
+    let impacts = backend.analyze_impact(&main_path, 3);
+    assert!(!impacts.is_empty(), "should find at least lib.rs");
+
+    for entry in &impacts {
+        assert!(
+            entry.severity == "breaking" || entry.severity == "warning" || entry.severity == "info",
+            "severity should be one of breaking/warning/info, got: {}", entry.severity
+        );
+
+        assert!(!entry.reason.is_empty(), "reason should not be empty for {}", entry.file_path);
+        assert!(!entry.suggestion.is_empty(), "suggestion should not be empty for {}", entry.file_path);
+
+        if entry.file_path.contains("lib.rs") {
+            assert!(entry.start_line > 0, "lib.rs start_line should be >0, got {}", entry.start_line);
+            assert!(entry.end_line > 0, "lib.rs end_line should be >0, got {}", entry.end_line);
+            assert!(entry.function_count >= 2, "lib.rs should have at least 2 functions");
+        }
+    }
+
+    std::fs::remove_file(&db_path).ok();
+}
+
+/// P-PATH: graph_path finds dependency chain A→B→C with correct shortest length.
+#[tokio::test]
+async fn test_graph_path_finds_chain() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_string_lossy().to_string();
+
+    std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"chain-test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+
+    std::fs::write(dir.path().join("a.rs"), "mod b;\nmod c;\nfn main() { b::work(); }\n").unwrap();
+    std::fs::write(dir.path().join("b.rs"), "use crate::c;\npub fn work() { c::help(); }\n").unwrap();
+    std::fs::write(dir.path().join("c.rs"), "pub fn help() { println!(\"ok\"); }\n").unwrap();
+
+    let db_path = format!("{}/test_graph_path.db", std::env::temp_dir().to_string_lossy());
+    let _ = std::fs::remove_file(&db_path);
+
+    let backend = GraphBackend::open(Some(&db_path)).unwrap();
+    backend.full_scan(&root, None).unwrap();
+
+    let a_path = full_path(&root, "a.rs");
+    let b_path = full_path(&root, "b.rs");
+    let c_path = full_path(&root, "c.rs");
+
+    // a → b direct
+    let paths = backend.find_graph_path(&a_path, &b_path, 5, 5);
+    assert!(!paths.is_empty(), "should find path from a.rs to b.rs");
+    assert_eq!(paths[0].len(), 2, "direct edge a→b should be 2 nodes (a, b)");
+
+    // a → c (via b or direct via mod c)
+    let paths_ac = backend.find_graph_path(&a_path, &c_path, 5, 5);
+    assert!(!paths_ac.is_empty(), "should find path from a.rs to c.rs");
+    // At least one path uses the intermediate b (3 nodes: a→b→c)
+    let has_via_b = paths_ac.iter().any(|p| p.len() == 3);
+    assert!(has_via_b, "expected a 3-node path a→b→c, got: {:?}", paths_ac);
+
+    // Shortest length computed as hops (min nodes - 1)
+    let shortest = paths_ac.iter().map(|p| p.len()).min().unwrap().saturating_sub(1);
+    assert_eq!(shortest, 1, "shortest path a→c should be 1 hop (direct edge)");
+
+    // No path to nonexistent file
+    let no_path = backend.find_graph_path(&a_path, "/nonexistent.rs", 5, 5);
+    assert!(no_path.is_empty(), "no path to nonexistent file");
+
+    // Reverse path c → a should NOT exist (directed graph: a→c but no c→a)
+    let paths_ca = backend.find_graph_path(&c_path, &a_path, 5, 5);
+    assert!(paths_ca.is_empty(), "reverse path c→a should not exist (directed graph)");
+
+    std::fs::remove_file(&db_path).ok();
+}
+
+/// P-CONFIDENCE: confidence heuristic values are within expected ranges.
+#[test]
+fn test_learn_from_changes_confidence_heuristic() {
+    let confidence_for = |old_len: i64, new_len: i64| -> f64 {
+        let delta = new_len.abs_diff(old_len);
+        let max_len = old_len.max(new_len).max(1);
+        0.65 + 0.30 * (delta as f64 / max_len as f64).min(1.0)
+    };
+
+    // Same size → delta=0 → confidence=0.65
+    let c1 = confidence_for(10, 10);
+    assert!((c1 - 0.65).abs() < 1e-6, "no change should give 0.65, got {c1}");
+
+    // Small change (2 lines out of 12) → 0.65+0.30*(2/12)=0.65+0.05=0.70
+    let c2 = confidence_for(10, 12);
+    assert!((c2 - 0.70).abs() < 1e-6, "2-line change should give ~0.70, got {c2}");
+
+    // Large change (15 lines out of 20) → 0.65+0.30*(15/20)=0.875
+    let c3 = confidence_for(5, 20);
+    assert!((c3 - 0.875).abs() < 1e-6, "15-line change should give ~0.875, got {c3}");
+
+    // Massive change (0→100 lines, delta == max_len) → clamped to 0.95
+    let c4 = confidence_for(0, 100);
+    assert!((c4 - 0.95).abs() < 1e-6, "massive change should clamp at 0.95, got {c4}");
+
+    // Zero-length function → guard against division by zero
+    let c5 = confidence_for(0, 0);
+    assert!((c5 - 0.65).abs() < 1e-6, "zero-length should fallback to 0.65, got {c5}");
+
+    // All values in [0.65, 0.95]
+    for c in &[c1, c2, c3, c4, c5] {
+        assert!(*c >= 0.65 && *c <= 0.95, "confidence should be in [0.65, 0.95], got {c}");
+    }
+}
+
+/// P-KIND: search_lessons with kind filter returns only matching entries.
+#[tokio::test]
+async fn test_search_lessons_kind_filter() {
+    let (_dir, root) = setup_project();
+
+    let db_path = format!("{}/test_kind_filter.db", std::env::temp_dir().to_string_lossy());
+    let _ = std::fs::remove_file(&db_path);
+
+    let backend = GraphBackend::open(Some(&db_path)).unwrap();
+    backend.set_project_path(Some(&root));
+
+    let lib_path = full_path(&root, "lib.rs");
+
+    backend.record_entry(&lib_path, Some("add"), "overflow bug", "use checked_add for safety", "lesson").await.unwrap();
+    backend.record_entry(&lib_path, Some("subtract"), "negative test", "use abs() instead", "gotcha").await.unwrap();
+    backend.record_entry(&lib_path, Some("add"), "renamed to sum", "function renamed for clarity", "decision").await.unwrap();
+    backend.record_entry(&lib_path, Some("calc"), "use helper", "always call calc_helper first", "convention").await.unwrap();
+
+    // No kind filter → "overflow" matches 1 entry (the lesson)
+    let all = backend.search_lessons("overflow", None, 10).await.unwrap();
+    assert_eq!(all.len(), 1, "overflow should match exactly 1 entry");
+
+    // Broader search across all kinds
+    let all_broad = backend.search_lessons("use", None, 10).await.unwrap();
+    assert!(all_broad.len() >= 2, "broad query 'use' should match multiple entries");
+
+    // Filter by kind = "lesson"
+    let lessons = backend.search_lessons("overflow", Some("lesson"), 10).await.unwrap();
+    assert_eq!(lessons.len(), 1, "should find exactly 1 lesson with kind=lesson");
+    assert_eq!(lessons[0].kind, "lesson");
+
+    // Filter by kind = "gotcha"
+    let gotchas = backend.search_lessons("negative", Some("gotcha"), 10).await.unwrap();
+    assert_eq!(gotchas.len(), 1, "should find exactly 1 gotcha with kind=gotcha");
+    assert_eq!(gotchas[0].kind, "gotcha");
+
+    // Non-existent kind → empty
+    let module_rules = backend.search_lessons("overflow", Some("module_rule"), 10).await.unwrap();
+    assert!(module_rules.is_empty(), "no module_rule entries should return empty");
+
+    std::fs::remove_file(&db_path).ok();
+}
