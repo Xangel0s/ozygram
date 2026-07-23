@@ -1353,6 +1353,19 @@ impl GraphBackend {
     /// Returns up to `limit` lessons with cosine similarity >= `min_score`.
     /// Filters by stale=0, tenant_id, workspace_root, and embedding IS NOT NULL.
     pub fn similar_lessons(&self, query: &str, limit: usize, min_score: f32) -> Result<Vec<SimilarLesson>> {
+        // Fast path: no lessons with embeddings → skip expensive embedding computation
+        {
+            let inner = self.inner.lock().unwrap();
+            let count: i64 = inner.sqlite.query_row(
+                "SELECT COUNT(*) FROM lessons WHERE stale = 0 AND tenant_id = ?1 AND workspace_root = ?2 AND embedding IS NOT NULL",
+                params![self.tenant_id, inner.workspace_root],
+                |row| row.get(0),
+            )?;
+            if count == 0 {
+                return Ok(Vec::new());
+            }
+        }
+
         // Generate query embedding (outside inner lock)
         let (embedding_bytes, _) = self.embed_text(&[query]);
         let query_vec = match embedding_bytes {

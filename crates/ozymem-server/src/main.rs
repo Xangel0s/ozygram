@@ -1649,15 +1649,15 @@ async fn handle_request(
                     let project_path = backend.project_path()
                         .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
 
-                    // Run searches in parallel
-                    let (symbols, lessons, semantic) = tokio::join!(
+                    // Run async searches in parallel (non-blocking)
+                    let (symbols, lessons) = tokio::join!(
                         backend.find_symbol(query, &project_path),
                         backend.search_lessons(query, None, max_results),
-                        async {
-                            backend.similar_lessons(&format!("search:{}", query), max_results, min_score)
-                                .unwrap_or_default()
-                        }
                     );
+
+                    // Run sync semantic search separately (blocks but has early-return)
+                    let semantic = backend.similar_lessons(&format!("search:{}", query), max_results, min_score)
+                        .unwrap_or_default();
 
                     let symbol_results = symbols.unwrap_or_default();
                     let lesson_results = lessons.unwrap_or_default();
