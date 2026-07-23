@@ -1521,86 +1521,94 @@ async fn handle_request(
                         .and_then(Value::as_u64)
                         .unwrap_or(4000) as usize;
 
-                    // 1. Search lessons (filter out stale — we only want current knowledge)
-                    let lessons: Vec<_> = backend.search_lessons(query, None, 20).await?
-                        .into_iter()
-                        .filter(|l| l.stale == 0)
-                        .collect();
+                    // Wrap body-building in a timeout to prevent MCP client timeout
+                    let body = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        async {
+                            // 1. Search lessons (filter out stale)
+                            let lessons: Vec<_> = backend.search_lessons(query, None, 20).await?
+                                .into_iter()
+                                .filter(|l| l.stale == 0)
+                                .collect();
 
-                    // 2. Collect unique file paths from matched lessons
-                    let mut file_paths: Vec<&str> = lessons.iter()
-                        .map(|l| l.file_path.as_str())
-                        .collect::<std::collections::HashSet<&str>>()
-                        .into_iter()
-                        .collect();
-                    file_paths.sort();
-                    // Limit to 5 files to stay within budget
-                    file_paths.truncate(5);
+                            // 2. Collect unique file paths from matched lessons
+                            let mut file_paths: Vec<String> = lessons.iter()
+                                .map(|l| l.file_path.clone())
+                                .collect::<std::collections::HashSet<String>>()
+                                .into_iter()
+                                .collect();
+                            file_paths.sort();
+                            file_paths.truncate(5);
 
-                    // 3. Build response with token budget
-                    let mut body = String::new();
+                            // 3. Build response
+                            let mut body = String::new();
 
-                    // Lessons section
-                    body.push_str(&format!("[Lessons matching \"{query}\"]\n"));
-                    if lessons.is_empty() {
-                        body.push_str("(none)\n");
-                    } else {
-                        for (i, e) in lessons.iter().enumerate() {
-                            body.push_str(&format!(
-                                "{}. [{}] {} :: {}\n   {}\n",
-                                i + 1, e.kind, e.file_path, e.symbol_name, e.solution
-                            ));
-                        }
-                    }
-
-                    // File context and neighbors for each relevant file
-                    for fp in &file_paths {
-                        // Check token budget before adding more
-                        if body.len() / 4 >= max_tokens {
-                            body.push_str(&format!("\n... (truncated at {max_tokens} tokens)"));
-                            break;
-                        }
-
-                        body.push_str(&format!("\n\n=== {fp} ==="));
-
-                        // File context
-                        if let Ok(Some(ctx)) = backend.get_file_context(fp).await {
-                            body.push_str(&format!("\nLanguage: {}", ctx.language));
-                            if !ctx.functions.is_empty() {
-                                body.push_str(&format!("\nFunctions ({})", ctx.functions.len()));
-                                for fn_data in &ctx.functions {
-                                    body.push_str(&format!("\n  {} [{}] L{}-L{}",
-                                        fn_data.name, fn_data.kind, fn_data.start_line, fn_data.end_line));
+                            // Lessons section
+                            body.push_str(&format!("[Lessons matching \"{query}\"]\n"));
+                            if lessons.is_empty() {
+                                body.push_str("(none)\n");
+                            } else {
+                                for (i, e) in lessons.iter().enumerate() {
+                                    body.push_str(&format!(
+                                        "{}. [{}] {} :: {}\n   {}\n",
+                                        i + 1, e.kind, e.file_path, e.symbol_name, e.solution
+                                    ));
                                 }
                             }
-                        }
 
-                        // Graph neighbors
-                        if let Ok(neighbors) = backend.get_graph_neighbors(fp).await {
-                            if !neighbors.incoming.is_empty() {
-                                body.push_str(&format!("\nDependents ({}):", neighbors.incoming.len()));
-                                for p in &neighbors.incoming {
-                                    body.push_str(&format!("\n  {p}"));
+                            // File context and neighbors for each relevant file
+                            for fp in &file_paths {
+                                if body.len() / 4 >= max_tokens {
+                                    body.push_str(&format!("\n... (truncated at {max_tokens} tokens)"));
+                                    break;
+                                }
+
+                                body.push_str(&format!("\n\n=== {fp} ==="));
+
+                                // File context
+                                if let Ok(Some(ctx)) = backend.get_file_context(fp).await {
+                                    body.push_str(&format!("\nLanguage: {}", ctx.language));
+                                    if !ctx.functions.is_empty() {
+                                        body.push_str(&format!("\nFunctions ({})", ctx.functions.len()));
+                                        for fn_data in &ctx.functions {
+                                            body.push_str(&format!("\n  {} [{}] L{}-L{}",
+                                                fn_data.name, fn_data.kind, fn_data.start_line, fn_data.end_line));
+                                        }
+                                    }
+                                }
+
+                                // Graph neighbors
+                                if let Ok(neighbors) = backend.get_graph_neighbors(fp).await {
+                                    if !neighbors.incoming.is_empty() {
+                                        body.push_str(&format!("\nDependents ({}):", neighbors.incoming.len()));
+                                        for p in &neighbors.incoming {
+                                            body.push_str(&format!("\n  {p}"));
+                                        }
+                                    }
+                                    if !neighbors.outgoing.is_empty() {
+                                        body.push_str(&format!("\nDepends on ({}):", neighbors.outgoing.len()));
+                                        for p in &neighbors.outgoing {
+                                            body.push_str(&format!("\n  {p}"));
+                                        }
+                                    }
+                                }
+
+                                // Impact analysis (depth 1, called inline — safe under outer lock)
+                                let impacts = backend.analyze_impact(fp, 1);
+                                if !impacts.is_empty() {
+                                    body.push_str(&format!("\nTransitive impact (depth 1, {} files):", impacts.len()));
+                                    for imp in &impacts {
+                                        body.push_str(&format!("\n  {} ({} funcs, {} lessons)",
+                                            imp.file_path, imp.function_count, imp.lesson_count));
+                                    }
                                 }
                             }
-                            if !neighbors.outgoing.is_empty() {
-                                body.push_str(&format!("\nDepends on ({}):", neighbors.outgoing.len()));
-                                for p in &neighbors.outgoing {
-                                    body.push_str(&format!("\n  {p}"));
-                                }
-                            }
-                        }
 
-                        // Impact analysis (depth 1 to keep it short)
-                        let impacts = backend.analyze_impact(fp, 1);
-                        if !impacts.is_empty() {
-                            body.push_str(&format!("\nTransitive impact (depth 1, {} files):", impacts.len()));
-                            for imp in &impacts {
-                                body.push_str(&format!("\n  {} ({} funcs, {} lessons)",
-                                    imp.file_path, imp.function_count, imp.lesson_count));
-                            }
+                            Ok::<String, anyhow::Error>(body)
                         }
-                    }
+                    ).await
+                    .map_err(|_| anyhow::anyhow!("context_for_task timed out after 15s"))?
+                    .map_err(|e| anyhow::anyhow!("context_for_task error: {e}"))?;
 
                     ToolCallResult {
                         content: vec![ContentBlock { kind: "text", text: body }],
