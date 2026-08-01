@@ -283,7 +283,7 @@ impl GraphBackend {
             DROP TRIGGER IF EXISTS lessons_ad;
             DROP TRIGGER IF EXISTS lessons_au;
 
-            INSERT INTO lessons_fts(rowid, error_context, solution, symbol_name, file_path)
+            INSERT OR IGNORE INTO lessons_fts(rowid, error_context, solution, symbol_name, file_path)
             SELECT id, error_context, solution, symbol_name, file_path FROM lessons;
 
             CREATE TRIGGER lessons_ai AFTER INSERT ON lessons BEGIN
