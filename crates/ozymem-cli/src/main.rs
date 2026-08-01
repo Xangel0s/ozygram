@@ -159,7 +159,10 @@ enum Commands {
     List,
     /// Inicializar credenciales y entornos locales de Ozymem
     Init,
-    Mcp,
+    Mcp {
+        #[arg(default_value = "run")]
+        action: String,
+    },
     Parse {
         file_path: String,
     },
@@ -409,7 +412,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init => {
             return run_init().await;
         }
-        Commands::Mcp => {
+        Commands::Mcp { .. } => {
             return mcp::run_mcp_server().await;
         }
         _ => {}
@@ -517,14 +520,21 @@ async fn main() -> anyhow::Result<()> {
 }
 
 pub async fn build_backend_client() -> anyhow::Result<BackendClient> {
+    build_backend_client_with_path(None).await
+}
+
+pub async fn build_backend_client_with_path(project_path: Option<PathBuf>) -> anyhow::Result<BackendClient> {
     // Priority:
     //   1. Remote mode if OZYMEM_SERVER_URL or OZYBASE_MCP_TOKEN is http(s)://
     //   1. SQLite mode by default (no Memgraph needed)
     let (_, _config) = load_config().unwrap_or_else(|_| (PathBuf::new(), OzymemConfig::default()));
 
     // Default: SQLite mode, project-scoped DB
-    let cwd = std::env::current_dir()?;
-    let sqlite = SqliteBackend::open_for_project(&cwd)?;
+    let db_path = match project_path {
+        Some(p) => p,
+        None => std::env::current_dir()?,
+    };
+    let sqlite = SqliteBackend::open_for_project(&db_path)?;
     Ok(BackendClient {
         mode: BackendMode::Sqlite(sqlite)
     })

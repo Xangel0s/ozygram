@@ -169,8 +169,21 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
         }
 
         if let Ok(request) = serde_json::from_str::<JsonRpcRequest>(trimmed) {
-            if let Some(response) = handle_request(&connection_cell, request).await? {
-                write_response(&mut stdout, &response).await?;
+            let request_id = request.id.clone().unwrap_or(Value::Null);
+            match handle_request(&connection_cell, request).await {
+                Ok(Some(response)) => {
+                    if let Err(e) = write_response(&mut stdout, &response).await {
+                        eprintln!("[ERROR] Error escribiendo respuesta: {:?}", e);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("[ERROR] Error procesando solicitud: {:?}", e);
+                    let err_resp = error_response(request_id, -32603, &format!("Internal error: {:?}", e));
+                    if let Err(write_err) = write_response(&mut stdout, &err_resp).await {
+                        eprintln!("[ERROR] Error escribiendo respuesta de error: {:?}", write_err);
+                    }
+                }
             }
         } else {
             eprintln!("[WARNING] Recibida línea no válida para JSON-RPC: {}", trimmed);
@@ -190,7 +203,11 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
 
 async fn get_connection(cell: &OnceCell<crate::BackendClient>) -> anyhow::Result<&crate::BackendClient> {
     cell.get_or_try_init(|| async {
-        crate::build_backend_client().await
+        let proj_path = {
+            let session = SESSION.lock().unwrap();
+            session.project_path.clone().map(PathBuf::from)
+        };
+        crate::build_backend_client_with_path(proj_path).await
     }).await
 }
 
@@ -480,7 +497,12 @@ async fn handle_request(
                     }
                 }
                 "graph_summary" => {
-                    let summary = connection.get_graph_summary().await?;
+                    let summary = match connection.get_graph_summary().await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return Ok(Some(error_response(id, -32603, &format!("Backend query error: {:?}", e))));
+                        }
+                    };
                     ToolCallResult {
                         content: vec![ContentBlock {
                             kind: "text",
@@ -490,12 +512,27 @@ async fn handle_request(
                     }
                 }
                 "file_context" => {
-                    let file_path = read_string_argument(&tool_call.arguments, "file_path")
-                        .or_else(|_| read_string_argument(&tool_call.arguments, "path"))?;
-                    let context = connection.get_file_context(&file_path).await?;
-                    let historical_engrams = connection
+                    let file_path = match read_string_argument(&tool_call.arguments, "file_path")
+                        .or_else(|_| read_string_argument(&tool_call.arguments, "path")) {
+                            Ok(fp) => fp,
+                            Err(e) => {
+                                return Ok(Some(error_response(id, -32602, &format!("Invalid arguments: {:?}", e))));
+                            }
+                        };
+                    let context = match connection.get_file_context(&file_path).await {
+                        Ok(ctx) => ctx,
+                        Err(e) => {
+                            return Ok(Some(error_response(id, -32603, &format!("Failed to get file context: {:?}", e))));
+                        }
+                    };
+                    let historical_engrams = match connection
                         .get_historical_engram_solutions(&file_path)
-                        .await?;
+                        .await {
+                            Ok(he) => he,
+                            Err(e) => {
+                                return Ok(Some(error_response(id, -32603, &format!("Failed to get historical engrams: {:?}", e))));
+                            }
+                        };
                     let body = format_file_context(context.as_ref(), &file_path);
                     ToolCallResult {
                         content: vec![ContentBlock {
@@ -506,16 +543,36 @@ async fn handle_request(
                     }
                 }
                 "record_lesson" => {
-                    let file_path = read_string_argument(&tool_call.arguments, "file_path")?;
+                    let file_path = match read_string_argument(&tool_call.arguments, "file_path") {
+                        Ok(fp) => fp,
+                        Err(e) => {
+                            return Ok(Some(error_response(id, -32602, &format!("Invalid file_path: {:?}", e))));
+                        }
+                    };
                     let symbol_name = tool_call.arguments.get("symbol_name")
                         .and_then(Value::as_str);
-                    let error_context = read_string_argument(&tool_call.arguments, "error_context")?;
-                    let solution = read_string_argument(&tool_call.arguments, "solution")?;
+                    let error_context = match read_string_argument(&tool_call.arguments, "error_context") {
+                        Ok(ec) => ec,
+                        Err(e) => {
+                            return Ok(Some(error_response(id, -32602, &format!("Invalid error_context: {:?}", e))));
+                        }
+                    };
+                    let solution = match read_string_argument(&tool_call.arguments, "solution") {
+                        Ok(sol) => sol,
+                        Err(e) => {
+                            return Ok(Some(error_response(id, -32602, &format!("Invalid solution: {:?}", e))));
+                        }
+                    };
                     let ws_root = SESSION.lock().unwrap().project_path.clone().unwrap_or_default();
 
-                    connection
+                    match connection
                         .record_lesson(&file_path, symbol_name, &error_context, &solution, &ws_root)
-                        .await?;
+                        .await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                return Ok(Some(error_response(id, -32603, &format!("Failed to record lesson: {:?}", e))));
+                            }
+                        };
 
                     ToolCallResult {
                         content: vec![ContentBlock {
