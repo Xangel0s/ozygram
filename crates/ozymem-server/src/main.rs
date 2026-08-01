@@ -309,6 +309,40 @@ async fn handle_request(
                     }),
                 },
                 mcp_common::ToolDefinition {
+                    name: "ozymem_get_schema",
+                    description: "Obtener esquema general de archivos e idiomas del proyecto actual.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozymem_find_symbol",
+                    description: "Buscar la ubicación de un símbolo/función específico por nombre dentro del proyecto.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "symbol_name": { "type": "string", "description": "Nombre del símbolo o función a buscar" }
+                        },
+                        "required": ["symbol_name"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozymem_hybrid_search",
+                    description: "Perform hybrid search combining vector embeddings on code snippets and rels.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "The search query to match semantically" },
+                            "limit": { "type": "integer", "description": "Maximum number of results to return" }
+                        },
+                        "required": ["query"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "record_lesson",
                     description: "Record a lesson for a file",
                     input_schema: json!({
@@ -1142,7 +1176,7 @@ async fn handle_request(
                         is_error: None,
                     }
                 }
-                "graph_summary" => {
+                "graph_summary" | "ozymem_get_schema" => {
                     backend.reload_if_stale();
                     let summary = backend.get_graph_summary().await?;
                     let sp = backend.scan_progress.lock().unwrap();
@@ -1158,6 +1192,45 @@ async fn handle_request(
                             kind: "text",
                             text: format!("{}{}", format_summary(&summary), scanning_note),
                         }],
+                        is_error: None,
+                    }
+                }
+                "ozymem_find_symbol" => {
+                    let symbol_name = tool_call.arguments.get("symbol_name")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing symbol_name"))?;
+                    backend.reload_if_stale();
+                    let proj_path = backend.project_path().unwrap_or_default();
+                    let res = backend.find_symbol(symbol_name, &proj_path).await?;
+                    let body = if res.is_empty() {
+                        format!("Symbol '{}' not found in indexed project.", symbol_name)
+                    } else {
+                        format!("Symbol matches for '{}':\n\n{}", symbol_name, res.join("\n"))
+                    };
+                    ToolCallResult {
+                        content: vec![ContentBlock { kind: "text", text: body }],
+                        is_error: None,
+                    }
+                }
+                "ozymem_hybrid_search" => {
+                    let query = tool_call.arguments.get("query")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing query"))?;
+                    let limit = tool_call.arguments.get("limit")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(5) as usize;
+                    backend.reload_if_stale();
+                    let matches = backend.search_lessons(query, None, limit).await?;
+                    let mut body = format!("Hybrid search results for '{}':\n\n", query);
+                    if matches.is_empty() {
+                        body.push_str("No matching lessons or code snippets found.");
+                    } else {
+                        for (i, m) in matches.iter().enumerate() {
+                            body.push_str(&format!("{}. [{}] {} -> {}\n", i + 1, m.file_path, m.error_context, m.solution));
+                        }
+                    }
+                    ToolCallResult {
+                        content: vec![ContentBlock { kind: "text", text: body }],
                         is_error: None,
                     }
                 }
