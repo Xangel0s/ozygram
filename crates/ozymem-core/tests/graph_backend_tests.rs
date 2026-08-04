@@ -1241,3 +1241,28 @@ async fn test_search_lessons_kind_filter() {
 
     std::fs::remove_file(&db_path).ok();
 }
+
+#[tokio::test]
+async fn test_record_and_get_excel_templates() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test_excel.db");
+
+    let backend = GraphBackend::open(Some(db_path.to_str().unwrap())).unwrap();
+
+    let meta = ozymem_parser::ExcelTemplateMetadata {
+        file_name: "1-INF.-N-V03.xlsx".to_string(),
+        rel_path: "templates/1-INF.-N-V03.xlsx".to_string(),
+        canonical_hash: "a1b2c3d4e5f6".to_string(),
+        version_tag: Some("V03".to_string()),
+        sheets: vec!["Hoja1".to_string(), "Resumen".to_string()],
+        is_template_candidate: true,
+    };
+
+    backend.record_excel_template(&meta).unwrap();
+
+    let fetched = backend.get_excel_templates().unwrap();
+    assert_eq!(fetched.len(), 1);
+    assert_eq!(fetched[0].file_name, "1-INF.-N-V03.xlsx");
+    assert_eq!(fetched[0].version_tag, Some("V03".to_string()));
+    assert_eq!(fetched[0].sheets, vec!["Hoja1", "Resumen"]);
+}

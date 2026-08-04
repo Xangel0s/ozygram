@@ -88,6 +88,35 @@ struct Inner {
     workspace_root: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ContractMismatchAlert {
+    pub alert_type: String,
+    pub file_path: String,
+    pub endpoint: Option<String>,
+    pub template_found: Option<String>,
+    pub header_version: Option<String>,
+    pub template_version: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportContractReport {
+    pub templates_reviewed: usize,
+    pub endpoints_reviewed: usize,
+    pub version_mismatches: Vec<ContractMismatchAlert>,
+    pub missing_templates: Vec<ContractMismatchAlert>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UnifiedSearchResult {
+    pub category: String,
+    pub title: String,
+    pub path: String,
+    pub snippet: String,
+    pub score: f32,
+}
+
 pub struct GraphBackend {
     inner: Mutex<Inner>,
     tenant_id: String,
@@ -191,6 +220,17 @@ impl GraphBackend {
             CREATE INDEX IF NOT EXISTS idx_lessons_file ON lessons(file_path, tenant_id);
             CREATE INDEX IF NOT EXISTS idx_lessons_tenant ON lessons(tenant_id);
             CREATE INDEX IF NOT EXISTS idx_lessons_kind ON lessons(kind, tenant_id);
+
+            CREATE TABLE IF NOT EXISTS excel_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL UNIQUE,
+                canonical_hash TEXT NOT NULL,
+                template_name TEXT NOT NULL,
+                version_tag TEXT,
+                sheets_json TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_excel_hash ON excel_templates(canonical_hash);
 
             INSERT OR IGNORE INTO tenants (id, name) VALUES ('local', 'Local Tenant');"
         )?;
@@ -461,6 +501,12 @@ impl GraphBackend {
                 continue;
             }
             if is_binary_file(path) {
+                let abs_path = crate::normalize_path(&path.to_string_lossy());
+                if ozymem_parser::is_excel_template_candidate(&abs_path) {
+                    if let Ok(Some(meta)) = ozymem_parser::parse_excel_template(path, &abs_path) {
+                        let _ = self.record_excel_template(&meta);
+                    }
+                }
                 skipped_binary += 1;
                 if let Some(cb) = progress {
                     processed += 1;
@@ -723,6 +769,196 @@ impl GraphBackend {
             .neighbors_directed(idx, petgraph::Direction::Outgoing)
             .filter_map(|n| inner.graph.node_weight(n).map(|w| w.path.clone()))
             .collect()
+    }
+
+    pub fn record_excel_template(&self, meta: &ozymem_parser::ExcelTemplateMetadata) -> anyhow::Result<()> {
+        let inner = self.inner.lock().unwrap();
+        let sheets_json = serde_json::to_string(&meta.sheets)?;
+        inner.sqlite.execute(
+            "INSERT INTO excel_templates (file_path, canonical_hash, template_name, version_tag, sheets_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+             ON CONFLICT(file_path) DO UPDATE SET
+                canonical_hash = excluded.canonical_hash,
+                template_name = excluded.template_name,
+                version_tag = excluded.version_tag,
+                sheets_json = excluded.sheets_json,
+                updated_at = CURRENT_TIMESTAMP",
+            params![
+                meta.rel_path,
+                meta.canonical_hash,
+                meta.file_name,
+                meta.version_tag,
+                sheets_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_excel_templates(&self) -> anyhow::Result<Vec<ozymem_parser::ExcelTemplateMetadata>> {
+        let inner = self.inner.lock().unwrap();
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT file_path, canonical_hash, template_name, version_tag, sheets_json FROM excel_templates ORDER BY file_path ASC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let rel_path: String = row.get(0)?;
+            let canonical_hash: String = row.get(1)?;
+            let file_name: String = row.get(2)?;
+            let version_tag: Option<String> = row.get(3)?;
+            let sheets_json: String = row.get(4)?;
+            let sheets: Vec<String> = serde_json::from_str(&sheets_json).unwrap_or_default();
+            Ok(ozymem_parser::ExcelTemplateMetadata {
+                file_name,
+                rel_path,
+                canonical_hash,
+                version_tag,
+                sheets,
+                is_template_candidate: true,
+            })
+        })?;
+        let mut res = Vec::new();
+        for r in rows {
+            if let Ok(m) = r {
+                res.push(m);
+            }
+        }
+        Ok(res)
+    }
+
+    pub fn verify_export_contracts(&self) -> anyhow::Result<ExportContractReport> {
+        let templates = self.get_excel_templates()?;
+        let templates_reviewed = templates.len();
+
+        let inner = self.inner.lock().unwrap();
+        let mut stmt = inner.sqlite.prepare("SELECT path FROM files")?;
+        let file_paths: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        drop(inner);
+
+        let mut endpoints_count = 0;
+        let mut version_mismatches = Vec::new();
+        let mut missing_templates = Vec::new();
+
+        for fp in &file_paths {
+            if let Ok(source) = std::fs::read_to_string(fp) {
+                let hints = ozymem_parser::parse_export_contracts(fp, &source);
+                for hint in hints {
+                    if hint.endpoint_path.is_some() {
+                        endpoints_count += 1;
+                    }
+
+                    if let Some(ref t_ref) = hint.template_ref {
+                        let exists = templates.iter().any(|t| t.file_name.contains(t_ref) || t_ref.contains(&t.file_name));
+                        if !exists {
+                            missing_templates.push(ContractMismatchAlert {
+                                alert_type: "MISSING_TEMPLATE".to_string(),
+                                file_path: fp.clone(),
+                                endpoint: hint.endpoint_path.clone(),
+                                template_found: None,
+                                header_version: None,
+                                template_version: None,
+                                message: format!("Plantilla referenciada '{}' no encontrada en los templates registrados", t_ref),
+                            });
+                        }
+                    }
+
+                    if let Some(ref cd_fn) = hint.content_disposition_filename {
+                        let cd_ver = ozymem_parser::extract_version_tag(cd_fn);
+                        if let Some(ref t_ref) = hint.template_ref {
+                            let t_ver = ozymem_parser::extract_version_tag(t_ref);
+                            if cd_ver.is_some() && t_ver.is_some() && cd_ver != t_ver {
+                                version_mismatches.push(ContractMismatchAlert {
+                                    alert_type: "VERSION_MISMATCH".to_string(),
+                                    file_path: fp.clone(),
+                                    endpoint: hint.endpoint_path.clone(),
+                                    template_found: Some(t_ref.clone()),
+                                    header_version: cd_ver,
+                                    template_version: t_ver,
+                                    message: format!("Desalineación de versión: Header genera '{cd_fn}' pero código usa plantilla '{t_ref}'"),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ExportContractReport {
+            templates_reviewed,
+            endpoints_reviewed: endpoints_count,
+            version_mismatches,
+            missing_templates,
+            warnings: Vec::new(),
+        })
+    }
+
+    pub async fn unified_search(
+        &self,
+        query: &str,
+        scope: Option<&str>,
+        _mode: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<UnifiedSearchResult>> {
+        let target_scope = scope.unwrap_or("all");
+        let mut results = Vec::new();
+
+        // 1. Literal & Symbol Search
+        if target_scope == "all" || target_scope == "code" {
+            let inner = self.inner.lock().unwrap();
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT name, kind, file_path, start_line FROM functions WHERE name LIKE ?1 LIMIT ?2"
+            )?;
+            let query_like = format!("%{query}%");
+            let rows = stmt.query_map(params![query_like, limit as i64], |row| {
+                Ok(UnifiedSearchResult {
+                    category: "symbol".to_string(),
+                    title: format!("{}: {}", row.get::<_, String>(1)?, row.get::<_, String>(0)?),
+                    path: row.get(2)?,
+                    snippet: format!("Línea {}", row.get::<_, i64>(3)?),
+                    score: 1.0,
+                })
+            })?;
+            for r in rows.flatten() {
+                results.push(r);
+            }
+        }
+
+        // 2. Lessons & Memory Search
+        if target_scope == "all" || target_scope == "lessons" {
+            if let Ok(lessons) = self.search_lessons(query, None, limit).await {
+                for l in lessons {
+                    results.push(UnifiedSearchResult {
+                        category: "lesson".to_string(),
+                        title: format!("[{}] {}", l.kind, l.file_path),
+                        path: l.file_path,
+                        snippet: format!("{}: {}", l.error_context, l.solution),
+                        score: 0.9,
+                    });
+                }
+            }
+        }
+
+        // 3. Contract Search
+        if target_scope == "all" || target_scope == "contracts" {
+            if let Ok(templates) = self.get_excel_templates() {
+                for t in templates {
+                    if t.file_name.contains(query) || t.rel_path.contains(query) || t.sheets.iter().any(|s| s.contains(query)) {
+                        results.push(UnifiedSearchResult {
+                            category: "contract".to_string(),
+                            title: format!("Excel Template: {}", t.file_name),
+                            path: t.rel_path,
+                            snippet: format!("Versión: {:?} | Hojas: {:?}", t.version_tag, t.sheets),
+                            score: 0.95,
+                        });
+                    }
+                }
+            }
+        }
+
+        results.truncate(limit);
+        Ok(results)
     }
 
     pub async fn scan_project_background(self: Arc<Self>, project_path: String) {
