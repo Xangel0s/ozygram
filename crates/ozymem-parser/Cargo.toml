@@ -7,7 +7,11 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+calamine.workspace = true
+hex = "0.4"
+regex.workspace = true
 serde.workspace = true
+sha2 = "0.10"
 thiserror.workspace = true
 tree-sitter.workspace = true
 tree-sitter-go.workspace = true

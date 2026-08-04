@@ -1,6 +1,10 @@
 mod dependency_resolution;
+pub mod contract_parser;
+pub mod excel_parser;
 
+pub use contract_parser::{parse_export_contracts, ExportContractHint};
 pub use dependency_resolution::{is_internal_dependency_hint, resolve_dependency_target};
+pub use excel_parser::{extract_version_tag, is_excel_template_candidate, parse_excel_template, ExcelTemplateMetadata};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
