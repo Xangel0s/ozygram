@@ -275,6 +275,73 @@ async fn handle_request(
         "tools/list" => {
             let tools = vec![
                 mcp_common::ToolDefinition {
+                    name: "search",
+                    description: "Búsqueda unificada híbrida de Ozygram (Texto literal estilo grep + Símbolos AST + Lecciones + Contratos Excel/HTTP)",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "Término o consulta de búsqueda" },
+                            "scope": { "type": "string", "description": "Ámbito: 'code', 'lessons', 'contracts', 'all'", "default": "all" },
+                            "mode": { "type": "string", "description": "Modo: 'text', 'semantic', 'hybrid'", "default": "hybrid" },
+                            "limit": { "type": "integer", "description": "Límite de resultados", "default": 20 }
+                        },
+                        "required": ["query"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "verify_contracts",
+                    description: "Auditar contratos de exportación Excel, routers HTTP y cabeceras Content-Disposition",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "target": { "type": "string", "description": "Objetivo de auditoría ('export', 'all')", "default": "export" }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "context",
+                    description: "Contexto unificado de archivo/símbolo (funciones, grafo de dependencias, lecciones y git)",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo" }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "impact",
+                    description: "Análisis de impacto transitivo y dependientes directos de un archivo",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo" },
+                            "depth": { "type": "integer", "description": "Profundidad máxima", "default": 3 }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "memory",
+                    description: "Registrar o consultar memorias arquitectónicas (lesson, decision, convention, gotcha, module_rule)",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "description": "'record' o 'search'" },
+                            "kind": { "type": "string", "description": "Tipo: 'lesson', 'decision', 'convention', 'gotcha', 'module_rule'" },
+                            "file_path": { "type": "string", "description": "Ruta del archivo" },
+                            "solution": { "type": "string", "description": "Contenido/solución de la memoria" },
+                            "error_context": { "type": "string", "description": "Contexto de la lección o decisión" }
+                        },
+                        "required": ["action"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "analyze_impact",
                     description: "Analyze transitive impact of changing a file (BFS with severity: [BREAKING]/[WARN]/[INFO] — shows affected functions per file with line ranges, reasons, and suggestions)",
                     input_schema: json!({
@@ -867,6 +934,102 @@ async fn handle_request(
                 };
 
                 let result = match tool_call.name.as_str() {
+                    "search" => {
+                        let guard = backend.lock().unwrap();
+                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        gb.reload_if_stale();
+                        let query = tool_call.arguments.get("query")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| anyhow::anyhow!("missing query"))?;
+                        let scope = tool_call.arguments.get("scope").and_then(Value::as_str);
+                        let mode = tool_call.arguments.get("mode").and_then(Value::as_str);
+                        let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+
+                        let res = gb.unified_search(query, scope, mode, limit).await?;
+                        let body = serde_json::to_string_pretty(&res)?;
+                        ToolCallResult {
+                            content: vec![ContentBlock { kind: "text", text: body }],
+                            is_error: None,
+                        }
+                    }
+                    "verify_contracts" => {
+                        let guard = backend.lock().unwrap();
+                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        gb.reload_if_stale();
+                        let report = gb.verify_export_contracts()?;
+                        let body = serde_json::to_string_pretty(&report)?;
+                        ToolCallResult {
+                            content: vec![ContentBlock { kind: "text", text: body }],
+                            is_error: None,
+                        }
+                    }
+                    "context" => {
+                        let guard = backend.lock().unwrap();
+                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        gb.reload_if_stale();
+                        let file_path = tool_call.arguments.get("file_path")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                        let ctx = gb.get_file_context(file_path).await?;
+                        let history = gb.get_historical_engram_solutions(file_path).await?;
+                        let neighbor_info = gb.get_graph_neighbors(file_path).await.ok();
+                        let last_git = get_last_commit(file_path).await;
+
+                        let body = format_file_context_enriched(
+                            ctx.as_ref(),
+                            file_path,
+                            &history,
+                            neighbor_info.as_ref(),
+                            last_git.as_deref(),
+                        );
+                        ToolCallResult {
+                            content: vec![ContentBlock { kind: "text", text: body }],
+                            is_error: None,
+                        }
+                    }
+                    "impact" => {
+                        let guard = backend.lock().unwrap();
+                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        gb.reload_if_stale();
+                        let file_path = tool_call.arguments.get("file_path")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                        let depth = tool_call.arguments.get("depth")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(3) as u32;
+
+                        let impacts = gb.analyze_impact(file_path, depth);
+                        let body = format_impact(&impacts, file_path);
+                        ToolCallResult {
+                            content: vec![ContentBlock { kind: "text", text: body }],
+                            is_error: None,
+                        }
+                    }
+                    "memory" => {
+                        let guard = backend.lock().unwrap();
+                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        gb.reload_if_stale();
+                        let action = tool_call.arguments.get("action").and_then(Value::as_str).unwrap_or("search");
+                        let kind = tool_call.arguments.get("kind").and_then(Value::as_str).unwrap_or("lesson");
+                        if action == "record" {
+                            let file_path = tool_call.arguments.get("file_path").and_then(Value::as_str).unwrap_or("");
+                            let error_context = tool_call.arguments.get("error_context").and_then(Value::as_str).unwrap_or("");
+                            let solution = tool_call.arguments.get("solution").and_then(Value::as_str).unwrap_or("");
+                            gb.record_entry(file_path, None, error_context, solution, kind).await?;
+                            ToolCallResult {
+                                content: vec![ContentBlock { kind: "text", text: format!("Record [{kind}] saved successfully for {file_path}") }],
+                                is_error: None,
+                            }
+                        } else {
+                            let query = tool_call.arguments.get("query").and_then(Value::as_str).unwrap_or("");
+                            let res = gb.search_lessons(query, Some(kind), 20).await?;
+                            let body = serde_json::to_string_pretty(&res)?;
+                            ToolCallResult {
+                                content: vec![ContentBlock { kind: "text", text: body }],
+                                is_error: None,
+                            }
+                        }
+                    }
                     "git_recent_changes" => {
                         let limit = tool_call.arguments.get("limit")
                             .and_then(Value::as_u64)

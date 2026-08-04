@@ -118,6 +118,11 @@ enum Commands {
     Update,
     /// Configurar u obtener patrones de ignore (.ozymemignore)
     Ignore,
+    /// Auditar contratos de exportación Excel y cabeceras Content-Disposition
+    Verify {
+        #[arg(default_value = "export-contracts")]
+        target: String,
+    },
     /// Limpiar simbolos y dependencias de un archivo
     Clean {
         path: Option<PathBuf>,
@@ -449,6 +454,24 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Update => run_update().await?,
         Commands::Ignore => run_ignore().await?,
+        Commands::Verify { target: _ } => {
+            let backend = ozymem_core::graph_backend::GraphBackend::open(None)?;
+            if let Ok(cwd) = std::env::current_dir() {
+                backend.full_scan(&cwd.to_string_lossy(), None)?;
+            }
+            let report = backend.verify_export_contracts()?;
+            println!("Templates revisados: {}", report.templates_reviewed);
+            println!("Endpoints de exportación: {}", report.endpoints_reviewed);
+            println!("Versiones inconsistentes: {}", report.version_mismatches.len());
+            println!("Templates faltantes: {}", report.missing_templates.len());
+
+            for m in &report.version_mismatches {
+                println!("  [ADVERTENCIA] {}", m.message);
+            }
+            for m in &report.missing_templates {
+                println!("  [ERROR] {}", m.message);
+            }
+        }
         Commands::Watch { path, force } => run_watch(&context, &path, force).await?,
         Commands::Clean { path } => {
             if let Some(file_path) = path {
