@@ -14,7 +14,43 @@ pub struct ExcelTemplateMetadata {
     pub is_template_candidate: bool,
 }
 
-/// Checks if a file path is a candidate for Excel template indexing based on directory or filename heuristics.
+/// Evaluates if a text matches a configurable pattern (supports '*' wildcards).
+pub fn matches_pattern(text: &str, pattern: &str) -> bool {
+    let pattern_lower = pattern.to_lowercase();
+    let text_lower = text.to_lowercase();
+
+    if pattern_lower.contains('*') {
+        let regex_str = format!("(?i)^{}$", regex::escape(&pattern_lower).replace(r"\*", ".*"));
+        if let Ok(re) = Regex::new(&regex_str) {
+            return re.is_match(&text_lower);
+        }
+    }
+
+    text_lower.contains(&pattern_lower)
+}
+
+/// Checks if a file path is a candidate for Excel template indexing based on custom patterns or directory/filename heuristics.
+pub fn is_excel_template_candidate_with_patterns(rel_path: &str, custom_patterns: &[String]) -> bool {
+    let lower = rel_path.to_lowercase();
+    if !lower.ends_with(".xlsx") && !lower.ends_with(".xls") && !lower.ends_with(".xlsm") {
+        return false;
+    }
+
+    let file_name = Path::new(rel_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    for pattern in custom_patterns {
+        if matches_pattern(rel_path, pattern) || matches_pattern(&file_name, pattern) {
+            return true;
+        }
+    }
+
+    is_excel_template_candidate(rel_path)
+}
+
+/// Checks if a file path is a candidate for Excel template indexing based on default directory or filename heuristics.
 pub fn is_excel_template_candidate(rel_path: &str) -> bool {
     let lower = rel_path.to_lowercase();
     if !lower.ends_with(".xlsx") && !lower.ends_with(".xls") && !lower.ends_with(".xlsm") {
@@ -57,12 +93,13 @@ pub fn extract_version_tag(path_str: &str) -> Option<String> {
     None
 }
 
-/// Parses an Excel template file and extracts metadata, version tag, sheet names, and SHA256 hash.
-pub fn parse_excel_template(
+/// Parses an Excel template file with optional custom pattern matching.
+pub fn parse_excel_template_with_patterns(
     file_path: &Path,
     rel_path: &str,
+    custom_patterns: &[String],
 ) -> anyhow::Result<Option<ExcelTemplateMetadata>> {
-    if !is_excel_template_candidate(rel_path) {
+    if !is_excel_template_candidate_with_patterns(rel_path, custom_patterns) {
         return Ok(None);
     }
 
@@ -91,6 +128,14 @@ pub fn parse_excel_template(
     }))
 }
 
+/// Parses an Excel template file using default candidate heuristics.
+pub fn parse_excel_template(
+    file_path: &Path,
+    rel_path: &str,
+) -> anyhow::Result<Option<ExcelTemplateMetadata>> {
+    parse_excel_template_with_patterns(file_path, rel_path, &[])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,6 +147,14 @@ mod tests {
         assert!(is_excel_template_candidate("src/reports/1-INF.-N-v3.xlsx"));
         assert!(!is_excel_template_candidate("data/tmp_output.csv"));
         assert!(!is_excel_template_candidate("random_dump.xlsx"));
+    }
+
+    #[test]
+    fn test_custom_wildcard_patterns() {
+        let patterns = vec!["1-INF.-N-*.xlsx".to_string(), "CBR_REPORT_*.xlsx".to_string()];
+        assert!(is_excel_template_candidate_with_patterns("docs/1-INF.-N-V04.xlsx", &patterns));
+        assert!(is_excel_template_candidate_with_patterns("exports/CBR_REPORT_FINAL.xlsx", &patterns));
+        assert!(!is_excel_template_candidate_with_patterns("data/random_dump.xlsx", &patterns));
     }
 
     #[test]

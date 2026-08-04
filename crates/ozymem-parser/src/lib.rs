@@ -4,7 +4,11 @@ pub mod excel_parser;
 
 pub use contract_parser::{parse_export_contracts, ExportContractHint};
 pub use dependency_resolution::{is_internal_dependency_hint, resolve_dependency_target};
-pub use excel_parser::{extract_version_tag, is_excel_template_candidate, parse_excel_template, ExcelTemplateMetadata};
+pub use excel_parser::{
+    extract_version_tag, is_excel_template_candidate, is_excel_template_candidate_with_patterns,
+    matches_pattern, parse_excel_template, parse_excel_template_with_patterns,
+    ExcelTemplateMetadata,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
