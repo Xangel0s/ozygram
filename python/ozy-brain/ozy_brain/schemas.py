@@ -187,29 +187,32 @@ def _execution_policy(payload: dict[str, Any], autonomy: str = "advisory") -> di
     return {
         "mode": autonomy,
         "can_do_without_confirmation": [
-            "read indexed context",
-            "rank memories",
-            "suggest safe MCP calls",
-            "draft plans and validation checklists",
-            "identify candidate files",
+            "read indexed context and graph summary",
+            "rank memories and cluster past lessons",
+            "suggest safe MCP tool calls",
+            "draft phased plans, risk reviews, and validation checklists",
+            "identify and score candidate files",
         ],
         "requires_confirmation": [
-            "modify files",
-            "run destructive commands",
+            "modify files in workspace",
+            "execute destructive shell or git operations",
             "commit or push changes",
             "delete or rewrite project data",
             "execute database migrations",
         ],
         "forbidden_for_python_worker": [
-            "write files directly",
-            "execute shell commands other than the worker entrypoint",
-            "modify SQLite directly",
-            "perform network calls",
-            "bypass Rust MCP validation",
+            "borrar archivos (delete files directly)",
+            "hacer commits (make git commits directly)",
+            "hacer push (git push to remote directly)",
+            "ejecutar comandos arbitrarios (execute arbitrary shell commands)",
+            "modificar DB sin pasar por Rust (modify SQLite DB without Rust authority)",
+            "perform unvalidated network calls",
+            "bypass Rust MCP safety checks",
         ],
         "rust_authority": True,
         "python_role": "advisory_reasoning_worker",
     }
+
 
 
 def _brain_context_pack(payload: dict[str, Any]) -> dict[str, Any]:

@@ -4771,6 +4771,7 @@ fn format_ozy_brain_response(value: &Value) -> String {
                 ("Suggested Commands", "suggested_commands"),
                 ("Validation Checks", "validation_checks"),
                 ("Stop Conditions", "stop_conditions"),
+                ("What Not To Touch", "what_not_to_touch"),
             ] {
                 if let Some(items) = structured.get(key).and_then(Value::as_array) {
                     if !items.is_empty() {

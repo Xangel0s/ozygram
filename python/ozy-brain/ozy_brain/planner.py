@@ -43,7 +43,14 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
             "Validation fails in a way unrelated to the intended change",
             "Touched file scope expands beyond the plan",
         ],
+        "what_not_to_touch": [
+            "Do not modify core state persistence or schema files unless explicitly requested",
+            "Do not edit files outside the candidate files scope without re-running graph impact",
+            "Do not alter security, auth, or credential configurations",
+            "Do not remove existing error handling or assertion contracts",
+        ],
     }
+
 
 
 def plan(payload: dict[str, Any]) -> BrainResponse:
