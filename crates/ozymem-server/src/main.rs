@@ -1,4 +1,4 @@
-use ozymem_core::graph_backend::{GraphBackend, ImpactEntry, legacy_global_db_path};
+use ozymem_core::graph_backend::{legacy_global_db_path, GraphBackend, ImpactEntry};
 use ozymem_core::mcp_common;
 use ozymem_core::mcp_common::{ContentBlock, ToolCallResult};
 use ozymem_core::registry::ProjectRegistry;
@@ -83,7 +83,10 @@ async fn run_mcp_server() -> anyhow::Result<()> {
     let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
     let (notifier, rx) = Notifier::new();
     let subscribed: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-    notifier.log("info", "[ozymem-server] MCP server ready (petgraph + SQLite, per-project DB)".into());
+    notifier.log(
+        "info",
+        "[ozymem-server] MCP server ready (petgraph + SQLite, per-project DB)".into(),
+    );
 
     let mut stdin = BufReader::new(io::stdin());
     let mut stdout = io::stdout();
@@ -120,14 +123,19 @@ async fn run_mcp_server() -> anyhow::Result<()> {
         }
 
         if let Ok(request) = serde_json::from_str::<mcp_common::JsonRpcRequest>(trimmed) {
-            if let Some(response) = handle_request(&backend, request, Some(&notifier), Some(&subscribed)).await? {
+            if let Some(response) =
+                handle_request(&backend, request, Some(&notifier), Some(&subscribed)).await?
+            {
                 let payload = serde_json::to_string(&response)?;
                 stdout.write_all(payload.as_bytes()).await?;
                 stdout.write_all(b"\n").await?;
                 stdout.flush().await?;
             }
         } else {
-            notifier.log("error", format!("[ozymem-server] invalid JSON-RPC: {trimmed}"));
+            notifier.log(
+                "error",
+                format!("[ozymem-server] invalid JSON-RPC: {trimmed}"),
+            );
         }
     }
 
@@ -145,13 +153,20 @@ fn log_spawn(level: &str, msg: String, notifier: &Option<Notifier>) {
 }
 
 /// Send `notifications/methods/resources/updated` for subscribed URIs.
-fn notify_subscribed(subscribed: Option<&Arc<Mutex<HashSet<String>>>>, notifier: Option<&Notifier>, uris: &[&str]) {
+fn notify_subscribed(
+    subscribed: Option<&Arc<Mutex<HashSet<String>>>>,
+    notifier: Option<&Notifier>,
+    uris: &[&str],
+) {
     if let Some(sub) = subscribed {
         let subs = sub.lock().unwrap();
         for uri in uris {
             if subs.contains(*uri) {
                 if let Some(ref n) = notifier {
-                    n.raw("notifications/methods/resources/updated", json!({"uri": uri}));
+                    n.raw(
+                        "notifications/methods/resources/updated",
+                        json!({"uri": uri}),
+                    );
                 }
             }
         }
@@ -184,18 +199,33 @@ async fn handle_request(
 
     let response = match request.method.as_str() {
         "initialize" => {
-            let workspace_folders = request.params.as_ref()
+            let workspace_folders = request
+                .params
+                .as_ref()
                 .and_then(|p| p.get("workspaceFolders"));
             match resolve_project_root(None, workspace_folders) {
                 Ok(proj_path) => {
-                    log("info", format!("[ozymem-server] workspace folder: {} → DB: {}/.ozymem/memory.db",
-                        proj_path.display(), proj_path.display()));
+                    log(
+                        "info",
+                        format!(
+                            "[ozymem-server] workspace folder: {} → DB: {}/.ozymem/memory.db",
+                            proj_path.display(),
+                            proj_path.display()
+                        ),
+                    );
 
                     let gb = match GraphBackend::open_for_project(&proj_path) {
                         Ok(gb) => gb,
                         Err(e) => {
-                            log("error", format!("[ozymem-server] failed to open project DB: {e}"));
-                            return Ok(Some(error_response(id, -32603, &format!("failed to open project DB: {e}"))));
+                            log(
+                                "error",
+                                format!("[ozymem-server] failed to open project DB: {e}"),
+                            );
+                            return Ok(Some(error_response(
+                                id,
+                                -32603,
+                                &format!("failed to open project DB: {e}"),
+                            )));
                         }
                     };
 
@@ -205,12 +235,19 @@ async fn handle_request(
                     }
 
                     if let Err(e) = ozymem_core::graph_backend::auto_manage_gitignore(&proj_path) {
-                        log("warn", format!("[ozymem-server] failed to update .gitignore: {e}"));
+                        log(
+                            "warn",
+                            format!("[ozymem-server] failed to update .gitignore: {e}"),
+                        );
                     }
 
                     let mut guard = backend.lock().unwrap();
                     if guard.is_some() {
-                        log("warn", "[ozymem-server] backend already initialized (duplicate initialize?)".into());
+                        log(
+                            "warn",
+                            "[ozymem-server] backend already initialized (duplicate initialize?)"
+                                .into(),
+                        );
                     } else {
                         guard.replace(gb);
                     }
@@ -222,7 +259,11 @@ async fn handle_request(
                     tokio::spawn(async move {
                         let guard = gb_clone2.lock().unwrap();
                         if let Some(ref gb) = *guard {
-                            log_spawn("info", "[ozymem-server] pre-initializing text embedder...".into(), &n2);
+                            log_spawn(
+                                "info",
+                                "[ozymem-server] pre-initializing text embedder...".into(),
+                                &n2,
+                            );
                             gb.init_embedder();
                             log_spawn("info", "[ozymem-server] text embedder ready".into(), &n2);
                         }
@@ -242,7 +283,10 @@ async fn handle_request(
                     });
                 }
                 Err(msg) => {
-                    log("error", format!("[ozymem-server] initialize without workspace: {msg}"));
+                    log(
+                        "error",
+                        format!("[ozymem-server] initialize without workspace: {msg}"),
+                    );
                     return Ok(Some(error_response(id, -32602, &msg)));
                 }
             }
@@ -274,6 +318,115 @@ async fn handle_request(
         "notifications/initialized" => return Ok(None),
         "tools/list" => {
             let tools = vec![
+
+                mcp_common::ToolDefinition {
+                    name: "ozy_context",
+                    description: "Unified context tool: task bundle, file context, project schema, indexed files, and recent lessons. Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "enum": ["task", "file", "summary", "files", "recent"], "default": "task" },
+                            "query": { "type": "string", "description": "Task/search query for action=task" },
+                            "file_path": { "type": "string", "description": "File path for action=file" },
+                            "max_tokens": { "type": "integer", "default": 4000 },
+                            "limit": { "type": "integer", "default": 20 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_memory",
+                    description: "Unified memory tool: record/search/list lessons, decisions, conventions, gotchas, and module rules. Replaces record_*, search_lessons, get_*_lessons, recent_lessons, similar_lessons.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "enum": ["record", "search", "file", "symbol", "recent", "similar"], "default": "search" },
+                            "kind": { "type": "string", "enum": ["lesson", "decision", "convention", "gotcha", "module_rule"] },
+                            "query": { "type": "string" },
+                            "file_path": { "type": "string" },
+                            "symbol_name": { "type": "string" },
+                            "context": { "type": "string" },
+                            "content": { "type": "string" },
+                            "limit": { "type": "integer", "default": 10 },
+                            "min_score": { "type": "number", "default": 0.5 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_graph",
+                    description: "Unified architecture graph tool: summary, neighbors, impact, paths, and architecture report. Replaces graph_summary, graph_neighbors, analyze_impact, graph_path.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "enum": ["summary", "neighbors", "impact", "path", "architecture_report"], "default": "summary" },
+                            "file_path": { "type": "string" },
+                            "from": { "type": "string" },
+                            "to": { "type": "string" },
+                            "depth": { "type": "integer", "default": 3 },
+                            "max_paths": { "type": "integer", "default": 1 },
+                            "max_hops": { "type": "integer", "default": 10 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_code_doctor",
+                    description: "Preview-safe code doctor: duplicates, redundancy, architecture smells, best-practice feedback, dependency risks, and refactor suggestions.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "mode": { "type": "string", "enum": ["preview"], "default": "preview" },
+                            "scope": { "type": "string", "description": "Optional file or directory scope" },
+                            "min_duplicate_lines": { "type": "integer", "default": 6 },
+                            "max_findings": { "type": "integer", "default": 20 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_doctor",
+                    description: "Ozymem/Ozygram system doctor: DB, registry, projects, memories, embeddings, watchers, indexes, and preview-safe repair suggestions.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
+                            "include_projects": { "type": "boolean", "default": true }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_skills",
+                    description: "Official skills.sh integration: sync/list/search/apply imported skill metadata as internal best-practice context; never executes external skill content.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "enum": ["sync", "list", "search", "apply"], "default": "list" },
+                            "query": { "type": "string" },
+                            "category": { "type": "string" },
+                            "limit": { "type": "integer", "default": 20 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_project",
+                    description: "Unified project/package tool: registered projects, package inspection, scripts, refresh index, stale projects, and ignore rules.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "enum": ["list", "memories", "delete", "stale", "refresh", "create_ignore", "dependencies", "verify_dependencies"], "default": "list" },
+                            "project_name": { "type": "string" },
+                            "project_path": { "type": "string" },
+                            "query": { "type": "string" },
+                            "patterns": { "type": "array", "items": { "type": "string" } },
+                            "force": { "type": "boolean", "default": false },
+                            "days": { "type": "integer", "default": 90 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
                 mcp_common::ToolDefinition {
                     name: "search",
                     description: "Búsqueda unificada híbrida de Ozygram (Texto literal estilo grep + Símbolos AST + Lecciones + Contratos Excel/HTTP)",
@@ -879,38 +1032,55 @@ async fn handle_request(
                 },
             ];
             // Pagination support for tools/list
-            let page_size = 50;
-            let params_cursor = request.params.as_ref()
+            let page_size = 100;
+            let params_cursor = request
+                .params
+                .as_ref()
                 .and_then(|p| p.get("cursor"))
                 .and_then(Value::as_str)
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(0);
             let total = tools.len();
-            let tools_slice: Vec<_> = tools.into_iter().skip(params_cursor * page_size).take(page_size).collect();
+            let tools_slice: Vec<_> = tools
+                .into_iter()
+                .skip(params_cursor * page_size)
+                .take(page_size)
+                .collect();
             let has_more = params_cursor * page_size + page_size < total;
-            ok_response(id, serde_json::to_value(
-                mcp_common::ToolListResult {
-                    tools: tools_slice,
-                    next_cursor: if has_more { Some((params_cursor + 1).to_string()) } else { None },
-                }
-            )?)
+            let mut result_value = serde_json::to_value(mcp_common::ToolListResult {
+                tools: tools_slice,
+                next_cursor: if has_more {
+                    Some((params_cursor + 1).to_string())
+                } else {
+                    None
+                },
+            })?;
+            mark_legacy_tools_deprecated(&mut result_value);
+            ok_response(id, result_value)
         }
         "tools/call" => {
-            let raw_params = request.params
+            let raw_params = request
+                .params
                 .ok_or_else(|| anyhow::anyhow!("missing params"))?;
 
             // Extract progressToken from _meta before consuming raw_params
-            let progress_token = raw_params.get("_meta")
+            let progress_token = raw_params
+                .get("_meta")
                 .and_then(|m| m.get("progressToken"))
                 .cloned();
 
             let tool_call: mcp_common::ToolCallParams = serde_json::from_value(raw_params)?;
 
             // Git tools: don't need the GraphBackend lock (they open their own repo)
-            if tool_call.name == "git_recent_changes" || tool_call.name == "git_diff_summary"
-                || tool_call.name == "git_diff_file" || tool_call.name == "git_blame_line"
-                || tool_call.name == "recent_changes_with_impact" {
-                let explicit_path = tool_call.arguments.get("project_path")
+            if tool_call.name == "git_recent_changes"
+                || tool_call.name == "git_diff_summary"
+                || tool_call.name == "git_diff_file"
+                || tool_call.name == "git_blame_line"
+                || tool_call.name == "recent_changes_with_impact"
+            {
+                let explicit_path = tool_call
+                    .arguments
+                    .get("project_path")
                     .and_then(Value::as_str)
                     .map(|s| s.to_string());
 
@@ -936,38 +1106,58 @@ async fn handle_request(
                 let result = match tool_call.name.as_str() {
                     "search" => {
                         let guard = backend.lock().unwrap();
-                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        let gb = guard
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
                         gb.reload_if_stale();
-                        let query = tool_call.arguments.get("query")
+                        let query = tool_call
+                            .arguments
+                            .get("query")
                             .and_then(Value::as_str)
                             .ok_or_else(|| anyhow::anyhow!("missing query"))?;
                         let scope = tool_call.arguments.get("scope").and_then(Value::as_str);
                         let mode = tool_call.arguments.get("mode").and_then(Value::as_str);
-                        let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+                        let limit = tool_call
+                            .arguments
+                            .get("limit")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(20) as usize;
 
                         let res = gb.unified_search(query, scope, mode, limit).await?;
                         let body = serde_json::to_string_pretty(&res)?;
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: body }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: body,
+                            }],
                             is_error: None,
                         }
                     }
                     "verify_contracts" => {
                         let guard = backend.lock().unwrap();
-                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        let gb = guard
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
                         gb.reload_if_stale();
                         let report = gb.verify_export_contracts()?;
                         let body = serde_json::to_string_pretty(&report)?;
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: body }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: body,
+                            }],
                             is_error: None,
                         }
                     }
                     "context" => {
                         let guard = backend.lock().unwrap();
-                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        let gb = guard
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
                         gb.reload_if_stale();
-                        let file_path = tool_call.arguments.get("file_path")
+                        let file_path = tool_call
+                            .arguments
+                            .get("file_path")
                             .and_then(Value::as_str)
                             .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
                         let ctx = gb.get_file_context(file_path).await?;
@@ -983,55 +1173,104 @@ async fn handle_request(
                             last_git.as_deref(),
                         );
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: body }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: body,
+                            }],
                             is_error: None,
                         }
                     }
                     "impact" => {
                         let guard = backend.lock().unwrap();
-                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        let gb = guard
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
                         gb.reload_if_stale();
-                        let file_path = tool_call.arguments.get("file_path")
+                        let file_path = tool_call
+                            .arguments
+                            .get("file_path")
                             .and_then(Value::as_str)
                             .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                        let depth = tool_call.arguments.get("depth")
+                        let depth = tool_call
+                            .arguments
+                            .get("depth")
                             .and_then(Value::as_u64)
                             .unwrap_or(3) as u32;
 
                         let impacts = gb.analyze_impact(file_path, depth);
                         let body = format_impact(&impacts, file_path);
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: body }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: body,
+                            }],
                             is_error: None,
                         }
                     }
                     "memory" => {
                         let guard = backend.lock().unwrap();
-                        let gb = guard.as_ref().ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
+                        let gb = guard
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Backend not initialized"))?;
                         gb.reload_if_stale();
-                        let action = tool_call.arguments.get("action").and_then(Value::as_str).unwrap_or("search");
-                        let kind = tool_call.arguments.get("kind").and_then(Value::as_str).unwrap_or("lesson");
+                        let action = tool_call
+                            .arguments
+                            .get("action")
+                            .and_then(Value::as_str)
+                            .unwrap_or("search");
+                        let kind = tool_call
+                            .arguments
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("lesson");
                         if action == "record" {
-                            let file_path = tool_call.arguments.get("file_path").and_then(Value::as_str).unwrap_or("");
-                            let error_context = tool_call.arguments.get("error_context").and_then(Value::as_str).unwrap_or("");
-                            let solution = tool_call.arguments.get("solution").and_then(Value::as_str).unwrap_or("");
-                            gb.record_entry(file_path, None, error_context, solution, kind).await?;
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let error_context = tool_call
+                                .arguments
+                                .get("error_context")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let solution = tool_call
+                                .arguments
+                                .get("solution")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            gb.record_entry(file_path, None, error_context, solution, kind)
+                                .await?;
                             ToolCallResult {
-                                content: vec![ContentBlock { kind: "text", text: format!("Record [{kind}] saved successfully for {file_path}") }],
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!(
+                                        "Record [{kind}] saved successfully for {file_path}"
+                                    ),
+                                }],
                                 is_error: None,
                             }
                         } else {
-                            let query = tool_call.arguments.get("query").and_then(Value::as_str).unwrap_or("");
+                            let query = tool_call
+                                .arguments
+                                .get("query")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
                             let res = gb.search_lessons(query, Some(kind), 20).await?;
                             let body = serde_json::to_string_pretty(&res)?;
                             ToolCallResult {
-                                content: vec![ContentBlock { kind: "text", text: body }],
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: body,
+                                }],
                                 is_error: None,
                             }
                         }
                     }
                     "git_recent_changes" => {
-                        let limit = tool_call.arguments.get("limit")
+                        let limit = tool_call
+                            .arguments
+                            .get("limit")
                             .and_then(Value::as_u64)
                             .unwrap_or(10) as usize;
                         match git.recent_changes(limit) {
@@ -1041,7 +1280,11 @@ async fn handle_request(
                                     let merge_tag = if c.is_merge { " [MERGE]" } else { "" };
                                     body.push_str(&format!(
                                         "\n{} {}{}\n  Author: {}\n  Date:   {}\n",
-                                        &c.hash[..7], c.message, merge_tag, c.author, c.timestamp,
+                                        &c.hash[..7],
+                                        c.message,
+                                        merge_tag,
+                                        c.author,
+                                        c.timestamp,
                                     ));
                                     if !c.files.is_empty() {
                                         body.push_str("  Files:\n");
@@ -1051,7 +1294,10 @@ async fn handle_request(
                                     }
                                 }
                                 ToolCallResult {
-                                    content: vec![ContentBlock { kind: "text", text: body }],
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: body,
+                                    }],
                                     is_error: None,
                                 }
                             }
@@ -1063,10 +1309,15 @@ async fn handle_request(
                     "git_diff_summary" => {
                         let from = match tool_call.arguments.get("from").and_then(Value::as_str) {
                             Some(f) => f,
-                            None => return Ok(Some(error_response(id, -32602, "Missing required parameter: from"))),
+                            None => {
+                                return Ok(Some(error_response(
+                                    id,
+                                    -32602,
+                                    "Missing required parameter: from",
+                                )))
+                            }
                         };
-                        let to = tool_call.arguments.get("to")
-                            .and_then(Value::as_str);
+                        let to = tool_call.arguments.get("to").and_then(Value::as_str);
                         match git.diff_summary(from, to) {
                             Ok(summary) => {
                                 let mut body = format!(
@@ -1077,7 +1328,10 @@ async fn handle_request(
                                     body.push_str(&format!("\n  {}  {}", f.status, f.path));
                                 }
                                 ToolCallResult {
-                                    content: vec![ContentBlock { kind: "text", text: body }],
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: body,
+                                    }],
                                     is_error: None,
                                 }
                             }
@@ -1089,28 +1343,59 @@ async fn handle_request(
                     "git_diff_file" => {
                         let from = match tool_call.arguments.get("from").and_then(Value::as_str) {
                             Some(f) => f,
-                            None => return Ok(Some(error_response(id, -32602, "Missing required parameter: from"))),
+                            None => {
+                                return Ok(Some(error_response(
+                                    id,
+                                    -32602,
+                                    "Missing required parameter: from",
+                                )))
+                            }
                         };
                         let to = tool_call.arguments.get("to").and_then(Value::as_str);
-                        let file_path = match tool_call.arguments.get("file_path").and_then(Value::as_str) {
-                            Some(p) => p,
-                            None => return Ok(Some(error_response(id, -32602, "Missing required parameter: file_path"))),
-                        };
+                        let file_path =
+                            match tool_call.arguments.get("file_path").and_then(Value::as_str) {
+                                Some(p) => p,
+                                None => {
+                                    return Ok(Some(error_response(
+                                        id,
+                                        -32602,
+                                        "Missing required parameter: file_path",
+                                    )))
+                                }
+                            };
                         match git.diff_file(from, to, file_path) {
                             Ok(diff) => ToolCallResult {
-                                content: vec![ContentBlock { kind: "text", text: diff }],
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: diff,
+                                }],
                                 is_error: None,
                             },
                             Err(msg) => return Ok(Some(error_response(id, -32603, &msg))),
                         }
                     }
                     "git_blame_line" => {
-                        let file_path = match tool_call.arguments.get("file_path").and_then(Value::as_str) {
-                            Some(p) => p,
-                            None => return Ok(Some(error_response(id, -32602, "Missing required parameter: file_path"))),
-                        };
-                        let start_line = tool_call.arguments.get("start_line").and_then(Value::as_u64).map(|v| v as usize);
-                        let end_line = tool_call.arguments.get("end_line").and_then(Value::as_u64).map(|v| v as usize);
+                        let file_path =
+                            match tool_call.arguments.get("file_path").and_then(Value::as_str) {
+                                Some(p) => p,
+                                None => {
+                                    return Ok(Some(error_response(
+                                        id,
+                                        -32602,
+                                        "Missing required parameter: file_path",
+                                    )))
+                                }
+                            };
+                        let start_line = tool_call
+                            .arguments
+                            .get("start_line")
+                            .and_then(Value::as_u64)
+                            .map(|v| v as usize);
+                        let end_line = tool_call
+                            .arguments
+                            .get("end_line")
+                            .and_then(Value::as_u64)
+                            .map(|v| v as usize);
                         match git.blame_file(file_path, start_line, end_line) {
                             Ok(entries) => {
                                 if entries.is_empty() {
@@ -1119,13 +1404,26 @@ async fn handle_request(
                                         is_error: None,
                                     }
                                 } else {
-                                    let mut body = format!("Blame for {} ({} entries):\n", file_path, entries.len());
+                                    let mut body = format!(
+                                        "Blame for {} ({} entries):\n",
+                                        file_path,
+                                        entries.len()
+                                    );
                                     for e in &entries {
-                                        body.push_str(&format!("\n  {}..{}  {}  {}  {}",
-                                            e.start_line, e.end_line, &e.hash[..7], e.author, e.timestamp));
+                                        body.push_str(&format!(
+                                            "\n  {}..{}  {}  {}  {}",
+                                            e.start_line,
+                                            e.end_line,
+                                            &e.hash[..7],
+                                            e.author,
+                                            e.timestamp
+                                        ));
                                     }
                                     ToolCallResult {
-                                        content: vec![ContentBlock { kind: "text", text: body }],
+                                        content: vec![ContentBlock {
+                                            kind: "text",
+                                            text: body,
+                                        }],
                                         is_error: None,
                                     }
                                 }
@@ -1134,10 +1432,16 @@ async fn handle_request(
                         }
                     }
                     "recent_changes_with_impact" => {
-                        let limit = tool_call.arguments.get("limit")
-                            .and_then(Value::as_u64).unwrap_or(5) as usize;
-                        let depth = tool_call.arguments.get("depth")
-                            .and_then(Value::as_u64).unwrap_or(1) as u32;
+                        let limit = tool_call
+                            .arguments
+                            .get("limit")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(5) as usize;
+                        let depth = tool_call
+                            .arguments
+                            .get("depth")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(1) as u32;
 
                         let changes = match git.recent_changes(limit) {
                             Ok(c) => c,
@@ -1157,14 +1461,23 @@ async fn handle_request(
                         }
 
                         // Single lock: batch analyze_impact for all touched files
-                        let impacts: std::collections::HashMap<String, Vec<ozymem_core::graph_backend::ImpactEntry>> = {
+                        let impacts: std::collections::HashMap<
+                            String,
+                            Vec<ozymem_core::graph_backend::ImpactEntry>,
+                        > = {
                             let guard = backend.lock().unwrap();
                             let Some(ref gb) = *guard else {
-                                return Ok(Some(error_response(id, -32000, "Backend not initialized")));
+                                return Ok(Some(error_response(
+                                    id,
+                                    -32000,
+                                    "Backend not initialized",
+                                )));
                             };
                             gb.reload_if_stale();
-                            let touched_set: std::collections::HashSet<String> = touched_set.into_iter().collect();
-                            touched_set.iter()
+                            let touched_set: std::collections::HashSet<String> =
+                                touched_set.into_iter().collect();
+                            touched_set
+                                .iter()
                                 .map(|f| {
                                     let impact = gb.analyze_impact(f, depth);
                                     (f.clone(), impact)
@@ -1177,7 +1490,10 @@ async fn handle_request(
                         for c in &changes {
                             body.push_str(&format!(
                                 "\n{} {}\n  Author: {}\n  Date:   {}\n",
-                                &c.hash[..7], c.message, c.author, c.timestamp,
+                                &c.hash[..7],
+                                c.message,
+                                c.author,
+                                c.timestamp,
                             ));
                             for f in &c.files {
                                 let abs = repo_root.join(f).to_string_lossy().to_string();
@@ -1196,7 +1512,10 @@ async fn handle_request(
                         }
 
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: body }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: body,
+                            }],
                             is_error: None,
                         }
                     }
@@ -1205,9 +1524,20 @@ async fn handle_request(
                 return Ok(Some(ok_response(id, serde_json::to_value(result)?)));
             }
 
+            if tool_call.name == "ozy_doctor" || tool_call.name == "ozy_skills" {
+                let result = match tool_call.name.as_str() {
+                    "ozy_doctor" => handle_ozy_doctor(&tool_call).await?,
+                    "ozy_skills" => handle_ozy_skills(&tool_call).await?,
+                    _ => unreachable!(),
+                };
+                return Ok(Some(ok_response(id, serde_json::to_value(result)?)));
+            }
+
             // Special case: refresh_project_index manages its own locking for hot-switch
             if tool_call.name == "refresh_project_index" {
-                let explicit_path = tool_call.arguments.get("project_path")
+                let explicit_path = tool_call
+                    .arguments
+                    .get("project_path")
                     .and_then(Value::as_str)
                     .map(|s| s.to_string());
 
@@ -1219,16 +1549,29 @@ async fn handle_request(
 
                 let needs_switch = {
                     let guard = backend.lock().unwrap();
-                    guard.as_ref()
+                    guard
+                        .as_ref()
                         .map(|gb| gb.project_path() != Some(resolved_str.clone()))
                         .unwrap_or(true)
                 };
 
                 let new_gb = if needs_switch {
-                    log("info", format!("[ozymem-server] switching project to {}", resolved.display()));
+                    log(
+                        "info",
+                        format!(
+                            "[ozymem-server] switching project to {}",
+                            resolved.display()
+                        ),
+                    );
                     Some(match GraphBackend::open_for_project(&resolved) {
                         Ok(gb) => gb,
-                        Err(e) => return Ok(Some(error_response(id, -32603, &format!("failed to open project DB: {e}")))),
+                        Err(e) => {
+                            return Ok(Some(error_response(
+                                id,
+                                -32603,
+                                &format!("failed to open project DB: {e}"),
+                            )))
+                        }
                     })
                 } else {
                     None
@@ -1242,13 +1585,16 @@ async fn handle_request(
                     return Ok(Some(error_response(id, -32000, "Backend not initialized")));
                 };
                 let progress = &progress_token;
-                gb.full_scan(&resolved_str, Some(&|processed, total| {
-                    if let Some(ref n) = notifier {
-                        if let Some(ref pt) = progress {
-                            n.progress(pt, processed, Some(total));
+                gb.full_scan(
+                    &resolved_str,
+                    Some(&|processed, total| {
+                        if let Some(ref n) = notifier {
+                            if let Some(ref pt) = progress {
+                                n.progress(pt, processed, Some(total));
+                            }
                         }
-                    }
-                }))?;
+                    }),
+                )?;
                 let result = ToolCallResult {
                     content: vec![ContentBlock {
                         kind: "text",
@@ -1260,17 +1606,23 @@ async fn handle_request(
             }
 
             // Project management tools: open their own ProjectRegistry + memory.db
-            if tool_call.name == "list_projects" || tool_call.name == "get_project_memories"
-                || tool_call.name == "delete_project" || tool_call.name == "suggest_stale_projects" {
+            if tool_call.name == "list_projects"
+                || tool_call.name == "get_project_memories"
+                || tool_call.name == "delete_project"
+                || tool_call.name == "suggest_stale_projects"
+            {
                 return Ok(Some(handle_project_tool(id, &tool_call, notifier).await?));
             }
 
             // Package management tools: create projects, install packages, run scripts
-            if tool_call.name == "create_project" || tool_call.name == "add_package"
-                || tool_call.name == "remove_package" || tool_call.name == "get_dependencies"
+            if tool_call.name == "create_project"
+                || tool_call.name == "add_package"
+                || tool_call.name == "remove_package"
+                || tool_call.name == "get_dependencies"
                 || tool_call.name == "run_script"
                 || tool_call.name == "analyze_package"
-                || tool_call.name == "verify_dependencies" {
+                || tool_call.name == "verify_dependencies"
+            {
                 return Ok(Some(handle_package_tool(id, &tool_call, notifier).await?));
             }
 
@@ -1283,6 +1635,378 @@ async fn handle_request(
             };
 
             let result = match tool_call.name.as_str() {
+                "ozy_context" => {
+                    backend.reload_if_stale();
+                    let action = tool_call
+                        .arguments
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("task");
+                    match action {
+                        "summary" => {
+                            let summary = backend.get_graph_summary().await?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format_summary(&summary),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "files" => {
+                            let files = backend.list_all_files()?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!(
+                                        "Indexed files ({}):\n\n{}",
+                                        files.len(),
+                                        files.join("\n")
+                                    ),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "recent" => {
+                            let limit = tool_call
+                                .arguments
+                                .get("limit")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(20) as usize;
+                            let results = backend.recent_lessons(None, limit).await?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format_lessons_list(&results),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "file" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            let ctx = backend.get_file_context(file_path).await?;
+                            let history =
+                                backend.get_historical_engram_solutions(file_path).await?;
+                            let neighbors = backend.get_graph_neighbors(file_path).await.ok();
+                            let last_git = get_last_commit(file_path).await;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format_file_context_enriched(
+                                        ctx.as_ref(),
+                                        file_path,
+                                        &history,
+                                        neighbors.as_ref(),
+                                        last_git.as_deref(),
+                                    ),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        _ => {
+                            let query = tool_call
+                                .arguments
+                                .get("query")
+                                .and_then(Value::as_str)
+                                .unwrap_or("project context");
+                            let max_tokens = tool_call
+                                .arguments
+                                .get("max_tokens")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(4000)
+                                as usize;
+                            let body = build_ozy_task_context(backend, query, max_tokens).await?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: body,
+                                }],
+                                is_error: None,
+                            }
+                        }
+                    }
+                }
+                "ozy_memory" => {
+                    let action = tool_call
+                        .arguments
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("search");
+                    let kind = tool_call
+                        .arguments
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("lesson");
+                    match action {
+                        "record" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            let symbol_name = tool_call
+                                .arguments
+                                .get("symbol_name")
+                                .and_then(Value::as_str);
+                            let context = tool_call
+                                .arguments
+                                .get("context")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let content = tool_call
+                                .arguments
+                                .get("content")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            backend
+                                .record_entry(file_path, symbol_name, context, content, kind)
+                                .await?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("Recorded {kind} for {file_path}"),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "file" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format_lessons_list(
+                                        &backend.get_file_lessons(file_path).await?,
+                                    ),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "symbol" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            let symbol_name = tool_call
+                                .arguments
+                                .get("symbol_name")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing symbol_name"))?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format_lessons_list(
+                                        &backend.get_symbol_lessons(file_path, symbol_name).await?,
+                                    ),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "recent" => {
+                            let limit = tool_call
+                                .arguments
+                                .get("limit")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(10) as usize;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format_lessons_list(
+                                        &backend.recent_lessons(Some(kind), limit).await?,
+                                    ),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "similar" => {
+                            let query = tool_call
+                                .arguments
+                                .get("query")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing query"))?;
+                            let limit = tool_call
+                                .arguments
+                                .get("limit")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(10) as usize;
+                            let min_score = tool_call
+                                .arguments
+                                .get("min_score")
+                                .and_then(Value::as_f64)
+                                .unwrap_or(0.5) as f32;
+                            let results = backend.similar_lessons(query, limit, min_score)?;
+                            let mut text = format!("Similar memories for {query}:\n");
+                            for (i, sl) in results.iter().enumerate() {
+                                text.push_str(&format!(
+                                    "{}. [score {:.3}] [{}] {} :: {}\n   {}\n",
+                                    i + 1,
+                                    sl.score,
+                                    sl.lesson.kind,
+                                    sl.lesson.file_path,
+                                    sl.lesson.symbol_name,
+                                    sl.lesson.solution
+                                ));
+                            }
+                            ToolCallResult {
+                                content: vec![ContentBlock { kind: "text", text }],
+                                is_error: None,
+                            }
+                        }
+                        _ => {
+                            let query = tool_call
+                                .arguments
+                                .get("query")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let limit = tool_call
+                                .arguments
+                                .get("limit")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(10) as usize;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format_lessons_list(
+                                        &backend.search_lessons(query, Some(kind), limit).await?,
+                                    ),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                    }
+                }
+                "ozy_graph" => {
+                    backend.reload_if_stale();
+                    let action = tool_call
+                        .arguments
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("summary");
+                    let body = match action {
+                        "neighbors" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            let info = backend.get_graph_neighbors(file_path).await?;
+                            serde_json::to_string_pretty(&info)?
+                        }
+                        "impact" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            let depth = tool_call
+                                .arguments
+                                .get("depth")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(3) as u32;
+                            format_impact(&backend.analyze_impact(file_path, depth), file_path)
+                        }
+                        "path" => {
+                            let from = tool_call
+                                .arguments
+                                .get("from")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing from"))?;
+                            let to = tool_call
+                                .arguments
+                                .get("to")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing to"))?;
+                            serde_json::to_string_pretty(
+                                &backend.find_graph_path(
+                                    from,
+                                    to,
+                                    tool_call
+                                        .arguments
+                                        .get("max_paths")
+                                        .and_then(Value::as_u64)
+                                        .unwrap_or(1) as usize,
+                                    tool_call
+                                        .arguments
+                                        .get("max_hops")
+                                        .and_then(Value::as_u64)
+                                        .unwrap_or(10) as usize,
+                                ),
+                            )?
+                        }
+                        "architecture_report" => build_architecture_report(backend).await?,
+                        _ => format_summary(&backend.get_graph_summary().await?),
+                    };
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "ozy_code_doctor" => {
+                    backend.reload_if_stale();
+                    let min_lines = tool_call
+                        .arguments
+                        .get("min_duplicate_lines")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(6) as usize;
+                    let max_findings = tool_call
+                        .arguments
+                        .get("max_findings")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(20) as usize;
+                    let scope = tool_call.arguments.get("scope").and_then(Value::as_str);
+                    let report =
+                        build_code_doctor_report(backend, scope, min_lines, max_findings).await?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: report,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "ozy_project" => {
+                    let action = tool_call
+                        .arguments
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("list");
+                    match action {
+                        "refresh" => {
+                            let project_path = tool_call
+                                .arguments
+                                .get("project_path")
+                                .and_then(Value::as_str)
+                                .map(|s| s.to_string())
+                                .or_else(|| backend.project_path());
+                            let resolved = resolve_project_root(project_path, None)
+                                .map_err(|m| anyhow::anyhow!(m))?;
+                            let resolved_str = resolved.to_string_lossy().to_string();
+                            backend.full_scan(&resolved_str, None)?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!(
+                                        "Project index refreshed for {}",
+                                        resolved.display()
+                                    ),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        _ => handle_ozy_project_readonly(&tool_call).await?,
+                    }
+                }
                 "analyze_impact" => {
                     backend.reload_if_stale();
 
@@ -1292,29 +2016,41 @@ async fn handle_request(
                         ToolCallResult {
                             content: vec![ContentBlock {
                                 kind: "text",
-                                text: format!("Scanning project... {} files processed", sp.processed),
+                                text: format!(
+                                    "Scanning project... {} files processed",
+                                    sp.processed
+                                ),
                             }],
                             is_error: None,
                         }
                     } else {
-                        let file_path = tool_call.arguments.get("file_path")
+                        let file_path = tool_call
+                            .arguments
+                            .get("file_path")
                             .and_then(Value::as_str)
                             .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                        let depth = tool_call.arguments.get("depth")
+                        let depth = tool_call
+                            .arguments
+                            .get("depth")
                             .and_then(Value::as_u64)
                             .unwrap_or(3) as u32;
 
                         let impacts = backend.analyze_impact(file_path, depth);
                         let body = format_impact(&impacts, file_path);
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: body }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: body,
+                            }],
                             is_error: None,
                         }
                     }
                 }
                 "file_context" => {
                     backend.reload_if_stale();
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
 
@@ -1335,7 +2071,10 @@ async fn handle_request(
                         last_git.as_deref(),
                     );
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
@@ -1359,7 +2098,9 @@ async fn handle_request(
                     }
                 }
                 "ozymem_find_symbol" => {
-                    let symbol_name = tool_call.arguments.get("symbol_name")
+                    let symbol_name = tool_call
+                        .arguments
+                        .get("symbol_name")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing symbol_name"))?;
                     backend.reload_if_stale();
@@ -1368,18 +2109,29 @@ async fn handle_request(
                     let body = if res.is_empty() {
                         format!("Symbol '{}' not found in indexed project.", symbol_name)
                     } else {
-                        format!("Symbol matches for '{}':\n\n{}", symbol_name, res.join("\n"))
+                        format!(
+                            "Symbol matches for '{}':\n\n{}",
+                            symbol_name,
+                            res.join("\n")
+                        )
                     };
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "ozymem_hybrid_search" => {
-                    let query = tool_call.arguments.get("query")
+                    let query = tool_call
+                        .arguments
+                        .get("query")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing query"))?;
-                    let limit = tool_call.arguments.get("limit")
+                    let limit = tool_call
+                        .arguments
+                        .get("limit")
                         .and_then(Value::as_u64)
                         .unwrap_or(5) as usize;
                     backend.reload_if_stale();
@@ -1389,11 +2141,20 @@ async fn handle_request(
                         body.push_str("No matching lessons or code snippets found.");
                     } else {
                         for (i, m) in matches.iter().enumerate() {
-                            body.push_str(&format!("{}. [{}] {} -> {}\n", i + 1, m.file_path, m.error_context, m.solution));
+                            body.push_str(&format!(
+                                "{}. [{}] {} -> {}\n",
+                                i + 1,
+                                m.file_path,
+                                m.error_context,
+                                m.solution
+                            ));
                         }
                     }
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
@@ -1402,13 +2163,21 @@ async fn handle_request(
                     let files = backend.list_all_files()?;
                     if files.is_empty() {
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: "No files indexed. Run refresh_project_index first.".to_string() }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: "No files indexed. Run refresh_project_index first."
+                                    .to_string(),
+                            }],
                             is_error: None,
                         }
                     } else {
-                        let body = format!("Indexed files ({}):\n\n{}", files.len(), files.join("\n"));
+                        let body =
+                            format!("Indexed files ({}):\n\n{}", files.len(), files.join("\n"));
                         ToolCallResult {
-                            content: vec![ContentBlock { kind: "text", text: body }],
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: body,
+                            }],
                             is_error: None,
                         }
                     }
@@ -1416,15 +2185,35 @@ async fn handle_request(
                 // Creates or updates .ozymignore, appends patterns, re-scans the project.
                 // Falls back to the active backend's project_path if no explicit path given.
                 "create_ozymignore" => {
-                    let patterns = match tool_call.arguments.get("patterns").and_then(Value::as_array) {
-                        Some(arr) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>(),
-                        None => return Ok(Some(error_response(id, -32602, "Missing required parameter: patterns"))),
+                    let patterns = match tool_call
+                        .arguments
+                        .get("patterns")
+                        .and_then(Value::as_array)
+                    {
+                        Some(arr) => arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>(),
+                        None => {
+                            return Ok(Some(error_response(
+                                id,
+                                -32602,
+                                "Missing required parameter: patterns",
+                            )))
+                        }
                     };
                     if patterns.is_empty() {
-                        return Ok(Some(error_response(id, -32602, "patterns must not be empty")));
+                        return Ok(Some(error_response(
+                            id,
+                            -32602,
+                            "patterns must not be empty",
+                        )));
                     }
-                    let explicit_path = tool_call.arguments.get("project_path")
-                        .and_then(Value::as_str).map(|s| s.to_string());
+                    let explicit_path = tool_call
+                        .arguments
+                        .get("project_path")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string());
                     let resolved = match resolve_project_root(explicit_path.clone(), None) {
                         Ok(p) => p,
                         Err(_) if explicit_path.is_none() => {
@@ -1455,22 +2244,34 @@ async fn handle_request(
                             added.push(p.clone());
                         }
                     }
-                    let mut content = String::from("# OzyMem ignore patterns\n# Lines starting with # are comments\n\n");
+                    let mut content = String::from(
+                        "# OzyMem ignore patterns\n# Lines starting with # are comments\n\n",
+                    );
                     for p in &existing {
                         content.push_str(p);
                         content.push('\n');
                     }
                     std::fs::write(&ozymemignore_path, content)?;
-                    log("info", format!("[ozymem-server] .ozymignore updated at {} ({} patterns)", ozymemignore_path.display(), existing.len()));
+                    log(
+                        "info",
+                        format!(
+                            "[ozymem-server] .ozymignore updated at {} ({} patterns)",
+                            ozymemignore_path.display(),
+                            existing.len()
+                        ),
+                    );
                     let resolved_str = resolved.to_string_lossy().to_string();
                     let progress = &progress_token;
-                    backend.full_scan(&resolved_str, Some(&|processed, total| {
-                        if let Some(ref n) = notifier {
-                            if let Some(ref pt) = progress {
-                                n.progress(pt, processed, Some(total));
+                    backend.full_scan(
+                        &resolved_str,
+                        Some(&|processed, total| {
+                            if let Some(ref n) = notifier {
+                                if let Some(ref pt) = progress {
+                                    n.progress(pt, processed, Some(total));
+                                }
                             }
-                        }
-                    }))?;
+                        }),
+                    )?;
                     let body = format!(
                         "Created/updated .ozymignore at {}.\n  Total patterns: {}\n  Newly added: {}\n  The project has been re-scanned ignoring these patterns.",
                         ozymemignore_path.display(),
@@ -1478,41 +2279,66 @@ async fn handle_request(
                         if added.is_empty() { "none (all already present)".to_string() } else { added.join(", ") },
                     );
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "record_lesson" => {
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                    let symbol_name = tool_call.arguments.get("symbol_name")
+                    let symbol_name = tool_call
+                        .arguments
+                        .get("symbol_name")
                         .and_then(Value::as_str);
-                    let error_context = tool_call.arguments.get("error_context")
+                    let error_context = tool_call
+                        .arguments
+                        .get("error_context")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing error_context"))?;
-                    let solution = tool_call.arguments.get("solution")
+                    let solution = tool_call
+                        .arguments
+                        .get("solution")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing solution"))?;
 
-                    backend.record_lesson(file_path, symbol_name, error_context, solution).await?;
-                    notify_subscribed(subscribed, notifier, &["ozymem://summary", "ozymem://recent-lessons"]);
+                    backend
+                        .record_lesson(file_path, symbol_name, error_context, solution)
+                        .await?;
+                    notify_subscribed(
+                        subscribed,
+                        notifier,
+                        &["ozymem://summary", "ozymem://recent-lessons"],
+                    );
                     ToolCallResult {
                         content: vec![ContentBlock {
                             kind: "text",
-                            text: format!("Recorded lesson for {}{}",
+                            text: format!(
+                                "Recorded lesson for {}{}",
                                 file_path,
-                                symbol_name.map(|s| format!("::{}", s)).unwrap_or_default()),
+                                symbol_name.map(|s| format!("::{}", s)).unwrap_or_default()
+                            ),
                         }],
                         is_error: None,
                     }
                 }
                 "search_lessons" => {
-                    let query = tool_call.arguments.get("query")
+                    let query = tool_call
+                        .arguments
+                        .get("query")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing query"))?;
                     let kind = tool_call.arguments.get("kind").and_then(Value::as_str);
-                    let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize;
+                    let limit = tool_call
+                        .arguments
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(10) as usize;
 
                     let results = backend.search_lessons(query, kind, limit).await?;
                     let mut body = String::new();
@@ -1520,66 +2346,109 @@ async fn handle_request(
                         body = format!("No results for \"{query}\"");
                     } else {
                         for (i, entry) in results.iter().enumerate() {
-                            body.push_str(&format!("{}. [{}] {} :: {}\n   context: {}\n   solution: {}\n",
-                                i + 1, entry.kind, entry.file_path, entry.symbol_name,
-                                entry.error_context, entry.solution));
+                            body.push_str(&format!(
+                                "{}. [{}] {} :: {}\n   context: {}\n   solution: {}\n",
+                                i + 1,
+                                entry.kind,
+                                entry.file_path,
+                                entry.symbol_name,
+                                entry.error_context,
+                                entry.solution
+                            ));
                         }
                     }
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "get_file_lessons" => {
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
                     let results = backend.get_file_lessons(file_path).await?;
                     let body = format_lessons_list(&results);
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "get_symbol_lessons" => {
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                    let symbol_name = tool_call.arguments.get("symbol_name")
+                    let symbol_name = tool_call
+                        .arguments
+                        .get("symbol_name")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing symbol_name"))?;
                     let results = backend.get_symbol_lessons(file_path, symbol_name).await?;
                     let body = format_lessons_list(&results);
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "recent_lessons" => {
                     let kind = tool_call.arguments.get("kind").and_then(Value::as_str);
-                    let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize;
+                    let limit = tool_call
+                        .arguments
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(10) as usize;
                     let results = backend.recent_lessons(kind, limit).await?;
                     let body = format_lessons_list(&results);
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "similar_lessons" => {
                     let query = match tool_call.arguments.get("query").and_then(Value::as_str) {
                         Some(q) => q,
-                        None => return Ok(Some(error_response(id, -32602, "Missing required parameter: query"))),
+                        None => {
+                            return Ok(Some(error_response(
+                                id,
+                                -32602,
+                                "Missing required parameter: query",
+                            )))
+                        }
                     };
-                    let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(10) as usize;
-                    let min_score = tool_call.arguments.get("min_score").and_then(Value::as_f64).unwrap_or(0.5) as f32;
+                    let limit = tool_call
+                        .arguments
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(10) as usize;
+                    let min_score = tool_call
+                        .arguments
+                        .get("min_score")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.5) as f32;
                     let kind_filter = tool_call.arguments.get("kind").and_then(Value::as_str);
                     match backend.similar_lessons(query, limit, min_score) {
                         Ok(results) => {
-                            let filtered: Vec<&ozymem_core::graph_backend::SimilarLesson> = if let Some(kind) = kind_filter {
-                                results.iter().filter(|r| r.lesson.kind == kind).collect()
-                            } else {
-                                results.iter().collect()
-                            };
+                            let filtered: Vec<&ozymem_core::graph_backend::SimilarLesson> =
+                                if let Some(kind) = kind_filter {
+                                    results.iter().filter(|r| r.lesson.kind == kind).collect()
+                                } else {
+                                    results.iter().collect()
+                                };
                             if filtered.is_empty() {
                                 ToolCallResult {
                                     content: vec![ContentBlock { kind: "text", text: format!("No semantically similar lessons found for \"{query}\"{}",
@@ -1596,129 +2465,227 @@ async fn handle_request(
                                     ));
                                 }
                                 ToolCallResult {
-                                    content: vec![ContentBlock { kind: "text", text: body }],
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: body,
+                                    }],
                                     is_error: None,
                                 }
                             }
                         }
-                        Err(e) => return Ok(Some(error_response(id, -32603, &format!("similar_lessons error: {e}")))),
+                        Err(e) => {
+                            return Ok(Some(error_response(
+                                id,
+                                -32603,
+                                &format!("similar_lessons error: {e}"),
+                            )))
+                        }
                     }
                 }
                 "graph_neighbors" => {
                     backend.reload_if_stale();
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
                     let info = backend.get_graph_neighbors(file_path).await?;
                     let mut body = format!("Neighbors of {}\n", info.file_path);
-                    body.push_str(&format!("  Incoming (dependents): {}\n", info.incoming.len()));
+                    body.push_str(&format!(
+                        "  Incoming (dependents): {}\n",
+                        info.incoming.len()
+                    ));
                     for p in &info.incoming {
                         body.push_str(&format!("    - {p}\n"));
                     }
-                    body.push_str(&format!("  Outgoing (dependencies): {}\n", info.outgoing.len()));
+                    body.push_str(&format!(
+                        "  Outgoing (dependencies): {}\n",
+                        info.outgoing.len()
+                    ));
                     for p in &info.outgoing {
                         body.push_str(&format!("    - {p}\n"));
                     }
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "record_decision" => {
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                    let symbol_name = tool_call.arguments.get("symbol_name").and_then(Value::as_str);
-                    let context = tool_call.arguments.get("context")
+                    let symbol_name = tool_call
+                        .arguments
+                        .get("symbol_name")
+                        .and_then(Value::as_str);
+                    let context = tool_call
+                        .arguments
+                        .get("context")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing context"))?;
-                    let decision = tool_call.arguments.get("decision")
+                    let decision = tool_call
+                        .arguments
+                        .get("decision")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing decision"))?;
-                    backend.record_entry(file_path, symbol_name, context, decision, "decision").await?;
-                    notify_subscribed(subscribed, notifier, &["ozymem://summary", "ozymem://recent-lessons"]);
+                    backend
+                        .record_entry(file_path, symbol_name, context, decision, "decision")
+                        .await?;
+                    notify_subscribed(
+                        subscribed,
+                        notifier,
+                        &["ozymem://summary", "ozymem://recent-lessons"],
+                    );
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: format!("Recorded decision for {file_path}") }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: format!("Recorded decision for {file_path}"),
+                        }],
                         is_error: None,
                     }
                 }
                 "record_convention" => {
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                    let symbol_name = tool_call.arguments.get("symbol_name").and_then(Value::as_str);
-                    let context = tool_call.arguments.get("context")
+                    let symbol_name = tool_call
+                        .arguments
+                        .get("symbol_name")
+                        .and_then(Value::as_str);
+                    let context = tool_call
+                        .arguments
+                        .get("context")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing context"))?;
-                    let convention = tool_call.arguments.get("convention")
+                    let convention = tool_call
+                        .arguments
+                        .get("convention")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing convention"))?;
-                    backend.record_entry(file_path, symbol_name, context, convention, "convention").await?;
-                    notify_subscribed(subscribed, notifier, &["ozymem://summary", "ozymem://recent-lessons"]);
+                    backend
+                        .record_entry(file_path, symbol_name, context, convention, "convention")
+                        .await?;
+                    notify_subscribed(
+                        subscribed,
+                        notifier,
+                        &["ozymem://summary", "ozymem://recent-lessons"],
+                    );
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: format!("Recorded convention for {file_path}") }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: format!("Recorded convention for {file_path}"),
+                        }],
                         is_error: None,
                     }
                 }
                 "record_gotcha" => {
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                    let symbol_name = tool_call.arguments.get("symbol_name").and_then(Value::as_str);
-                    let context = tool_call.arguments.get("context")
+                    let symbol_name = tool_call
+                        .arguments
+                        .get("symbol_name")
+                        .and_then(Value::as_str);
+                    let context = tool_call
+                        .arguments
+                        .get("context")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing context"))?;
-                    let gotcha = tool_call.arguments.get("gotcha")
+                    let gotcha = tool_call
+                        .arguments
+                        .get("gotcha")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing gotcha"))?;
-                    backend.record_entry(file_path, symbol_name, context, gotcha, "gotcha").await?;
-                    notify_subscribed(subscribed, notifier, &["ozymem://summary", "ozymem://recent-lessons"]);
+                    backend
+                        .record_entry(file_path, symbol_name, context, gotcha, "gotcha")
+                        .await?;
+                    notify_subscribed(
+                        subscribed,
+                        notifier,
+                        &["ozymem://summary", "ozymem://recent-lessons"],
+                    );
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: format!("Recorded gotcha for {file_path}") }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: format!("Recorded gotcha for {file_path}"),
+                        }],
                         is_error: None,
                     }
                 }
                 "record_module_rule" => {
-                    let file_path = tool_call.arguments.get("file_path")
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
-                    let context = tool_call.arguments.get("context")
+                    let context = tool_call
+                        .arguments
+                        .get("context")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing context"))?;
-                    let rule = tool_call.arguments.get("rule")
+                    let rule = tool_call
+                        .arguments
+                        .get("rule")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing rule"))?;
-                    backend.record_entry(file_path, None, context, rule, "module_rule").await?;
-                    notify_subscribed(subscribed, notifier, &["ozymem://summary", "ozymem://recent-lessons"]);
+                    backend
+                        .record_entry(file_path, None, context, rule, "module_rule")
+                        .await?;
+                    notify_subscribed(
+                        subscribed,
+                        notifier,
+                        &["ozymem://summary", "ozymem://recent-lessons"],
+                    );
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: format!("Recorded module rule for {file_path}") }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: format!("Recorded module rule for {file_path}"),
+                        }],
                         is_error: None,
                     }
                 }
                 "find_symbol" => {
                     backend.reload_if_stale();
 
-                    let symbol_name = tool_call.arguments.get("symbol_name")
+                    let symbol_name = tool_call
+                        .arguments
+                        .get("symbol_name")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing symbol_name"))?;
                     let kind_filter = tool_call.arguments.get("kind").and_then(Value::as_str);
-                    let max_results = tool_call.arguments.get("max_results")
+                    let max_results = tool_call
+                        .arguments
+                        .get("max_results")
                         .and_then(Value::as_u64)
                         .unwrap_or(20) as usize;
 
-                    let project_path = backend.project_path()
+                    let project_path = backend
+                        .project_path()
                         .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
 
                     let results = backend.find_symbol(symbol_name, &project_path).await?;
 
                     // Post-filter by kind (parsed from "[Kind]" in result string)
                     let filtered: Vec<&String> = if let Some(kind) = kind_filter {
-                        results.iter().filter(|r| {
-                            r.split('[').nth(1)
-                                .and_then(|s| s.split(']').next())
-                                .map(|k| k == kind)
-                                .unwrap_or(false)
-                        }).collect()
+                        results
+                            .iter()
+                            .filter(|r| {
+                                r.split('[')
+                                    .nth(1)
+                                    .and_then(|s| s.split(']').next())
+                                    .map(|k| k == kind)
+                                    .unwrap_or(false)
+                            })
+                            .collect()
                     } else {
                         results.iter().collect()
                     };
@@ -1726,12 +2693,19 @@ async fn handle_request(
                     let truncated: Vec<&&String> = filtered.iter().take(max_results).collect();
 
                     let body = if truncated.is_empty() {
-                        format!("No definitions found for '{}'{}",
+                        format!(
+                            "No definitions found for '{}'{}",
                             symbol_name,
-                            kind_filter.map_or(String::new(), |k| format!(" (kind: {k})")))
+                            kind_filter.map_or(String::new(), |k| format!(" (kind: {k})"))
+                        )
                     } else {
-                        let mut text = format!("Definitions matching '{}' ({} total, filtered to {}, showing {}):\n",
-                            symbol_name, results.len(), filtered.len(), truncated.len());
+                        let mut text = format!(
+                            "Definitions matching '{}' ({} total, filtered to {}, showing {}):\n",
+                            symbol_name,
+                            results.len(),
+                            filtered.len(),
+                            truncated.len()
+                        );
                         for (i, entry) in truncated.iter().enumerate() {
                             text.push_str(&format!("{}. {}\n", i + 1, entry));
                         }
@@ -1739,147 +2713,209 @@ async fn handle_request(
                     };
 
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "learn_from_changes" => {
-                    let result = handle_learn_from_changes(backend, &tool_call, notifier, subscribed).await?;
+                    let result =
+                        handle_learn_from_changes(backend, &tool_call, notifier, subscribed)
+                            .await?;
                     result
                 }
                 "context_for_task" => {
                     backend.reload_if_stale();
 
-                    let query = tool_call.arguments.get("query")
+                    let query = tool_call
+                        .arguments
+                        .get("query")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing query"))?;
-                    let max_tokens = tool_call.arguments.get("max_tokens")
+                    let max_tokens = tool_call
+                        .arguments
+                        .get("max_tokens")
                         .and_then(Value::as_u64)
                         .unwrap_or(4000) as usize;
 
                     // Wrap body-building in a timeout to prevent MCP client timeout
-                    let body = tokio::time::timeout(
-                        std::time::Duration::from_secs(15),
-                        async {
-                            // 1. Search lessons (filter out stale)
-                            let lessons: Vec<_> = backend.search_lessons(query, None, 20).await?
-                                .into_iter()
-                                .filter(|l| l.stale == 0)
-                                .collect();
+                    let body = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                        // 1. Search lessons (filter out stale)
+                        let lessons: Vec<_> = backend
+                            .search_lessons(query, None, 20)
+                            .await?
+                            .into_iter()
+                            .filter(|l| l.stale == 0)
+                            .collect();
 
-                            // 2. Collect unique file paths from matched lessons
-                            let mut file_paths: Vec<String> = lessons.iter()
-                                .map(|l| l.file_path.clone())
-                                .collect::<std::collections::HashSet<String>>()
-                                .into_iter()
-                                .collect();
-                            file_paths.sort();
-                            file_paths.truncate(5);
+                        // 2. Collect unique file paths from matched lessons
+                        let mut file_paths: Vec<String> = lessons
+                            .iter()
+                            .map(|l| l.file_path.clone())
+                            .collect::<std::collections::HashSet<String>>()
+                            .into_iter()
+                            .collect();
+                        file_paths.sort();
+                        file_paths.truncate(5);
 
-                            // 3. Build response
-                            let mut body = String::new();
+                        // 3. Build response
+                        let mut body = String::new();
 
-                            // Lessons section
-                            body.push_str(&format!("[Lessons matching \"{query}\"]\n"));
-                            if lessons.is_empty() {
-                                body.push_str("(none)\n");
-                            } else {
-                                for (i, e) in lessons.iter().enumerate() {
+                        // Lessons section
+                        body.push_str(&format!("[Lessons matching \"{query}\"]\n"));
+                        if lessons.is_empty() {
+                            body.push_str("(none)\n");
+                        } else {
+                            for (i, e) in lessons.iter().enumerate() {
+                                body.push_str(&format!(
+                                    "{}. [{}] {} :: {}\n   {}\n",
+                                    i + 1,
+                                    e.kind,
+                                    e.file_path,
+                                    e.symbol_name,
+                                    e.solution
+                                ));
+                            }
+                        }
+
+                        // File context and neighbors for each relevant file
+                        for fp in &file_paths {
+                            if body.len() / 4 >= max_tokens {
+                                body.push_str(&format!("\n... (truncated at {max_tokens} tokens)"));
+                                break;
+                            }
+
+                            body.push_str(&format!("\n\n=== {fp} ==="));
+
+                            // File context
+                            if let Ok(Some(ctx)) = backend.get_file_context(fp).await {
+                                body.push_str(&format!("\nLanguage: {}", ctx.language));
+                                if !ctx.functions.is_empty() {
                                     body.push_str(&format!(
-                                        "{}. [{}] {} :: {}\n   {}\n",
-                                        i + 1, e.kind, e.file_path, e.symbol_name, e.solution
+                                        "\nFunctions ({})",
+                                        ctx.functions.len()
+                                    ));
+                                    for fn_data in &ctx.functions {
+                                        body.push_str(&format!(
+                                            "\n  {} [{}] L{}-L{}",
+                                            fn_data.name,
+                                            fn_data.kind,
+                                            fn_data.start_line,
+                                            fn_data.end_line
+                                        ));
+                                    }
+                                }
+                            }
+
+                            // Graph neighbors
+                            if let Ok(neighbors) = backend.get_graph_neighbors(fp).await {
+                                if !neighbors.incoming.is_empty() {
+                                    body.push_str(&format!(
+                                        "\nDependents ({}):",
+                                        neighbors.incoming.len()
+                                    ));
+                                    for p in &neighbors.incoming {
+                                        body.push_str(&format!("\n  {p}"));
+                                    }
+                                }
+                                if !neighbors.outgoing.is_empty() {
+                                    body.push_str(&format!(
+                                        "\nDepends on ({}):",
+                                        neighbors.outgoing.len()
+                                    ));
+                                    for p in &neighbors.outgoing {
+                                        body.push_str(&format!("\n  {p}"));
+                                    }
+                                }
+                            }
+
+                            // Impact analysis (depth 1, called inline — safe under outer lock)
+                            let impacts = backend.analyze_impact(fp, 1);
+                            if !impacts.is_empty() {
+                                body.push_str(&format!(
+                                    "\nTransitive impact (depth 1, {} files):",
+                                    impacts.len()
+                                ));
+                                for imp in &impacts {
+                                    body.push_str(&format!(
+                                        "\n  {} ({} funcs, {} lessons)",
+                                        imp.file_path, imp.function_count, imp.lesson_count
                                     ));
                                 }
                             }
-
-                            // File context and neighbors for each relevant file
-                            for fp in &file_paths {
-                                if body.len() / 4 >= max_tokens {
-                                    body.push_str(&format!("\n... (truncated at {max_tokens} tokens)"));
-                                    break;
-                                }
-
-                                body.push_str(&format!("\n\n=== {fp} ==="));
-
-                                // File context
-                                if let Ok(Some(ctx)) = backend.get_file_context(fp).await {
-                                    body.push_str(&format!("\nLanguage: {}", ctx.language));
-                                    if !ctx.functions.is_empty() {
-                                        body.push_str(&format!("\nFunctions ({})", ctx.functions.len()));
-                                        for fn_data in &ctx.functions {
-                                            body.push_str(&format!("\n  {} [{}] L{}-L{}",
-                                                fn_data.name, fn_data.kind, fn_data.start_line, fn_data.end_line));
-                                        }
-                                    }
-                                }
-
-                                // Graph neighbors
-                                if let Ok(neighbors) = backend.get_graph_neighbors(fp).await {
-                                    if !neighbors.incoming.is_empty() {
-                                        body.push_str(&format!("\nDependents ({}):", neighbors.incoming.len()));
-                                        for p in &neighbors.incoming {
-                                            body.push_str(&format!("\n  {p}"));
-                                        }
-                                    }
-                                    if !neighbors.outgoing.is_empty() {
-                                        body.push_str(&format!("\nDepends on ({}):", neighbors.outgoing.len()));
-                                        for p in &neighbors.outgoing {
-                                            body.push_str(&format!("\n  {p}"));
-                                        }
-                                    }
-                                }
-
-                                // Impact analysis (depth 1, called inline — safe under outer lock)
-                                let impacts = backend.analyze_impact(fp, 1);
-                                if !impacts.is_empty() {
-                                    body.push_str(&format!("\nTransitive impact (depth 1, {} files):", impacts.len()));
-                                    for imp in &impacts {
-                                        body.push_str(&format!("\n  {} ({} funcs, {} lessons)",
-                                            imp.file_path, imp.function_count, imp.lesson_count));
-                                    }
-                                }
-                            }
-
-                            Ok::<String, anyhow::Error>(body)
                         }
-                    ).await
+
+                        Ok::<String, anyhow::Error>(body)
+                    })
+                    .await
                     .map_err(|_| anyhow::anyhow!("context_for_task timed out after 15s"))?
                     .map_err(|e| anyhow::anyhow!("context_for_task error: {e}"))?;
 
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "graph_path" => {
                     backend.reload_if_stale();
 
-                    let from = tool_call.arguments.get("from")
+                    let from = tool_call
+                        .arguments
+                        .get("from")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing from"))?;
-                    let to = tool_call.arguments.get("to")
+                    let to = tool_call
+                        .arguments
+                        .get("to")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing to"))?;
-                    let max_paths = tool_call.arguments.get("max_paths")
-                        .and_then(Value::as_u64).unwrap_or(1) as usize;
-                    let max_hops = tool_call.arguments.get("max_hops")
-                        .and_then(Value::as_u64).unwrap_or(10) as usize;
+                    let max_paths = tool_call
+                        .arguments
+                        .get("max_paths")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1) as usize;
+                    let max_hops = tool_call
+                        .arguments
+                        .get("max_hops")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(10) as usize;
 
                     let paths = backend.find_graph_path(from, to, max_paths, max_hops);
 
                     let body = if paths.is_empty() {
                         format!("No path found between '{}' and '{}' (they may not be connected in the dependency graph)", from, to)
                     } else {
-                        let shortest = paths.iter().map(|p| p.len()).min().unwrap_or(0).saturating_sub(1);
+                        let shortest = paths
+                            .iter()
+                            .map(|p| p.len())
+                            .min()
+                            .unwrap_or(0)
+                            .saturating_sub(1);
                         let mut text = format!("Found {} path(s) between '{}' and '{}' (shortest: {} hops, max allowed: {}):\n", paths.len(), from, to, shortest, max_hops);
                         for (i, path) in paths.iter().enumerate() {
                             let hops = path.len() - 1;
-                            let marker = if hops == shortest { " ◀ SHORTEST" } else { "" };
-                            text.push_str(&format!("\nPath {} ({} hop(s)){}:\n", i + 1, hops, marker));
+                            let marker = if hops == shortest {
+                                " ◀ SHORTEST"
+                            } else {
+                                ""
+                            };
+                            text.push_str(&format!(
+                                "\nPath {} ({} hop(s)){}:\n",
+                                i + 1,
+                                hops,
+                                marker
+                            ));
                             for (j, file) in path.iter().enumerate() {
                                 let arrow = if j < path.len() - 1 { " → " } else { "" };
                                 text.push_str(&format!("  {}{}", file, arrow));
-                                if j < path.len() - 1 { text.push('\n'); }
+                                if j < path.len() - 1 {
+                                    text.push('\n');
+                                }
                             }
                             text.push('\n');
                         }
@@ -1887,22 +2923,34 @@ async fn handle_request(
                     };
 
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
                 "smart_search" => {
                     backend.reload_if_stale();
 
-                    let query = tool_call.arguments.get("query")
+                    let query = tool_call
+                        .arguments
+                        .get("query")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow::anyhow!("missing query"))?;
-                    let max_results = tool_call.arguments.get("max_results")
-                        .and_then(Value::as_u64).unwrap_or(10) as usize;
-                    let min_score = tool_call.arguments.get("min_score")
-                        .and_then(Value::as_f64).unwrap_or(0.3) as f32;
+                    let max_results = tool_call
+                        .arguments
+                        .get("max_results")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(10) as usize;
+                    let min_score = tool_call
+                        .arguments
+                        .get("min_score")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.3) as f32;
 
-                    let project_path = backend.project_path()
+                    let project_path = backend
+                        .project_path()
                         .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
 
                     // Run async searches in parallel (non-blocking)
@@ -1912,7 +2960,8 @@ async fn handle_request(
                     );
 
                     // Run sync semantic search separately (blocks but has early-return)
-                    let semantic = backend.similar_lessons(&format!("search:{}", query), max_results, min_score)
+                    let semantic = backend
+                        .similar_lessons(&format!("search:{}", query), max_results, min_score)
                         .unwrap_or_default();
 
                     let symbol_results = symbols.unwrap_or_default();
@@ -1921,7 +2970,10 @@ async fn handle_request(
                     let mut body = format!("Smart search for '{}':\n", query);
 
                     // Symbols section
-                    body.push_str(&format!("\n── Symbol definitions ({}):\n", symbol_results.len()));
+                    body.push_str(&format!(
+                        "\n── Symbol definitions ({}):\n",
+                        symbol_results.len()
+                    ));
                     for (i, s) in symbol_results.iter().enumerate().take(max_results) {
                         body.push_str(&format!("  {}. {}\n", i + 1, s));
                     }
@@ -1929,17 +2981,38 @@ async fn handle_request(
                     // Lesson section (FTS5)
                     body.push_str(&format!("\n── Lessons (FTS5, {}):\n", lesson_results.len()));
                     for (i, l) in lesson_results.iter().enumerate().take(max_results) {
-                        body.push_str(&format!("  {}. [{}] {} :: {}\n     {}\n", i + 1, l.kind, l.symbol_name, l.error_context, l.solution));
+                        body.push_str(&format!(
+                            "  {}. [{}] {} :: {}\n     {}\n",
+                            i + 1,
+                            l.kind,
+                            l.symbol_name,
+                            l.error_context,
+                            l.solution
+                        ));
                     }
 
                     // Semantic section
-                    body.push_str(&format!("\n── Semantic (embeddings, {}):\n", semantic.len()));
+                    body.push_str(&format!(
+                        "\n── Semantic (embeddings, {}):\n",
+                        semantic.len()
+                    ));
                     for (i, s) in semantic.iter().enumerate().take(max_results) {
-                        body.push_str(&format!("  {}. [score: {:.2}] [{}] {} :: {}\n     {}\n", i + 1, s.score, s.lesson.kind, s.lesson.symbol_name, s.lesson.error_context, s.lesson.solution));
+                        body.push_str(&format!(
+                            "  {}. [score: {:.2}] [{}] {} :: {}\n     {}\n",
+                            i + 1,
+                            s.score,
+                            s.lesson.kind,
+                            s.lesson.symbol_name,
+                            s.lesson.error_context,
+                            s.lesson.solution
+                        ));
                     }
 
                     ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     }
                 }
@@ -1987,7 +3060,9 @@ async fn handle_request(
                 },
             ];
             // Pagination: only 3 resources, no cursor needed but support the protocol
-            let _cursor = request.params.as_ref()
+            let _cursor = request
+                .params
+                .as_ref()
                 .and_then(|p| p.get("cursor"))
                 .and_then(Value::as_str);
             let result = mcp_common::ListResourcesResult {
@@ -2001,42 +3076,61 @@ async fn handle_request(
             let Some(ref gb) = *guard else {
                 return Ok(Some(error_response(id, -32000, "Server not initialized")));
             };
-            let params: mcp_common::ReadResourceParams = match request.params
+            let params: mcp_common::ReadResourceParams = match request
+                .params
                 .ok_or_else(|| anyhow::anyhow!("missing params"))
-                .and_then(|p| serde_json::from_value(p).map_err(|e| anyhow::anyhow!("invalid params: {e}")))
-            {
+                .and_then(|p| {
+                    serde_json::from_value(p).map_err(|e| anyhow::anyhow!("invalid params: {e}"))
+                }) {
                 Ok(p) => p,
                 Err(e) => return Ok(Some(error_response(id, -32602, &e.to_string()))),
             };
             let uri = params.uri.clone();
             let contents = match uri.as_str() {
-                "ozymem://summary" => {
-                    match gb.get_graph_summary().await {
-                        Ok(summary) => vec![mcp_common::ResourceContents::Text {
-                            uri: params.uri,
-                            mime_type: "application/json".to_string(),
-                            text: serde_json::to_string_pretty(&summary)?,
-                        }],
-                        Err(e) => return Ok(Some(error_response(id, -32603, &format!("failed to read summary: {e}")))),
+                "ozymem://summary" => match gb.get_graph_summary().await {
+                    Ok(summary) => vec![mcp_common::ResourceContents::Text {
+                        uri: params.uri,
+                        mime_type: "application/json".to_string(),
+                        text: serde_json::to_string_pretty(&summary)?,
+                    }],
+                    Err(e) => {
+                        return Ok(Some(error_response(
+                            id,
+                            -32603,
+                            &format!("failed to read summary: {e}"),
+                        )))
                     }
-                }
-                "ozymem://recent-lessons" => {
-                    match gb.recent_lessons(None, 20).await {
-                        Ok(lessons) => vec![mcp_common::ResourceContents::Text {
-                            uri: params.uri,
-                            mime_type: "application/json".to_string(),
-                            text: serde_json::to_string_pretty(&lessons)?,
-                        }],
-                        Err(e) => return Ok(Some(error_response(id, -32603, &format!("failed to read lessons: {e}")))),
+                },
+                "ozymem://recent-lessons" => match gb.recent_lessons(None, 20).await {
+                    Ok(lessons) => vec![mcp_common::ResourceContents::Text {
+                        uri: params.uri,
+                        mime_type: "application/json".to_string(),
+                        text: serde_json::to_string_pretty(&lessons)?,
+                    }],
+                    Err(e) => {
+                        return Ok(Some(error_response(
+                            id,
+                            -32603,
+                            &format!("failed to read lessons: {e}"),
+                        )))
                     }
-                }
+                },
                 "ozymem://full-context" => {
-                    let summary = gb.get_graph_summary().await.unwrap_or(ozymem_core::GraphSummary {
-                        file_count: 0, function_count: 0, engram_count: 0,
-                        native_ast_function_count: 0, extension_wasm_function_count: 0,
-                        text_heuristic_function_count: 0, vertex_count: 0, edge_count: 0,
-                        memory_usage: String::new(), lessons_without_embedding: 0,
-                    });
+                    let summary =
+                        gb.get_graph_summary()
+                            .await
+                            .unwrap_or(ozymem_core::GraphSummary {
+                                file_count: 0,
+                                function_count: 0,
+                                engram_count: 0,
+                                native_ast_function_count: 0,
+                                extension_wasm_function_count: 0,
+                                text_heuristic_function_count: 0,
+                                vertex_count: 0,
+                                edge_count: 0,
+                                memory_usage: String::new(),
+                                lessons_without_embedding: 0,
+                            });
                     let files = gb.list_all_files().unwrap_or_default();
                     let lessons = gb.recent_lessons(None, 50).await.unwrap_or_default();
                     let context = serde_json::json!({
@@ -2065,10 +3159,22 @@ async fn handle_request(
                             mime_type: "text/plain".to_string(),
                             text: format!("No indexed file found for {file_path}"),
                         }],
-                        Err(e) => return Ok(Some(error_response(id, -32603, &format!("failed to read file context: {e}")))),
+                        Err(e) => {
+                            return Ok(Some(error_response(
+                                id,
+                                -32603,
+                                &format!("failed to read file context: {e}"),
+                            )))
+                        }
                     }
                 }
-                _ => return Ok(Some(error_response(id, -32602, &format!("Unknown resource URI: {}", params.uri)))),
+                _ => {
+                    return Ok(Some(error_response(
+                        id,
+                        -32602,
+                        &format!("Unknown resource URI: {}", params.uri),
+                    )))
+                }
             };
             let result = mcp_common::ReadResourceResult { contents };
             ok_response(id, serde_json::to_value(result)?)
@@ -2088,12 +3194,16 @@ async fn handle_request(
                     mime_type: Some("application/json".to_string()),
                 },
             ];
-            let result = mcp_common::ListResourceTemplatesResult { resource_templates: templates };
+            let result = mcp_common::ListResourceTemplatesResult {
+                resource_templates: templates,
+            };
             ok_response(id, serde_json::to_value(result)?)
         }
         "resources/subscribe" => {
             if let Some(sub) = subscribed {
-                let uri = request.params.as_ref()
+                let uri = request
+                    .params
+                    .as_ref()
                     .and_then(|p| p.get("uri"))
                     .and_then(Value::as_str)
                     .map(|s| s.to_string());
@@ -2107,7 +3217,9 @@ async fn handle_request(
         }
         "resources/unsubscribe" => {
             if let Some(sub) = subscribed {
-                let uri = request.params.as_ref()
+                let uri = request
+                    .params
+                    .as_ref()
                     .and_then(|p| p.get("uri"))
                     .and_then(Value::as_str)
                     .map(|s| s.to_string());
@@ -2120,11 +3232,19 @@ async fn handle_request(
             }
         }
         "completions/complete" => {
-            let raw = request.params.as_ref()
+            let raw = request
+                .params
+                .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("missing params"))?;
             let params: mcp_common::CompletionParams = match serde_json::from_value(raw.clone()) {
                 Ok(p) => p,
-                Err(e) => return Ok(Some(error_response(id, -32602, &format!("Invalid params: {e}")))),
+                Err(e) => {
+                    return Ok(Some(error_response(
+                        id,
+                        -32602,
+                        &format!("Invalid params: {e}"),
+                    )))
+                }
             };
             let completion = match params.ref_param {
                 mcp_common::CompletionRef::Prompt { name } => {
@@ -2300,10 +3420,12 @@ async fn handle_request(
             let Some(ref gb) = *guard else {
                 return Ok(Some(error_response(id, -32000, "Server not initialized")));
             };
-            let params: mcp_common::GetPromptParams = match request.params
+            let params: mcp_common::GetPromptParams = match request
+                .params
                 .ok_or_else(|| anyhow::anyhow!("missing params"))
-                .and_then(|p| serde_json::from_value(p).map_err(|e| anyhow::anyhow!("invalid params: {e}")))
-            {
+                .and_then(|p| {
+                    serde_json::from_value(p).map_err(|e| anyhow::anyhow!("invalid params: {e}"))
+                }) {
                 Ok(p) => p,
                 Err(e) => return Ok(Some(error_response(id, -32602, &e.to_string()))),
             };
@@ -2311,15 +3433,28 @@ async fn handle_request(
                 "analyze-file" => {
                     let file_path = match params.arguments.get("path").and_then(Value::as_str) {
                         Some(p) => p,
-                        None => return Ok(Some(error_response(id, -32602, "Missing required argument: path"))),
+                        None => {
+                            return Ok(Some(error_response(
+                                id,
+                                -32602,
+                                "Missing required argument: path",
+                            )))
+                        }
                     };
-                    let depth = params.arguments.get("depth").and_then(Value::as_u64).unwrap_or(3) as u32;
+                    let depth = params
+                        .arguments
+                        .get("depth")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(3) as u32;
                     gb.reload_if_stale();
 
                     let impacts = gb.analyze_impact(file_path, depth);
                     let ctx = gb.get_file_context(file_path).await.unwrap_or(None);
                     let lessons = gb.get_file_lessons(file_path).await.unwrap_or_default();
-                    let history = gb.get_historical_engram_solutions(file_path).await.unwrap_or_default();
+                    let history = gb
+                        .get_historical_engram_solutions(file_path)
+                        .await
+                        .unwrap_or_default();
 
                     let mut text = format!("# Analysis of {}\n\n", file_path);
                     // Context section
@@ -2328,7 +3463,10 @@ async fn handle_request(
                         text.push_str(&format!("- Language: {}\n", c.language));
                         text.push_str(&format!("- Functions: {}\n\n", c.functions.len()));
                         for f in &c.functions {
-                            text.push_str(&format!("  - `{}` [{}] L{}-L{}\n", f.name, f.kind, f.start_line, f.end_line));
+                            text.push_str(&format!(
+                                "  - `{}` [{}] L{}-L{}\n",
+                                f.name, f.kind, f.start_line, f.end_line
+                            ));
                         }
                     } else {
                         text.push_str("Not indexed.\n");
@@ -2346,15 +3484,24 @@ async fn handle_request(
                         text.push_str("No transitive impact found.\n");
                     } else {
                         for entry in &impacts {
-                            text.push_str(&format!("- {} ({} funcs, {} lessons)\n", entry.file_path, entry.function_count, entry.lesson_count));
+                            text.push_str(&format!(
+                                "- {} ({} funcs, {} lessons)\n",
+                                entry.file_path, entry.function_count, entry.lesson_count
+                            ));
                         }
                     }
                     // Lessons section
                     if !lessons.is_empty() {
                         text.push_str("\n## Lessons\n\n");
                         for entry in &lessons {
-                            text.push_str(&format!("- [{}] {} :: {}\n  Context: {}\n  Solution: {}\n",
-                                entry.kind, entry.file_path, entry.symbol_name, entry.error_context, entry.solution));
+                            text.push_str(&format!(
+                                "- [{}] {} :: {}\n  Context: {}\n  Solution: {}\n",
+                                entry.kind,
+                                entry.file_path,
+                                entry.symbol_name,
+                                entry.error_context,
+                                entry.solution
+                            ));
                         }
                     }
 
@@ -2371,9 +3518,16 @@ async fn handle_request(
                     ok_response(id, serde_json::to_value(result)?)
                 }
                 "review-lessons" => {
-                    let file_path = match params.arguments.get("file_path").and_then(Value::as_str) {
+                    let file_path = match params.arguments.get("file_path").and_then(Value::as_str)
+                    {
                         Some(p) => p,
-                        None => return Ok(Some(error_response(id, -32602, "Missing required argument: file_path"))),
+                        None => {
+                            return Ok(Some(error_response(
+                                id,
+                                -32602,
+                                "Missing required argument: file_path",
+                            )))
+                        }
                     };
                     let lessons = gb.get_file_lessons(file_path).await.unwrap_or_default();
                     let mut text = format!("# Lessons for {}\n\n", file_path);
@@ -2400,12 +3554,21 @@ async fn handle_request(
                 }
                 "project-status" => {
                     gb.reload_if_stale();
-                    let summary = gb.get_graph_summary().await.unwrap_or(ozymem_core::GraphSummary {
-                        file_count: 0, function_count: 0, engram_count: 0,
-                        native_ast_function_count: 0, extension_wasm_function_count: 0,
-                        text_heuristic_function_count: 0, vertex_count: 0, edge_count: 0,
-                        memory_usage: String::new(), lessons_without_embedding: 0,
-                    });
+                    let summary =
+                        gb.get_graph_summary()
+                            .await
+                            .unwrap_or(ozymem_core::GraphSummary {
+                                file_count: 0,
+                                function_count: 0,
+                                engram_count: 0,
+                                native_ast_function_count: 0,
+                                extension_wasm_function_count: 0,
+                                text_heuristic_function_count: 0,
+                                vertex_count: 0,
+                                edge_count: 0,
+                                memory_usage: String::new(),
+                                lessons_without_embedding: 0,
+                            });
                     let lessons = gb.recent_lessons(None, 10).await.unwrap_or_default();
                     let mut text = format!("# Project Status\n\n");
                     text.push_str(&format!("## Summary\n\n- Files: {}\n- Functions: {}\n- Lessons: {}\n- AST functions: {}\n- Text heuristic: {}\n\n",
@@ -2414,8 +3577,14 @@ async fn handle_request(
                     if !lessons.is_empty() {
                         text.push_str("## Recent Lessons\n\n");
                         for (i, entry) in lessons.iter().enumerate() {
-                            text.push_str(&format!("{}. [{}] {} :: {}\n   {}\n\n",
-                                i + 1, entry.kind, entry.file_path, entry.symbol_name, entry.solution));
+                            text.push_str(&format!(
+                                "{}. [{}] {} :: {}\n   {}\n\n",
+                                i + 1,
+                                entry.kind,
+                                entry.file_path,
+                                entry.symbol_name,
+                                entry.solution
+                            ));
                         }
                     }
                     let result = mcp_common::GetPromptResult {
@@ -2446,14 +3615,23 @@ fn format_lessons_list(results: &[ozymem_core::graph_backend::LessonEntry]) -> S
     let mut body = String::new();
     for (i, entry) in results.iter().enumerate() {
         let stale_tag = if entry.stale != 0 {
-            format!(" [STALE: {}]", entry.stale_reason.as_deref().unwrap_or("unknown"))
+            format!(
+                " [STALE: {}]",
+                entry.stale_reason.as_deref().unwrap_or("unknown")
+            )
         } else {
             String::new()
         };
         body.push_str(&format!(
             "{}. [{}]{} {} :: {}\n   context: {}\n   solution: {}\n   created: {}\n",
-            i + 1, entry.kind, stale_tag, entry.file_path, entry.symbol_name,
-            entry.error_context, entry.solution, entry.created_at
+            i + 1,
+            entry.kind,
+            stale_tag,
+            entry.file_path,
+            entry.symbol_name,
+            entry.error_context,
+            entry.solution,
+            entry.created_at
         ));
     }
     body
@@ -2477,19 +3655,36 @@ fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
             text.push_str(&format!("\n  Depth {}:\n", current_depth));
         }
         let sev_tag = match entry.severity.as_str() {
-            "breaking" => { breaking += 1; "[BREAKING]" }
-            "warning" => { warnings += 1; "[WARN]" }
-            _ => { infos += 1; "[INFO]" }
+            "breaking" => {
+                breaking += 1;
+                "[BREAKING]"
+            }
+            "warning" => {
+                warnings += 1;
+                "[WARN]"
+            }
+            _ => {
+                infos += 1;
+                "[INFO]"
+            }
         };
         text.push_str(&format!(
             "    {:>10} {} (L{}-L{}) [{} | {} funcs, {} lessons]\n",
-            sev_tag, entry.file_path, entry.start_line, entry.end_line,
-            entry.language, entry.function_count, entry.lesson_count
+            sev_tag,
+            entry.file_path,
+            entry.start_line,
+            entry.end_line,
+            entry.language,
+            entry.function_count,
+            entry.lesson_count
         ));
 
         // Reason and suggestion
         text.push_str(&format!("           ├── reason: {}\n", entry.reason));
-        text.push_str(&format!("           └── suggestion: {}\n", entry.suggestion));
+        text.push_str(&format!(
+            "           └── suggestion: {}\n",
+            entry.suggestion
+        ));
 
         // Show key functions if available
         if !entry.functions.is_empty() {
@@ -2503,7 +3698,9 @@ fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
     let total_lessons: i64 = impacts.iter().map(|e| e.lesson_count).sum();
     text.push_str(&format!(
         "\nTotal: {} files affected, {} functions, {} lessons registered\n",
-        impacts.len(), total_funcs, total_lessons
+        impacts.len(),
+        total_funcs,
+        total_lessons
     ));
 
     // Summary bar
@@ -2542,14 +3739,20 @@ fn format_file_context_enriched(
 
     // Graph neighbors section
     if let Some(n) = neighbors {
-        output.push_str(&format!("\n\nDependents (files that import this): {}", n.incoming.len()));
+        output.push_str(&format!(
+            "\n\nDependents (files that import this): {}",
+            n.incoming.len()
+        ));
         for dep in n.incoming.iter().take(5) {
             output.push_str(&format!("\n  ← {}", dep));
         }
         if n.incoming.len() > 5 {
             output.push_str(&format!("\n  ... and {} more", n.incoming.len() - 5));
         }
-        output.push_str(&format!("\nDepends on (files this imports): {}", n.outgoing.len()));
+        output.push_str(&format!(
+            "\nDepends on (files this imports): {}",
+            n.outgoing.len()
+        ));
         for dep in n.outgoing.iter().take(5) {
             output.push_str(&format!("\n  → {}", dep));
         }
@@ -2565,7 +3768,10 @@ fn format_file_context_enriched(
 
     // Lessons for this file
     if !history.is_empty() {
-        output.push_str(&format!("\n\nLessons recorded for this file ({}):", history.len()));
+        output.push_str(&format!(
+            "\n\nLessons recorded for this file ({}):",
+            history.len()
+        ));
         for solution in history {
             output.push_str(&format!("\n- {}", solution));
         }
@@ -2581,7 +3787,11 @@ async fn get_last_commit(file_path: &str) -> Option<String> {
         .ok()?;
     if output.status.success() {
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !s.is_empty() { Some(s) } else { None }
+        if !s.is_empty() {
+            Some(s)
+        } else {
+            None
+        }
     } else {
         None
     }
@@ -2598,6 +3808,384 @@ fn format_summary(summary: &ozymem_core::GraphSummary) -> String {
         summary.extension_wasm_function_count,
         summary.text_heuristic_function_count
     )
+}
+
+async fn build_ozy_task_context(
+    backend: &GraphBackend,
+    query: &str,
+    max_tokens: usize,
+) -> anyhow::Result<String> {
+    let lessons: Vec<_> = backend
+        .search_lessons(query, None, 20)
+        .await?
+        .into_iter()
+        .filter(|l| l.stale == 0)
+        .collect();
+    let mut body = format!("[Ozy Context for \"{query}\"]\n");
+    if lessons.is_empty() {
+        body.push_str("No matching memories found.\n");
+    } else {
+        for (i, e) in lessons.iter().enumerate() {
+            body.push_str(&format!(
+                "{}. [{}] {} :: {}\n   {}\n",
+                i + 1,
+                e.kind,
+                e.file_path,
+                e.symbol_name,
+                e.solution
+            ));
+        }
+    }
+    let mut files: Vec<String> = lessons
+        .iter()
+        .map(|l| l.file_path.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    files.sort();
+    for fp in files.iter().take(5) {
+        if body.len() / 4 >= max_tokens {
+            body.push_str(&format!("\n... truncated at ~{max_tokens} tokens"));
+            break;
+        }
+        if let Ok(Some(ctx)) = backend.get_file_context(fp).await {
+            body.push_str(&format!(
+                "\n=== {fp} ===\nLanguage: {}\nFunctions: {}\n",
+                ctx.language,
+                ctx.functions.len()
+            ));
+        }
+        if let Ok(neighbors) = backend.get_graph_neighbors(fp).await {
+            body.push_str(&format!(
+                "Dependents: {} | Dependencies: {}\n",
+                neighbors.incoming.len(),
+                neighbors.outgoing.len()
+            ));
+        }
+    }
+    Ok(body)
+}
+
+async fn handle_ozy_doctor(
+    tool_call: &mcp_common::ToolCallParams,
+) -> anyhow::Result<ToolCallResult> {
+    let include_projects = tool_call
+        .arguments
+        .get("include_projects")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let json_format = tool_call
+        .arguments
+        .get("format")
+        .and_then(Value::as_str)
+        .unwrap_or("text")
+        == "json";
+    let home = std::env::var_os("OZYMEM_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(std::path::PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+        .ok_or_else(|| anyhow::anyhow!("home directory not found"))?;
+    let config_path = home.join(".ozymem.toml");
+    let registry_path = home.join(".ozymem").join("registry.db");
+    let mut checks = Vec::new();
+    checks.push(serde_json::json!({"name":"config", "severity": if config_path.exists() {"ok"} else {"warning"}, "detail": config_path.display().to_string()}));
+    checks.push(serde_json::json!({"name":"registry_db", "severity": if registry_path.exists() {"ok"} else {"warning"}, "detail": registry_path.display().to_string()}));
+    let mut projects_json = Vec::new();
+    if include_projects {
+        match ozymem_core::registry::ProjectRegistry::open().and_then(|r| r.list_projects()) {
+            Ok(projects) => {
+                for p in projects {
+                    let path_exists = std::path::Path::new(&p.path).exists();
+                    let db_exists = std::path::Path::new(&p.path).join(".ozymem").join("memory.db").exists();
+                    projects_json.push(serde_json::json!({"name":p.name,"path":p.path,"status":format!("{:?}", p.status),"path_exists":path_exists,"memory_db_exists":db_exists}));
+                }
+            }
+            Err(e) => checks.push(serde_json::json!({"name":"project_registry", "severity":"critical", "detail": e.to_string()})),
+        }
+    }
+    let payload = serde_json::json!({
+        "doctor":"ozy_doctor",
+        "mode":"preview_safe",
+        "checks":checks,
+        "projects":projects_json,
+        "recommended_actions":[
+            {"kind":"safe","action":"Run ozy_project action=refresh for projects with stale or empty indexes."},
+            {"kind":"needs_confirmation","action":"Remove or archive broken/stale projects only after user confirmation."},
+            {"kind":"manual","action":"Review skills metadata before applying best-practice guidance."}
+        ]
+    });
+    let text = if json_format {
+        serde_json::to_string_pretty(&payload)?
+    } else {
+        format_doctor_payload(&payload)
+    };
+    Ok(ToolCallResult {
+        content: vec![ContentBlock { kind: "text", text }],
+        is_error: None,
+    })
+}
+
+async fn handle_ozy_skills(
+    tool_call: &mcp_common::ToolCallParams,
+) -> anyhow::Result<ToolCallResult> {
+    let action = tool_call
+        .arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("list");
+    let query = tool_call
+        .arguments
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_lowercase();
+    let limit = tool_call
+        .arguments
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(20) as usize;
+    let mut skills = official_skill_seed();
+    if !query.is_empty() {
+        skills.retain(|s| {
+            s.get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase()
+                .contains(&query)
+                || s.get("repo")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&query)
+                || s.get("category")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&query)
+        });
+    }
+    skills.truncate(limit);
+    let payload = match action {
+        "sync" => {
+            serde_json::json!({"source":"https://www.skills.sh/official","mode":"metadata_seed","executed_external_content":false,"imported":skills})
+        }
+        "apply" => {
+            serde_json::json!({"source":"skills.sh official metadata","mode":"checklist_only","query":query,"checklist":["Identify relevant official skill category before coding.","Prefer framework/vendor guidance over generic rules.","Use Ozy Doctor Code findings as evidence, not automatic edits.","Keep all external skill content review-only unless explicitly approved."],"matches":skills})
+        }
+        _ => {
+            serde_json::json!({"source":"https://www.skills.sh/official","official_only":true,"skills":skills})
+        }
+    };
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: serde_json::to_string_pretty(&payload)?,
+        }],
+        is_error: None,
+    })
+}
+
+fn official_skill_seed() -> Vec<Value> {
+    vec![
+        serde_json::json!({"name":"react","repo":"facebook/react","category":"frontend","origin":"skills.sh/official","audit_status":"external_review_required"}),
+        serde_json::json!({"name":"vercel-ai","repo":"vercel/ai","category":"ai-sdk","origin":"skills.sh/official","audit_status":"external_review_required"}),
+        serde_json::json!({"name":"openai-skills","repo":"openai/skills","category":"openai","origin":"skills.sh/official","audit_status":"external_review_required"}),
+        serde_json::json!({"name":"supabase-agent-skills","repo":"supabase/agent-skills","category":"database","origin":"skills.sh/official","audit_status":"external_review_required"}),
+        serde_json::json!({"name":"prisma-skills","repo":"prisma/skills","category":"database","origin":"skills.sh/official","audit_status":"external_review_required"}),
+        serde_json::json!({"name":"semgrep-skills","repo":"semgrep/skills","category":"security","origin":"skills.sh/official","audit_status":"external_review_required"}),
+        serde_json::json!({"name":"getsentry-skills","repo":"getsentry/skills","category":"observability","origin":"skills.sh/official","audit_status":"external_review_required"}),
+    ]
+}
+
+async fn handle_ozy_project_readonly(
+    tool_call: &mcp_common::ToolCallParams,
+) -> anyhow::Result<ToolCallResult> {
+    let action = tool_call
+        .arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("list");
+    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+    let payload = match action {
+        "stale" => {
+            let days = tool_call
+                .arguments
+                .get("days")
+                .and_then(Value::as_u64)
+                .unwrap_or(90) as i64;
+            let stale = reg.get_stale_projects(days)?;
+            serde_json::json!({"action":"stale","days":days,"projects":stale})
+        }
+        _ => serde_json::json!({"action":"list","projects":reg.list_projects()?}),
+    };
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: serde_json::to_string_pretty(&payload)?,
+        }],
+        is_error: None,
+    })
+}
+
+async fn build_architecture_report(backend: &GraphBackend) -> anyhow::Result<String> {
+    let summary = backend.get_graph_summary().await?;
+    let files = backend.list_all_files().unwrap_or_default();
+    let mut hotspots = Vec::new();
+    for fp in files.iter().take(500) {
+        if let Ok(n) = backend.get_graph_neighbors(fp).await {
+            let score = n.incoming.len() + n.outgoing.len();
+            if score > 0 {
+                hotspots.push((score, n.incoming.len(), n.outgoing.len(), fp.clone()));
+            }
+        }
+    }
+    hotspots.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut body = format!(
+        "# Architecture Report\n\n{}\n\nTop coupling hotspots:\n",
+        format_summary(&summary)
+    );
+    for (score, incoming, outgoing, fp) in hotspots.iter().take(10) {
+        body.push_str(&format!(
+            "- score {score} | incoming {incoming} | outgoing {outgoing}: {fp}\n"
+        ));
+    }
+    body.push_str("\nPreview-safe recommendations:\n- Review high incoming files before refactors.\n- Use graph impact before edits.\n- Extract shared code only after duplicate evidence is confirmed.\n");
+    Ok(body)
+}
+
+async fn build_code_doctor_report(
+    backend: &GraphBackend,
+    scope: Option<&str>,
+    min_lines: usize,
+    max_findings: usize,
+) -> anyhow::Result<String> {
+    let files = backend.list_all_files().unwrap_or_default();
+    let scope_norm = scope.unwrap_or("").replace('\\', "/");
+    let mut seen: std::collections::HashMap<String, Vec<(String, usize)>> =
+        std::collections::HashMap::new();
+    for fp in files {
+        let fp_norm = fp.replace('\\', "/");
+        if !scope_norm.is_empty() && !fp_norm.contains(&scope_norm) {
+            continue;
+        }
+        let path = std::path::Path::new(&fp);
+        if !path.exists() {
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(
+            ext,
+            "rs" | "ts" | "tsx" | "js" | "jsx" | "php" | "py" | "go" | "sql"
+        ) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let lines: Vec<String> = content.lines().map(normalize_code_line).collect();
+        if lines.len() < min_lines {
+            continue;
+        }
+        for i in 0..=lines.len().saturating_sub(min_lines) {
+            let block = lines[i..i + min_lines]
+                .iter()
+                .filter(|l| !l.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+            if block.lines().count() >= min_lines / 2 && block.len() > 80 {
+                seen.entry(block).or_default().push((fp.clone(), i + 1));
+            }
+        }
+    }
+    let mut duplicates: Vec<_> = seen
+        .into_iter()
+        .filter(|(_, locs)| locs.len() > 1)
+        .collect();
+    duplicates.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    let arch = build_architecture_report(backend).await?;
+    let mut body = format!(
+        "# Ozy Doctor Code\n\nMode: preview_safe (no files modified)\n\n## Duplicate findings\n"
+    );
+    if duplicates.is_empty() {
+        body.push_str("No duplicate blocks found with current threshold.\n");
+    }
+    for (idx, (_block, locs)) in duplicates.iter().take(max_findings).enumerate() {
+        body.push_str(&format!(
+            "{}. Duplicate block in {} locations:\n",
+            idx + 1,
+            locs.len()
+        ));
+        for (fp, line) in locs.iter().take(6) {
+            body.push_str(&format!("   - {fp}:L{line}\n"));
+        }
+        body.push_str("   suggestion: consider extracting shared helper only after reviewing behavior parity.\n");
+    }
+    body.push_str("\n## Architecture and best-practice feedback\n");
+    body.push_str(&arch);
+    body.push_str("\n## Autosanado preview\n- safe: refresh stale indexes before making decisions.\n- needs_confirmation: remove redundant code only after tests and user approval.\n- manual: review official skills.sh guidance before applying framework-specific changes.\n");
+    Ok(body)
+}
+
+fn normalize_code_line(line: &str) -> String {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with("//") || t.starts_with('#') || t.starts_with("*") {
+        return String::new();
+    }
+    t.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn format_doctor_payload(payload: &Value) -> String {
+    let mut body = String::from("# Ozy Doctor\n\nMode: preview_safe\n\nChecks:\n");
+    if let Some(checks) = payload.get("checks").and_then(Value::as_array) {
+        for c in checks {
+            body.push_str(&format!(
+                "- [{}] {}: {}\n",
+                c.get("severity")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                c.get("name").and_then(Value::as_str).unwrap_or("check"),
+                c.get("detail").and_then(Value::as_str).unwrap_or("")
+            ));
+        }
+    }
+    if let Some(projects) = payload.get("projects").and_then(Value::as_array) {
+        body.push_str(&format!("\nProjects: {}\n", projects.len()));
+        for p in projects.iter().take(20) {
+            body.push_str(&format!(
+                "- {} ({}) path={} db={}\n",
+                p.get("name").and_then(Value::as_str).unwrap_or("unknown"),
+                p.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                p.get("path_exists")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                p.get("memory_db_exists")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ));
+        }
+    }
+    body.push_str(
+        "\nRecommended actions are preview-only; no autosanado is executed without confirmation.\n",
+    );
+    body
+}
+
+fn mark_legacy_tools_deprecated(value: &mut Value) {
+    let Some(tools) = value.get_mut("tools").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for tool in tools {
+        let name = tool.get("name").and_then(Value::as_str).unwrap_or("");
+        if name.starts_with("ozy_") {
+            continue;
+        }
+        if let Some(desc) = tool.get("description").and_then(Value::as_str) {
+            let new_desc = format!("[DEPRECATED: use one of the 7 unified ozy_* tools] {desc}");
+            tool["description"] = Value::String(new_desc);
+        }
+        tool["deprecated"] = Value::Bool(true);
+    }
 }
 
 fn ok_response(id: Value, result: Value) -> mcp_common::JsonRpcResponse {
@@ -2645,7 +4233,9 @@ fn resolve_project_root(
     // 1. Explicit path from tool call — highest priority
     if let Some(p) = explicit_path {
         let pb = PathBuf::from(&p);
-        return pb.canonicalize().map_err(|e| format!("Invalid project_path `{p}`: {e}"));
+        return pb
+            .canonicalize()
+            .map_err(|e| format!("Invalid project_path `{p}`: {e}"));
     }
     // 2. workspaceFolders from initialize
     if let Some(folders) = workspace_folders {
@@ -2663,7 +4253,9 @@ fn resolve_project_root(
     // 3. Environment variable
     if let Ok(p) = std::env::var("OZYGRAM_PROJECT_ROOT") {
         let pb = PathBuf::from(&p);
-        return pb.canonicalize().map_err(|e| format!("Invalid OZYGRAM_PROJECT_ROOT `{p}`: {e}"));
+        return pb
+            .canonicalize()
+            .map_err(|e| format!("Invalid OZYGRAM_PROJECT_ROOT `{p}`: {e}"));
     }
     // 4. Actionable error
     Err(
@@ -2713,29 +4305,60 @@ async fn handle_project_tool(
             Ok(ok_response(
                 id,
                 serde_json::to_value(ToolCallResult {
-                    content: vec![ContentBlock { kind: "text", text: body }],
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
                     is_error: None,
                 })?,
             ))
         }
 
         "get_project_memories" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: project_name")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: project_name",
+                    ))
+                }
             };
             let query = tool_call.arguments.get("query").and_then(Value::as_str);
             let kind = tool_call.arguments.get("kind").and_then(Value::as_str);
-            let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+            let limit = tool_call
+                .arguments
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(20) as usize;
 
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found in registry", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found in registry", project_name),
+                    ))
+                }
             };
             let db_path = Path::new(&project.path).join(".ozymem").join("memory.db");
             if !db_path.exists() {
-                return Ok(error_response(id, -32602, &format!("No memory.db found for project '{}' at {}", project_name, db_path.display())));
+                return Ok(error_response(
+                    id,
+                    -32602,
+                    &format!(
+                        "No memory.db found for project '{}' at {}",
+                        project_name,
+                        db_path.display()
+                    ),
+                ));
             }
 
             let gb = GraphBackend::open(Some(&db_path.to_string_lossy()))?;
@@ -2747,13 +4370,20 @@ async fn handle_project_tool(
                 gb.recent_lessons(kind, limit).await?
             };
 
-            let mut body = format!("Memories for '{}' ({} entries):\n\n", project_name, lessons.len());
+            let mut body = format!(
+                "Memories for '{}' ({} entries):\n\n",
+                project_name,
+                lessons.len()
+            );
             if lessons.is_empty() {
                 body.push_str("No lessons, decisions, conventions, gotchas, or module rules recorded for this project.\n");
             } else {
                 for (i, entry) in lessons.iter().enumerate() {
                     let stale_tag = if entry.stale != 0 {
-                        format!(" [STALE: {}]", entry.stale_reason.as_deref().unwrap_or("unknown"))
+                        format!(
+                            " [STALE: {}]",
+                            entry.stale_reason.as_deref().unwrap_or("unknown")
+                        )
                     } else {
                         String::new()
                     };
@@ -2774,23 +4404,46 @@ async fn handle_project_tool(
             Ok(ok_response(
                 id,
                 serde_json::to_value(ToolCallResult {
-                    content: vec![ContentBlock { kind: "text", text: body }],
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
                     is_error: None,
                 })?,
             ))
         }
 
         "delete_project" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: project_name")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: project_name",
+                    ))
+                }
             };
-            let force = tool_call.arguments.get("force").and_then(Value::as_bool).unwrap_or(false);
+            let force = tool_call
+                .arguments
+                .get("force")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found in registry", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found in registry", project_name),
+                    ))
+                }
             };
 
             let db_path = Path::new(&project.path).join(".ozymem").join("memory.db");
@@ -2800,18 +4453,21 @@ async fn handle_project_tool(
 
             if !force {
                 // Preview mode
-                let summary = gb.get_graph_summary().await.unwrap_or(ozymem_core::GraphSummary {
-                    file_count: 0,
-                    function_count: 0,
-                    engram_count: 0,
-                    native_ast_function_count: 0,
-                    extension_wasm_function_count: 0,
-                    text_heuristic_function_count: 0,
-                    vertex_count: 0,
-                    edge_count: 0,
-                    memory_usage: String::new(),
-                    lessons_without_embedding: 0,
-                });
+                let summary = gb
+                    .get_graph_summary()
+                    .await
+                    .unwrap_or(ozymem_core::GraphSummary {
+                        file_count: 0,
+                        function_count: 0,
+                        engram_count: 0,
+                        native_ast_function_count: 0,
+                        extension_wasm_function_count: 0,
+                        text_heuristic_function_count: 0,
+                        vertex_count: 0,
+                        edge_count: 0,
+                        memory_usage: String::new(),
+                        lessons_without_embedding: 0,
+                    });
                 let days_since = days_since_str(project.last_opened.as_deref());
 
                 let body = format!(
@@ -2829,14 +4485,23 @@ async fn handle_project_tool(
                 return Ok(ok_response(
                     id,
                     serde_json::to_value(ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     })?,
                 ));
             }
 
             // Execute deletion
-            log("info", format!("[ozymem-server] deleting project '{}' (keeping lessons)", project_name));
+            log(
+                "info",
+                format!(
+                    "[ozymem-server] deleting project '{}' (keeping lessons)",
+                    project_name
+                ),
+            );
 
             // 1. Clear indexed data (files, functions, dependencies) – lessons remain
             gb.clear_data()?;
@@ -2853,17 +4518,28 @@ async fn handle_project_tool(
                 Ok(ok_response(
                     id,
                     serde_json::to_value(ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     })?,
                 ))
             } else {
-                Ok(error_response(id, -32603, &format!("Failed to deregister project '{}'", project_name)))
+                Ok(error_response(
+                    id,
+                    -32603,
+                    &format!("Failed to deregister project '{}'", project_name),
+                ))
             }
         }
 
         "suggest_stale_projects" => {
-            let days = tool_call.arguments.get("days").and_then(Value::as_u64).unwrap_or(90) as i64;
+            let days = tool_call
+                .arguments
+                .get("days")
+                .and_then(Value::as_u64)
+                .unwrap_or(90) as i64;
 
             let reg = ProjectRegistry::open()?;
             let stale = reg.get_stale_projects(days)?;
@@ -2873,13 +4549,20 @@ async fn handle_project_tool(
                 return Ok(ok_response(
                     id,
                     serde_json::to_value(ToolCallResult {
-                        content: vec![ContentBlock { kind: "text", text: body }],
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: body,
+                        }],
                         is_error: None,
                     })?,
                 ));
             }
 
-            let mut body = format!("Stale projects (SLEEPING > {} days, {} found):\n\n", days, stale.len());
+            let mut body = format!(
+                "Stale projects (SLEEPING > {} days, {} found):\n\n",
+                days,
+                stale.len()
+            );
             for p in &stale {
                 let db_path = Path::new(&p.path).join(".ozymem").join("memory.db");
                 let lesson_count = if db_path.exists() {
@@ -2907,13 +4590,20 @@ async fn handle_project_tool(
             Ok(ok_response(
                 id,
                 serde_json::to_value(ToolCallResult {
-                    content: vec![ContentBlock { kind: "text", text: body }],
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
                     is_error: None,
                 })?,
             ))
         }
 
-        _ => Ok(error_response(id, -32601, "Unknown project management tool")),
+        _ => Ok(error_response(
+            id,
+            -32601,
+            "Unknown project management tool",
+        )),
     }
 }
 
@@ -2936,23 +4626,53 @@ async fn handle_package_tool(
         "create_project" => {
             let name = match tool_call.arguments.get("name").and_then(Value::as_str) {
                 Some(n) => n,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: name")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: name",
+                    ))
+                }
             };
-            let parent = tool_call.arguments.get("path").and_then(Value::as_str)
+            let parent = tool_call
+                .arguments
+                .get("path")
+                .and_then(Value::as_str)
                 .map(|s| PathBuf::from(s))
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let proj_type = tool_call.arguments.get("type").and_then(Value::as_str).unwrap_or("node");
-            let packages = tool_call.arguments.get("packages").and_then(Value::as_array)
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+            let proj_type = tool_call
+                .arguments
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("node");
+            let packages = tool_call
+                .arguments
+                .get("packages")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
 
             let project_dir = parent.join(name);
             if project_dir.exists() {
-                return Ok(error_response(id, -32602, &format!("Directory already exists: {}", project_dir.display())));
+                return Ok(error_response(
+                    id,
+                    -32602,
+                    &format!("Directory already exists: {}", project_dir.display()),
+                ));
             }
 
             std::fs::create_dir_all(&project_dir)?;
-            log("info", format!("[ozymem-server] created directory {}", project_dir.display()));
+            log(
+                "info",
+                format!(
+                    "[ozymem-server] created directory {}",
+                    project_dir.display()
+                ),
+            );
 
             // Run package manager init
             match proj_type {
@@ -2999,7 +4719,11 @@ async fn handle_package_tool(
             // Install packages
             let mut installed = Vec::new();
             if !packages.is_empty() {
-                let cmd = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
+                let cmd = if cfg!(target_os = "windows") {
+                    "cmd"
+                } else {
+                    "sh"
+                };
                 let args: Vec<&str> = if cfg!(target_os = "windows") {
                     let mut a = vec!["/C", "pnpm", "add"];
                     a.extend(packages.iter().map(|s| s.as_str()));
@@ -3015,10 +4739,20 @@ async fn handle_package_tool(
                     .output()?;
                 if output.status.success() {
                     installed = packages.clone();
-                    log("info", format!("[ozymem-server] installed {} packages in {}", installed.len(), project_dir.display()));
+                    log(
+                        "info",
+                        format!(
+                            "[ozymem-server] installed {} packages in {}",
+                            installed.len(),
+                            project_dir.display()
+                        ),
+                    );
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    log("warn", format!("[ozymem-server] pnpm install warning: {stderr}"));
+                    log(
+                        "warn",
+                        format!("[ozymem-server] pnpm install warning: {stderr}"),
+                    );
                 }
             }
 
@@ -3026,7 +4760,10 @@ async fn handle_package_tool(
             let reg = ProjectRegistry::open()?;
             let path_str = ozymem_core::normalize_path(&project_dir.to_string_lossy());
             let _project = reg.register(name, &path_str)?;
-            log("info", format!("[ozymem-server] registered project '{}'", name));
+            log(
+                "info",
+                format!("[ozymem-server] registered project '{}'", name),
+            );
 
             // Open backend and scan
             let gb = GraphBackend::open_for_project(&project_dir)?;
@@ -3038,31 +4775,74 @@ async fn handle_package_tool(
                 name, path_str, proj_type,
                 if installed.is_empty() { "none".to_string() } else { installed.join(", ") },
             );
-            Ok(ok_response(id, serde_json::to_value(ToolCallResult {
-                content: vec![ContentBlock { kind: "text", text: body }],
-                is_error: None,
-            })?))
+            Ok(ok_response(
+                id,
+                serde_json::to_value(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
+                    is_error: None,
+                })?,
+            ))
         }
 
         "add_package" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: project_name")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: project_name",
+                    ))
+                }
             };
-            let packages = match tool_call.arguments.get("packages").and_then(Value::as_array) {
-                Some(arr) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>(),
-                None => return Ok(error_response(id, -32602, "Missing required parameter: packages")),
+            let packages = match tool_call
+                .arguments
+                .get("packages")
+                .and_then(Value::as_array)
+            {
+                Some(arr) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>(),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: packages",
+                    ))
+                }
             };
-            let dev = tool_call.arguments.get("dev").and_then(Value::as_bool).unwrap_or(false);
+            let dev = tool_call
+                .arguments
+                .get("dev")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found", project_name),
+                    ))
+                }
             };
 
             let project_dir = PathBuf::from(&project.path);
-            let cmd = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
+            let cmd = if cfg!(target_os = "windows") {
+                "cmd"
+            } else {
+                "sh"
+            };
             let mut shell_args = vec!["/C", "pnpm", "add"];
             if dev {
                 shell_args.push("-D");
@@ -3077,7 +4857,11 @@ async fn handle_package_tool(
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Ok(error_response(id, -32603, &format!("pnpm install failed: {stderr}")));
+                return Ok(error_response(
+                    id,
+                    -32603,
+                    &format!("pnpm install failed: {stderr}"),
+                ));
             }
 
             // Re-scan project to update package.json in the graph
@@ -3092,30 +4876,69 @@ async fn handle_package_tool(
                 if dev { " (dev dependency)" } else { "" },
             );
             log("info", format!("[ozymem-server] {body}"));
-            Ok(ok_response(id, serde_json::to_value(ToolCallResult {
-                content: vec![ContentBlock { kind: "text", text: body }],
-                is_error: None,
-            })?))
+            Ok(ok_response(
+                id,
+                serde_json::to_value(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
+                    is_error: None,
+                })?,
+            ))
         }
 
         "remove_package" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: project_name")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: project_name",
+                    ))
+                }
             };
-            let packages = match tool_call.arguments.get("packages").and_then(Value::as_array) {
-                Some(arr) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>(),
-                None => return Ok(error_response(id, -32602, "Missing required parameter: packages")),
+            let packages = match tool_call
+                .arguments
+                .get("packages")
+                .and_then(Value::as_array)
+            {
+                Some(arr) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>(),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: packages",
+                    ))
+                }
             };
 
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found", project_name),
+                    ))
+                }
             };
 
             let project_dir = PathBuf::from(&project.path);
-            let cmd = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
+            let cmd = if cfg!(target_os = "windows") {
+                "cmd"
+            } else {
+                "sh"
+            };
             let mut shell_args = vec!["/C", "pnpm", "remove"];
             for p in &packages {
                 shell_args.push(p.as_str());
@@ -3127,7 +4950,11 @@ async fn handle_package_tool(
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Ok(error_response(id, -32603, &format!("pnpm remove failed: {stderr}")));
+                return Ok(error_response(
+                    id,
+                    -32603,
+                    &format!("pnpm remove failed: {stderr}"),
+                ));
             }
 
             // Re-scan
@@ -3137,30 +4964,57 @@ async fn handle_package_tool(
 
             let body = format!(
                 "Removed {} from '{}'.\nProject re-scanned.",
-                packages.join(", "), project_name,
+                packages.join(", "),
+                project_name,
             );
             log("info", format!("[ozymem-server] {body}"));
-            Ok(ok_response(id, serde_json::to_value(ToolCallResult {
-                content: vec![ContentBlock { kind: "text", text: body }],
-                is_error: None,
-            })?))
+            Ok(ok_response(
+                id,
+                serde_json::to_value(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
+                    is_error: None,
+                })?,
+            ))
         }
 
         "get_dependencies" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: project_name")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: project_name",
+                    ))
+                }
             };
 
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found", project_name),
+                    ))
+                }
             };
 
             let pkg_path = Path::new(&project.path).join("package.json");
             if !pkg_path.exists() {
-                return Ok(error_response(id, -32602, "No package.json found in project"));
+                return Ok(error_response(
+                    id,
+                    -32602,
+                    "No package.json found in project",
+                ));
             }
 
             let content = std::fs::read_to_string(&pkg_path)?;
@@ -3176,48 +5030,110 @@ async fn handle_package_tool(
                 deps.as_object().map(|o| o.len()).unwrap_or(0),
             );
             let deps_text = if let Some(obj) = deps.as_object() {
-                let mut lines: Vec<String> = obj.iter().map(|(k, v)| format!("  {}: {}", k, v.as_str().unwrap_or("?"))).collect();
+                let mut lines: Vec<String> = obj
+                    .iter()
+                    .map(|(k, v)| format!("  {}: {}", k, v.as_str().unwrap_or("?")))
+                    .collect();
                 lines.sort();
                 lines.join("\n")
-            } else { String::new() };
+            } else {
+                String::new()
+            };
             let dev_text = if let Some(obj) = dev_deps.as_object() {
-                let mut lines: Vec<String> = obj.iter().map(|(k, v)| format!("  {}: {}", k, v.as_str().unwrap_or("?"))).collect();
+                let mut lines: Vec<String> = obj
+                    .iter()
+                    .map(|(k, v)| format!("  {}: {}", k, v.as_str().unwrap_or("?")))
+                    .collect();
                 lines.sort();
-                if lines.is_empty() { String::new() } else { format!("\n\nDev Dependencies ({}):\n{}", obj.len(), lines.join("\n")) }
-            } else { String::new() };
+                if lines.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "\n\nDev Dependencies ({}):\n{}",
+                        obj.len(),
+                        lines.join("\n")
+                    )
+                }
+            } else {
+                String::new()
+            };
             let scripts_text = if let Some(obj) = scripts.as_object() {
-                let mut lines: Vec<String> = obj.iter().map(|(k, v)| format!("  {}: {}", k, v.as_str().unwrap_or("?"))).collect();
+                let mut lines: Vec<String> = obj
+                    .iter()
+                    .map(|(k, v)| format!("  {}: {}", k, v.as_str().unwrap_or("?")))
+                    .collect();
                 lines.sort();
-                if lines.is_empty() { String::new() } else { format!("\n\nScripts:\n{}", lines.join("\n")) }
-            } else { String::new() };
+                if lines.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\nScripts:\n{}", lines.join("\n"))
+                }
+            } else {
+                String::new()
+            };
 
-            Ok(ok_response(id, serde_json::to_value(ToolCallResult {
-                content: vec![ContentBlock { kind: "text", text: format!("{}\n{}\n{}{}", body, deps_text, dev_text, scripts_text) }],
-                is_error: None,
-            })?))
+            Ok(ok_response(
+                id,
+                serde_json::to_value(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: format!("{}\n{}\n{}{}", body, deps_text, dev_text, scripts_text),
+                    }],
+                    is_error: None,
+                })?,
+            ))
         }
 
         "run_script" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: project_name")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: project_name",
+                    ))
+                }
             };
             let script = match tool_call.arguments.get("script").and_then(Value::as_str) {
                 Some(s) => s,
-                None => return Ok(error_response(id, -32602, "Missing required parameter: script")),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        "Missing required parameter: script",
+                    ))
+                }
             };
-            let extra_args: Vec<&str> = tool_call.arguments.get("args").and_then(Value::as_array)
+            let extra_args: Vec<&str> = tool_call
+                .arguments
+                .get("args")
+                .and_then(Value::as_array)
                 .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
                 .unwrap_or_default();
 
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found", project_name),
+                    ))
+                }
             };
 
             let project_dir = PathBuf::from(&project.path);
-            let cmd = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
+            let cmd = if cfg!(target_os = "windows") {
+                "cmd"
+            } else {
+                "sh"
+            };
             let mut shell_args = vec!["/C", "pnpm", "run", script];
             shell_args.extend(extra_args);
 
@@ -3227,14 +5143,23 @@ async fn handle_package_tool(
                 .output()
             {
                 Ok(o) => o,
-                Err(e) => return Ok(error_response(id, -32603, &format!("Failed to run script: {e}"))),
+                Err(e) => {
+                    return Ok(error_response(
+                        id,
+                        -32603,
+                        &format!("Failed to run script: {e}"),
+                    ))
+                }
             };
 
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
 
-            let mut body = format!("Script '{}' in '{}' (exit code: {})", script, project_name, exit_code);
+            let mut body = format!(
+                "Script '{}' in '{}' (exit code: {})",
+                script, project_name, exit_code
+            );
             if !stdout.is_empty() {
                 body.push_str("\n\n--- stdout ---\n");
                 body.push_str(&stdout);
@@ -3244,18 +5169,36 @@ async fn handle_package_tool(
                 body.push_str(&stderr);
             }
 
-            Ok(ok_response(id, serde_json::to_value(ToolCallResult {
-                content: vec![ContentBlock { kind: "text", text: body }],
-                is_error: if output.status.success() { None } else { Some(true) },
-            })?))
+            Ok(ok_response(
+                id,
+                serde_json::to_value(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
+                    is_error: if output.status.success() {
+                        None
+                    } else {
+                        Some(true)
+                    },
+                })?,
+            ))
         }
 
         "analyze_package" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
                 None => return Ok(error_response(id, -32602, "Missing required: project_name")),
             };
-            let package_name = match tool_call.arguments.get("package_name").and_then(Value::as_str) {
+            let package_name = match tool_call
+                .arguments
+                .get("package_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
                 None => return Ok(error_response(id, -32602, "Missing required: package_name")),
             };
@@ -3263,34 +5206,68 @@ async fn handle_package_tool(
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found", project_name),
+                    ))
+                }
             };
 
-            let pkg_path = Path::new(&project.path).join("node_modules").join(package_name).join("package.json");
+            let pkg_path = Path::new(&project.path)
+                .join("node_modules")
+                .join(package_name)
+                .join("package.json");
             if !pkg_path.exists() {
-                return Ok(error_response(id, -32602, &format!("Package '{}' not found in node_modules", package_name)));
+                return Ok(error_response(
+                    id,
+                    -32602,
+                    &format!("Package '{}' not found in node_modules", package_name),
+                ));
             }
 
             let content = std::fs::read_to_string(&pkg_path)?;
             let pkg: serde_json::Value = serde_json::from_str(&content)?;
 
-            let name = pkg.get("name").and_then(Value::as_str).unwrap_or(package_name);
-            let version = pkg.get("version").and_then(Value::as_str).unwrap_or("unknown");
+            let name = pkg
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(package_name);
+            let version = pkg
+                .get("version")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
             let description = pkg.get("description").and_then(Value::as_str).unwrap_or("");
-            let license = pkg.get("license").and_then(Value::as_str).unwrap_or("unknown");
+            let license = pkg
+                .get("license")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
 
-            let deps = pkg.get("dependencies").and_then(|d| d.as_object())
+            let deps = pkg
+                .get("dependencies")
+                .and_then(|d| d.as_object())
                 .map(|o| {
-                    let mut v: Vec<String> = o.iter().map(|(k, v)| format!("    {}: {}", k, v.as_str().unwrap_or("?"))).collect();
+                    let mut v: Vec<String> = o
+                        .iter()
+                        .map(|(k, v)| format!("    {}: {}", k, v.as_str().unwrap_or("?")))
+                        .collect();
                     v.sort();
                     v.join("\n")
-                }).unwrap_or_default();
-            let dev_deps = pkg.get("devDependencies").and_then(|d| d.as_object())
+                })
+                .unwrap_or_default();
+            let dev_deps = pkg
+                .get("devDependencies")
+                .and_then(|d| d.as_object())
                 .map(|o| {
-                    let mut v: Vec<String> = o.iter().map(|(k, v)| format!("    {}: {}", k, v.as_str().unwrap_or("?"))).collect();
+                    let mut v: Vec<String> = o
+                        .iter()
+                        .map(|(k, v)| format!("    {}: {}", k, v.as_str().unwrap_or("?")))
+                        .collect();
                     v.sort();
                     v.join("\n")
-                }).unwrap_or_default();
+                })
+                .unwrap_or_default();
 
             let mut body = format!(
                 "Package: {}\nVersion: {}\nLicense: {}\n",
@@ -3308,14 +5285,24 @@ async fn handle_package_tool(
                 body.push_str(&format!("\n\nDev Dependencies ({}):\n{}", count, dev_deps));
             }
 
-            Ok(ok_response(id, serde_json::to_value(ToolCallResult {
-                content: vec![ContentBlock { kind: "text", text: body }],
-                is_error: None,
-            })?))
+            Ok(ok_response(
+                id,
+                serde_json::to_value(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
+                    is_error: None,
+                })?,
+            ))
         }
 
         "verify_dependencies" => {
-            let project_name = match tool_call.arguments.get("project_name").and_then(Value::as_str) {
+            let project_name = match tool_call
+                .arguments
+                .get("project_name")
+                .and_then(Value::as_str)
+            {
                 Some(n) => n,
                 None => return Ok(error_response(id, -32602, "Missing required: project_name")),
             };
@@ -3323,7 +5310,13 @@ async fn handle_package_tool(
             let reg = ProjectRegistry::open()?;
             let project = match reg.get_project_by_name(project_name)? {
                 Some(p) => p,
-                None => return Ok(error_response(id, -32602, &format!("Project '{}' not found", project_name))),
+                None => {
+                    return Ok(error_response(
+                        id,
+                        -32602,
+                        &format!("Project '{}' not found", project_name),
+                    ))
+                }
             };
 
             let project_dir = Path::new(&project.path);
@@ -3348,8 +5341,9 @@ async fn handle_package_tool(
             // Scan source files for imports
             let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
             // Regex to extract module names from import statements
-            let import_re = regex::Regex::new(r#"(?:from\s+['"]|require\s*\(\s*['"]|import\s+['"])([^'"]+)"#)
-                .map_err(|e| anyhow::anyhow!("regex error: {e}"))?;
+            let import_re =
+                regex::Regex::new(r#"(?:from\s+['"]|require\s*\(\s*['"]|import\s+['"])([^'"]+)"#)
+                    .map_err(|e| anyhow::anyhow!("regex error: {e}"))?;
 
             // Walk source files, ignoring noise and .ozymignore/.gitignore patterns
             let ignore_patterns = ozymem_core::graph_backend::load_ignore_patterns(project_dir);
@@ -3358,16 +5352,30 @@ async fn handle_package_tool(
             for entry in walkdir::WalkDir::new(project_dir)
                 .into_iter()
                 .filter_entry(|e: &walkdir::DirEntry| {
-                    if ozymem_core::graph_backend::is_noise_dir(e.path()) { return false; }
-                    if has_ignores && ozymem_core::graph_backend::path_matches_ignore(e.path(), &ignore_patterns, project_dir) { return false; }
+                    if ozymem_core::graph_backend::is_noise_dir(e.path()) {
+                        return false;
+                    }
+                    if has_ignores
+                        && ozymem_core::graph_backend::path_matches_ignore(
+                            e.path(),
+                            &ignore_patterns,
+                            project_dir,
+                        )
+                    {
+                        return false;
+                    }
                     true
                 })
                 .filter_map(|e: Result<walkdir::DirEntry, walkdir::Error>| e.ok())
             {
                 let path = entry.path();
-                if !path.is_file() { continue; }
+                if !path.is_file() {
+                    continue;
+                }
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if !matches!(ext, "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs") { continue; }
+                if !matches!(ext, "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs") {
+                    continue;
+                }
 
                 let source = match std::fs::read_to_string(path) {
                     Ok(s) => s,
@@ -3377,11 +5385,17 @@ async fn handle_package_tool(
                 for cap in import_re.captures_iter(&source) {
                     let module = cap.get(1).map(|m| m.as_str()).unwrap_or("");
                     // Skip relative and bare-specifier imports
-                    if module.starts_with('.') || module.starts_with('/') { continue; }
+                    if module.starts_with('.') || module.starts_with('/') {
+                        continue;
+                    }
                     // Extract package name (handle @scoped/packages)
                     let pkg_name = if module.starts_with('@') {
                         let parts: Vec<&str> = module.splitn(3, '/').collect();
-                        if parts.len() >= 2 { format!("{}/{}", parts[0], parts[1]) } else { module.to_string() }
+                        if parts.len() >= 2 {
+                            format!("{}/{}", parts[0], parts[1])
+                        } else {
+                            module.to_string()
+                        }
                     } else {
                         module.split('/').next().unwrap_or(module).to_string()
                     };
@@ -3412,25 +5426,45 @@ async fn handle_package_tool(
             if missing.is_empty() {
                 body.push_str("✅ All used dependencies are declared in package.json\n");
             } else {
-                body.push_str(&format!("❌ Missing from package.json (used but not declared, {})", missing.len()));
-                for p in &missing { body.push_str(&format!("\n    - {}", p)); }
+                body.push_str(&format!(
+                    "❌ Missing from package.json (used but not declared, {})",
+                    missing.len()
+                ));
+                for p in &missing {
+                    body.push_str(&format!("\n    - {}", p));
+                }
                 body.push('\n');
             }
             if unused.is_empty() {
                 body.push_str("✅ All declared dependencies are used\n");
             } else {
-                body.push_str(&format!("⚠ Unused in source (declared but not imported, {})", unused.len()));
-                for p in &unused { body.push_str(&format!("\n    - {}", p)); }
+                body.push_str(&format!(
+                    "⚠ Unused in source (declared but not imported, {})",
+                    unused.len()
+                ));
+                for p in &unused {
+                    body.push_str(&format!("\n    - {}", p));
+                }
                 body.push('\n');
             }
 
-            Ok(ok_response(id, serde_json::to_value(ToolCallResult {
-                content: vec![ContentBlock { kind: "text", text: body }],
-                is_error: None,
-            })?))
+            Ok(ok_response(
+                id,
+                serde_json::to_value(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: body,
+                    }],
+                    is_error: None,
+                })?,
+            ))
         }
 
-        _ => Ok(error_response(id, -32601, "Unknown package management tool")),
+        _ => Ok(error_response(
+            id,
+            -32601,
+            "Unknown package management tool",
+        )),
     }
 }
 
@@ -3440,8 +5474,16 @@ fn days_since_str(date_str: Option<&str>) -> i64 {
         Some(s) => s,
         None => return 0,
     };
-    let date_part = s.replace('T', " ").split(' ').next().unwrap_or("").to_string();
-    let parts: Vec<i64> = date_part.split('-').filter_map(|p| p.parse().ok()).collect();
+    let date_part = s
+        .replace('T', " ")
+        .split(' ')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let parts: Vec<i64> = date_part
+        .split('-')
+        .filter_map(|p| p.parse().ok())
+        .collect();
     if parts.len() != 3 {
         return 0;
     }
@@ -3459,7 +5501,11 @@ fn days_since_str(date_str: Option<&str>) -> i64 {
             4 | 6 | 9 | 11 => 30,
             2 => {
                 let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-                if leap { 29 } else { 28 }
+                if leap {
+                    29
+                } else {
+                    28
+                }
             }
             _ => 0,
         };
@@ -3495,28 +5541,42 @@ async fn handle_learn_from_changes(
     notifier: Option<&Notifier>,
     subscribed: Option<&Arc<Mutex<HashSet<String>>>>,
 ) -> anyhow::Result<ToolCallResult> {
-    let message = tool_call.arguments.get("message")
+    let message = tool_call
+        .arguments
+        .get("message")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing message"))?;
-    let from = tool_call.arguments.get("from")
+    let from = tool_call
+        .arguments
+        .get("from")
         .and_then(Value::as_str)
         .unwrap_or("HEAD~1");
-    let to = tool_call.arguments.get("to")
+    let to = tool_call
+        .arguments
+        .get("to")
         .and_then(Value::as_str)
         .unwrap_or("HEAD");
-    let preview = tool_call.arguments.get("preview")
+    let preview = tool_call
+        .arguments
+        .get("preview")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let max_impact = tool_call.arguments.get("max_impact")
+    let max_impact = tool_call
+        .arguments
+        .get("max_impact")
         .and_then(Value::as_u64)
         .unwrap_or(5) as usize;
 
-    let project_path = backend.project_path()
+    let project_path = backend
+        .project_path()
         .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
 
     if !Path::new(&project_path).join(".git").exists() {
         return Ok(ToolCallResult {
-            content: vec![ContentBlock { kind: "text", text: "Not a git repository — learn_from_changes requires git".to_string() }],
+            content: vec![ContentBlock {
+                kind: "text",
+                text: "Not a git repository — learn_from_changes requires git".to_string(),
+            }],
             is_error: Some(true),
         });
     }
@@ -3529,7 +5589,10 @@ async fn handle_learn_from_changes(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Ok(ToolCallResult {
-            content: vec![ContentBlock { kind: "text", text: format!("Git diff failed: {stderr}") }],
+            content: vec![ContentBlock {
+                kind: "text",
+                text: format!("Git diff failed: {stderr}"),
+            }],
             is_error: Some(true),
         });
     }
@@ -3542,7 +5605,10 @@ async fn handle_learn_from_changes(
 
     if files.is_empty() {
         return Ok(ToolCallResult {
-            content: vec![ContentBlock { kind: "text", text: "No changes detected between the specified refs".to_string() }],
+            content: vec![ContentBlock {
+                kind: "text",
+                text: "No changes detected between the specified refs".to_string(),
+            }],
             is_error: None,
         });
     }
@@ -3552,7 +5618,9 @@ async fn handle_learn_from_changes(
 
     for file in &files {
         let lang = detect_lang(file);
-        if lang == ozymem_parser::SupportedLanguage::Unknown { continue; }
+        if lang == ozymem_parser::SupportedLanguage::Unknown {
+            continue;
+        }
 
         let old_output = std::process::Command::new("git")
             .args(["show", &format!("{from}:{file}")])
@@ -3577,12 +5645,10 @@ async fn handle_learn_from_changes(
         let old_parsed = parse_source(file, lang, &old_source).ok();
         let new_parsed = parse_source(file, lang, &new_source).ok();
 
-        let old_funcs: Vec<&ozymem_parser::ExtractedFunction> = old_parsed.iter()
-            .flat_map(|p| p.functions.iter())
-            .collect();
-        let new_funcs: Vec<&ozymem_parser::ExtractedFunction> = new_parsed.iter()
-            .flat_map(|p| p.functions.iter())
-            .collect();
+        let old_funcs: Vec<&ozymem_parser::ExtractedFunction> =
+            old_parsed.iter().flat_map(|p| p.functions.iter()).collect();
+        let new_funcs: Vec<&ozymem_parser::ExtractedFunction> =
+            new_parsed.iter().flat_map(|p| p.functions.iter()).collect();
 
         let old_names: HashSet<&str> = old_funcs.iter().map(|f| f.name.as_str()).collect();
         let new_names: HashSet<&str> = new_funcs.iter().map(|f| f.name.as_str()).collect();
@@ -3597,11 +5663,19 @@ async fn handle_learn_from_changes(
                     ozymem_parser::SymbolKind::Function => "Function",
                     ozymem_parser::SymbolKind::Class => "Class",
                 };
-                let solution = format!("New {} `{}` at line {} in {}", kind_str, f.name, f.start_line, file);
+                let solution = format!(
+                    "New {} `{}` at line {} in {}",
+                    kind_str, f.name, f.start_line, file
+                );
                 if !preview {
-                    backend.record_entry(file, Some(&f.name), message, &solution, "lesson").await?;
+                    backend
+                        .record_entry(file, Some(&f.name), message, &solution, "lesson")
+                        .await?;
                 }
-                entries.push(format!("📘 {}: {} `{}` (line {}) [confidence: 0.92]", file, kind_str, f.name, f.start_line));
+                entries.push(format!(
+                    "📘 {}: {} `{}` (line {}) [confidence: 0.92]",
+                    file, kind_str, f.name, f.start_line
+                ));
             }
         }
 
@@ -3613,18 +5687,28 @@ async fn handle_learn_from_changes(
                     ozymem_parser::SymbolKind::Function => "Function",
                     ozymem_parser::SymbolKind::Class => "Class",
                 };
-                let solution = format!("{} `{}` was removed from {} (was at line {})", kind_str, f.name, file, f.start_line);
+                let solution = format!(
+                    "{} `{}` was removed from {} (was at line {})",
+                    kind_str, f.name, file, f.start_line
+                );
                 if !preview {
-                    backend.record_entry(file, Some(&f.name), message, &solution, "decision").await?;
+                    backend
+                        .record_entry(file, Some(&f.name), message, &solution, "decision")
+                        .await?;
                 }
-                entries.push(format!("📗 {}: removed {} `{}` [confidence: 0.88]", file, kind_str, f.name));
+                entries.push(format!(
+                    "📗 {}: removed {} `{}` [confidence: 0.88]",
+                    file, kind_str, f.name
+                ));
             }
         }
 
         // Modified functions (same name, different line range) → convention
         // Confidence proportional to line-range delta: more change = higher confidence
         for f in &new_funcs {
-            if let Some(old_f) = old_funcs.iter().find(|o| o.name == f.name && (o.start_line != f.start_line || o.end_line != f.end_line)) {
+            if let Some(old_f) = old_funcs.iter().find(|o| {
+                o.name == f.name && (o.start_line != f.start_line || o.end_line != f.end_line)
+            }) {
                 file_had_changes = true;
                 let kind_str = match f.kind {
                     ozymem_parser::SymbolKind::Function => "Function",
@@ -3635,13 +5719,32 @@ async fn handle_learn_from_changes(
                 let delta = new_len.abs_diff(old_len);
                 let max_len = old_len.max(new_len).max(1);
                 let confidence = 0.65 + 0.30 * (delta as f64 / max_len as f64).min(1.0);
-                let solution = format!("{} `{}` in {} changed (was L{}-L{}, now L{}-L{})",
-                    kind_str, f.name, file, old_f.start_line, old_f.end_line, f.start_line, f.end_line);
+                let solution = format!(
+                    "{} `{}` in {} changed (was L{}-L{}, now L{}-L{})",
+                    kind_str,
+                    f.name,
+                    file,
+                    old_f.start_line,
+                    old_f.end_line,
+                    f.start_line,
+                    f.end_line
+                );
                 if !preview {
-                    backend.record_entry(file, Some(&f.name), message, &solution, "convention").await?;
+                    backend
+                        .record_entry(file, Some(&f.name), message, &solution, "convention")
+                        .await?;
                 }
-                entries.push(format!("📙 {}: {} `{}` modified (L{}-L{} → L{}-L{}) [confidence: {:.2}]",
-                    file, kind_str, f.name, old_f.start_line, old_f.end_line, f.start_line, f.end_line, confidence));
+                entries.push(format!(
+                    "📙 {}: {} `{}` modified (L{}-L{} → L{}-L{}) [confidence: {:.2}]",
+                    file,
+                    kind_str,
+                    f.name,
+                    old_f.start_line,
+                    old_f.end_line,
+                    f.start_line,
+                    f.end_line,
+                    confidence
+                ));
             }
         }
 
@@ -3664,7 +5767,10 @@ async fn handle_learn_from_changes(
                         line.push_str(&format!("\n    ← {}", p));
                     }
                     if dependent_count > max_impact {
-                        line.push_str(&format!("\n    ... and {} more dependents", dependent_count - max_impact));
+                        line.push_str(&format!(
+                            "\n    ... and {} more dependents",
+                            dependent_count - max_impact
+                        ));
                     }
                 }
                 if dep_on_count > 0 {
@@ -3673,7 +5779,10 @@ async fn handle_learn_from_changes(
                         line.push_str(&format!("\n    → {}", p));
                     }
                     if dep_on_count > max_impact {
-                        line.push_str(&format!("\n    ... and {} more dependencies", dep_on_count - max_impact));
+                        line.push_str(&format!(
+                            "\n    ... and {} more dependencies",
+                            dep_on_count - max_impact
+                        ));
                     }
                 }
                 impact_lines.push(line);
@@ -3682,16 +5791,31 @@ async fn handle_learn_from_changes(
     }
 
     if !preview && !entries.is_empty() {
-        notify_subscribed(subscribed, notifier, &["ozymem://summary", "ozymem://recent-lessons"]);
+        notify_subscribed(
+            subscribed,
+            notifier,
+            &["ozymem://summary", "ozymem://recent-lessons"],
+        );
     }
 
     let body = if entries.is_empty() {
-        format!("No function-level changes detected in {} files (diff {from}..{to})", files.len())
+        format!(
+            "No function-level changes detected in {} files (diff {from}..{to})",
+            files.len()
+        )
     } else {
         let header = if preview {
-            format!("🔍 PREVIEW — {} entries from {} files (diff {from}..{to}):\n", entries.len(), parsed_files.len())
+            format!(
+                "🔍 PREVIEW — {} entries from {} files (diff {from}..{to}):\n",
+                entries.len(),
+                parsed_files.len()
+            )
         } else {
-            format!("Recorded {} entries from {} files (diff {from}..{to}):\n", entries.len(), parsed_files.len())
+            format!(
+                "Recorded {} entries from {} files (diff {from}..{to}):\n",
+                entries.len(),
+                parsed_files.len()
+            )
         };
         let mut body = header;
         for e in &entries {
@@ -3710,7 +5834,10 @@ async fn handle_learn_from_changes(
     };
 
     Ok(ToolCallResult {
-        content: vec![ContentBlock { kind: "text", text: body }],
+        content: vec![ContentBlock {
+            kind: "text",
+            text: body,
+        }],
         is_error: None,
     })
 }
@@ -3760,14 +5887,12 @@ mod tests {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
 
         // Create a temp dir manually (avoid tempfile dev-dep)
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_init_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_init_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
 
-        let proj_uri = format!(
-            "file:///{}",
-            tmp_root.to_string_lossy().replace('\\', "/")
-        );
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
 
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -3812,10 +5937,7 @@ mod tests {
         // Create a dummy source file so full_scan has something to index
         std::fs::write(tmp_root.join("main.rs"), "fn main() {}").unwrap();
 
-        let proj_uri = format!(
-            "file:///{}",
-            tmp_root.to_string_lossy().replace('\\', "/")
-        );
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
 
         // Initialize
         let init_req = mcp_common::JsonRpcRequest {
@@ -3832,7 +5954,9 @@ mod tests {
                 }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         // Run a quick scan before calling context_for_task
         {
@@ -3856,10 +5980,17 @@ mod tests {
             })),
         };
         let response = handle_request(&backend, cft_req, None, None).await.unwrap();
-        assert!(response.is_some(), "context_for_task should return a response");
+        assert!(
+            response.is_some(),
+            "context_for_task should return a response"
+        );
 
         let resp = response.unwrap();
-        assert!(resp.error.is_none(), "context_for_task should not error: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "context_for_task should not error: {:?}",
+            resp.error
+        );
 
         let result = resp.result.unwrap();
         let text = result["content"][0]["text"].as_str().unwrap_or("");
@@ -3867,7 +5998,10 @@ mod tests {
         assert!(text.contains("(none)"), "should indicate no lessons found");
 
         // Verify truncation test: with max_tokens=500, output should be within budget
-        assert!(text.len() / 4 <= 500, "output should be within token budget");
+        assert!(
+            text.len() / 4 <= 500,
+            "output should be within token budget"
+        );
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
@@ -3876,7 +6010,8 @@ mod tests {
     async fn test_context_for_task_stale_lessons_excluded() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
 
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_cft_stale_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_cft_stale_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         std::fs::write(tmp_root.join("main.rs"), "fn main() {}").unwrap();
@@ -3898,7 +6033,9 @@ mod tests {
                 }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         let main_abs = tmp_root.join("main.rs").to_string_lossy().to_string();
 
@@ -3910,17 +6047,23 @@ mod tests {
 
             // Fresh lesson — should appear in output
             gb.record_lesson(
-                &main_abs, Some("main"),
+                &main_abs,
+                Some("main"),
                 "overflow bug in main",
                 "Use checked_add for overflow safety",
-            ).await.unwrap();
+            )
+            .await
+            .unwrap();
 
             // Stale lesson (will be marked stale right after) — should be filtered out
             gb.record_lesson(
-                &main_abs, Some("main"),
+                &main_abs,
+                Some("main"),
                 "old overflow approach",
                 "Use wrapping_add for overflow (deprecated)",
-            ).await.unwrap();
+            )
+            .await
+            .unwrap();
         }
 
         // Manually mark the second lesson as stale via direct SQLite
@@ -3931,7 +6074,8 @@ mod tests {
             conn.execute(
                 "UPDATE lessons SET stale = 1, stale_reason = 'symbol_removed' WHERE id = 2",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // context_for_task with "overflow" — both lessons match, but stale should be filtered
@@ -3977,7 +6121,8 @@ mod tests {
     async fn test_context_for_task_truncation_boundary() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
 
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_cft_trunc_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_cft_trunc_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         std::fs::write(tmp_root.join("main.rs"), "fn main() {}").unwrap();
@@ -3998,7 +6143,9 @@ mod tests {
                 }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         let main_abs = tmp_root.join("main.rs").to_string_lossy().to_string();
 
@@ -4013,10 +6160,13 @@ mod tests {
 
             for i in 0..3 {
                 gb.record_lesson(
-                    &main_abs, Some("main"),
+                    &main_abs,
+                    Some("main"),
                     &format!("overflow pattern {}", i),
                     &format!("short explanation for pattern {}", i),
-                ).await.unwrap();
+                )
+                .await
+                .unwrap();
             }
         }
 
@@ -4079,7 +6229,8 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_includes_resources_and_prompts_capabilities() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_init_caps_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_init_caps_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
@@ -4100,14 +6251,34 @@ mod tests {
         assert!(resp.error.is_none());
 
         let result = resp.result.unwrap();
-        assert!(result.get("capabilities").and_then(|c| c.get("resources")).is_some(),
-            "initialize should declare resources capability");
-        assert!(result.get("capabilities").and_then(|c| c.get("prompts")).is_some(),
-            "initialize should declare prompts capability");
-        assert!(result.get("capabilities").and_then(|c| c.get("logging")).is_some(),
-            "initialize should declare logging capability");
-        assert!(result.get("capabilities").and_then(|c| c.get("tools")).is_some(),
-            "initialize should declare tools capability");
+        assert!(
+            result
+                .get("capabilities")
+                .and_then(|c| c.get("resources"))
+                .is_some(),
+            "initialize should declare resources capability"
+        );
+        assert!(
+            result
+                .get("capabilities")
+                .and_then(|c| c.get("prompts"))
+                .is_some(),
+            "initialize should declare prompts capability"
+        );
+        assert!(
+            result
+                .get("capabilities")
+                .and_then(|c| c.get("logging"))
+                .is_some(),
+            "initialize should declare logging capability"
+        );
+        assert!(
+            result
+                .get("capabilities")
+                .and_then(|c| c.get("tools"))
+                .is_some(),
+            "initialize should declare tools capability"
+        );
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
@@ -4130,7 +6301,8 @@ mod tests {
     #[tokio::test]
     async fn test_resources_list_returns_resources() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_res_list_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_res_list_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
@@ -4146,7 +6318,9 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         let list_req = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -4154,7 +6328,9 @@ mod tests {
             method: "resources/list".to_string(),
             params: None,
         };
-        let response = handle_request(&backend, list_req, None, None).await.unwrap();
+        let response = handle_request(&backend, list_req, None, None)
+            .await
+            .unwrap();
         let resp = response.unwrap();
         assert!(resp.error.is_none(), "resources/list should not error");
 
@@ -4164,7 +6340,10 @@ mod tests {
 
         let uris: Vec<&str> = resources.iter().filter_map(|r| r["uri"].as_str()).collect();
         assert!(uris.contains(&"ozymem://summary"), "should include summary");
-        assert!(uris.contains(&"ozymem://recent-lessons"), "should include recent-lessons");
+        assert!(
+            uris.contains(&"ozymem://recent-lessons"),
+            "should include recent-lessons"
+        );
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
@@ -4172,7 +6351,8 @@ mod tests {
     #[tokio::test]
     async fn test_resources_read_summary() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_res_sum_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_res_sum_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
@@ -4188,7 +6368,9 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         let read_req = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -4196,9 +6378,15 @@ mod tests {
             method: "resources/read".to_string(),
             params: Some(serde_json::json!({ "uri": "ozymem://summary" })),
         };
-        let response = handle_request(&backend, read_req, None, None).await.unwrap();
+        let response = handle_request(&backend, read_req, None, None)
+            .await
+            .unwrap();
         let resp = response.unwrap();
-        assert!(resp.error.is_none(), "resources/read summary should not error: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "resources/read summary should not error: {:?}",
+            resp.error
+        );
 
         let result = resp.result.unwrap();
         let contents = result["contents"].as_array().unwrap();
@@ -4212,7 +6400,8 @@ mod tests {
     #[tokio::test]
     async fn test_resources_read_file_context() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_res_ctx_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_res_ctx_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         std::fs::write(tmp_root.join("main.rs"), "fn hello() {}").unwrap();
@@ -4229,7 +6418,9 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         // Run scan
         {
@@ -4246,15 +6437,24 @@ mod tests {
             method: "resources/read".to_string(),
             params: Some(serde_json::json!({ "uri": uri })),
         };
-        let response = handle_request(&backend, read_req, None, None).await.unwrap();
+        let response = handle_request(&backend, read_req, None, None)
+            .await
+            .unwrap();
         let resp = response.unwrap();
-        assert!(resp.error.is_none(), "resources/read file should not error: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "resources/read file should not error: {:?}",
+            resp.error
+        );
 
         let result = resp.result.unwrap();
         let contents = result["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 1);
         let text = contents[0]["text"].as_str().unwrap();
-        assert!(text.contains("hello"), "file context should contain function name");
+        assert!(
+            text.contains("hello"),
+            "file context should contain function name"
+        );
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
@@ -4262,7 +6462,8 @@ mod tests {
     #[tokio::test]
     async fn test_resources_read_unknown_uri_returns_error() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_res_bad_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_res_bad_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
@@ -4278,7 +6479,9 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         let read_req = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -4286,7 +6489,9 @@ mod tests {
             method: "resources/read".to_string(),
             params: Some(serde_json::json!({ "uri": "ozymem://nonexistent" })),
         };
-        let response = handle_request(&backend, read_req, None, None).await.unwrap();
+        let response = handle_request(&backend, read_req, None, None)
+            .await
+            .unwrap();
         let resp = response.unwrap();
         assert!(resp.error.is_some(), "unknown URI should return error");
         assert_eq!(resp.error.as_ref().unwrap().code, -32602);
@@ -4311,8 +6516,14 @@ mod tests {
         let templates = result["resourceTemplates"].as_array().unwrap();
         assert!(!templates.is_empty(), "should list at least one template");
 
-        let uri_templates: Vec<&str> = templates.iter().filter_map(|t| t["uriTemplate"].as_str()).collect();
-        assert!(uri_templates.contains(&"ozymem://file/{path}"), "should include file template");
+        let uri_templates: Vec<&str> = templates
+            .iter()
+            .filter_map(|t| t["uriTemplate"].as_str())
+            .collect();
+        assert!(
+            uri_templates.contains(&"ozymem://file/{path}"),
+            "should include file template"
+        );
     }
 
     #[tokio::test]
@@ -4333,8 +6544,14 @@ mod tests {
         assert!(!prompts.is_empty(), "should list at least one prompt");
 
         let names: Vec<&str> = prompts.iter().filter_map(|p| p["name"].as_str()).collect();
-        assert!(names.contains(&"analyze-file"), "should include analyze-file");
-        assert!(names.contains(&"review-lessons"), "should include review-lessons");
+        assert!(
+            names.contains(&"analyze-file"),
+            "should include analyze-file"
+        );
+        assert!(
+            names.contains(&"review-lessons"),
+            "should include review-lessons"
+        );
     }
 
     #[tokio::test]
@@ -4344,7 +6561,9 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
             method: "prompts/get".to_string(),
-            params: Some(serde_json::json!({ "name": "review-lessons", "arguments": { "file_path": "/test.rs" } })),
+            params: Some(
+                serde_json::json!({ "name": "review-lessons", "arguments": { "file_path": "/test.rs" } }),
+            ),
         };
         let response = handle_request(&backend, request, None, None).await.unwrap();
         let resp = response.unwrap();
@@ -4355,7 +6574,8 @@ mod tests {
     #[tokio::test]
     async fn test_prompts_get_analyze_file() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_prompt_af_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_prompt_af_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         std::fs::write(tmp_root.join("main.rs"), "fn analyze_me() {}").unwrap();
@@ -4372,7 +6592,9 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
         {
             let guard = backend.lock().unwrap();
             let gb = guard.as_ref().unwrap();
@@ -4384,17 +6606,28 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(2)),
             method: "prompts/get".to_string(),
-            params: Some(serde_json::json!({ "name": "analyze-file", "arguments": { "path": main_abs, "depth": 1 } })),
+            params: Some(
+                serde_json::json!({ "name": "analyze-file", "arguments": { "path": main_abs, "depth": 1 } }),
+            ),
         };
-        let response = handle_request(&backend, prompt_req, None, None).await.unwrap();
+        let response = handle_request(&backend, prompt_req, None, None)
+            .await
+            .unwrap();
         let resp = response.unwrap();
-        assert!(resp.error.is_none(), "prompts/get analyze-file should not error: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "prompts/get analyze-file should not error: {:?}",
+            resp.error
+        );
 
         let result = resp.result.unwrap();
         let messages = result["messages"].as_array().unwrap();
         assert!(!messages.is_empty(), "should return at least one message");
         let text = messages[0]["content"]["text"].as_str().unwrap_or("");
-        assert!(text.contains("Analysis of"), "should contain analysis header");
+        assert!(
+            text.contains("Analysis of"),
+            "should contain analysis header"
+        );
         assert!(text.contains("analyze_me"), "should mention function name");
 
         std::fs::remove_dir_all(&tmp_root).ok();
@@ -4403,7 +6636,8 @@ mod tests {
     #[tokio::test]
     async fn test_prompts_get_review_lessons() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_prompt_rl_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_prompt_rl_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         std::fs::write(tmp_root.join("main.rs"), "fn main() {}").unwrap();
@@ -4420,31 +6654,49 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
         let main_abs = tmp_root.join("main.rs").to_string_lossy().to_string();
 
         {
             let guard = backend.lock().unwrap();
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
-            gb.record_lesson(&main_abs, Some("main"), "test error", "test solution").await.unwrap();
+            gb.record_lesson(&main_abs, Some("main"), "test error", "test solution")
+                .await
+                .unwrap();
         }
 
         let prompt_req = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(2)),
             method: "prompts/get".to_string(),
-            params: Some(serde_json::json!({ "name": "review-lessons", "arguments": { "file_path": main_abs } })),
+            params: Some(
+                serde_json::json!({ "name": "review-lessons", "arguments": { "file_path": main_abs } }),
+            ),
         };
-        let response = handle_request(&backend, prompt_req, None, None).await.unwrap();
+        let response = handle_request(&backend, prompt_req, None, None)
+            .await
+            .unwrap();
         let resp = response.unwrap();
-        assert!(resp.error.is_none(), "prompts/get review-lessons should not error: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "prompts/get review-lessons should not error: {:?}",
+            resp.error
+        );
 
         let result = resp.result.unwrap();
         let messages = result["messages"].as_array().unwrap();
         let text = messages[0]["content"]["text"].as_str().unwrap_or("");
-        assert!(text.contains("test solution"), "should contain lesson solution");
-        assert!(text.contains("test error"), "should contain lesson error context");
+        assert!(
+            text.contains("test solution"),
+            "should contain lesson solution"
+        );
+        assert!(
+            text.contains("test error"),
+            "should contain lesson error context"
+        );
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
@@ -4452,7 +6704,8 @@ mod tests {
     #[tokio::test]
     async fn test_prompts_get_unknown_prompt_returns_error() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
-        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_prompt_unk_{}", std::process::id()));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_prompt_unk_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
         let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
@@ -4468,7 +6721,9 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        handle_request(&backend, init_req, None, None).await.unwrap();
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
 
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -4538,11 +6793,21 @@ mod tests {
                 "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
             })),
         };
-        let response = handle_request(&backend, init_req, None, None).await.unwrap();
+        let response = handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
         let resp = response.unwrap();
         let caps = resp.result.unwrap()["capabilities"].clone();
-        assert_eq!(caps["sampling"], json!({}), "sampling capability should be present");
-        assert_eq!(caps["completions"], json!({}), "completions capability should be present");
+        assert_eq!(
+            caps["sampling"],
+            json!({}),
+            "sampling capability should be present"
+        );
+        assert_eq!(
+            caps["completions"],
+            json!({}),
+            "completions capability should be present"
+        );
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
@@ -4560,7 +6825,10 @@ mod tests {
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert!(tools.len() > 10, "should have many tools");
-        assert!(result.get("nextCursor").is_none(), "no cursor for first page without params");
+        assert!(
+            result.get("nextCursor").is_none(),
+            "no cursor for first page without params"
+        );
     }
 
     #[tokio::test]
@@ -4577,7 +6845,9 @@ mod tests {
         let response = handle_request(&backend, request, None, None).await.unwrap();
         let resp = response.unwrap();
         let result = resp.result.unwrap();
-        assert!(result.get("nextCursor").is_some() || result["tools"].as_array().unwrap().len() > 0);
+        assert!(
+            result.get("nextCursor").is_some() || result["tools"].as_array().unwrap().len() > 0
+        );
     }
 
     #[tokio::test]
@@ -4634,12 +6904,144 @@ mod tests {
         backend.full_scan(&root_str, None).unwrap();
 
         let results = backend.complete_file_path("test", 10).unwrap();
-        assert!(!results.is_empty(), "should find at least one matching file");
-        assert!(results[0].contains("test_main"), "should match test_main.rs");
+        assert!(
+            !results.is_empty(),
+            "should find at least one matching file"
+        );
+        assert!(
+            results[0].contains("test_main"),
+            "should match test_main.rs"
+        );
 
         let results = backend.complete_file_path("nonexistent_xyz", 5).unwrap();
         assert!(results.is_empty(), "should return empty for no matches");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_tools_list_exposes_seven_unified_tools_and_deprecates_legacy() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let request = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/list".to_string(),
+            params: None,
+        };
+        let response = handle_request(&backend, request, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.error.is_none());
+        let tools = response
+            .result
+            .unwrap()
+            .get("tools")
+            .and_then(Value::as_array)
+            .unwrap()
+            .clone();
+        for name in [
+            "ozy_context",
+            "ozy_memory",
+            "ozy_graph",
+            "ozy_code_doctor",
+            "ozy_doctor",
+            "ozy_skills",
+            "ozy_project",
+        ] {
+            assert!(
+                tools
+                    .iter()
+                    .any(|t| t.get("name").and_then(Value::as_str) == Some(name)),
+                "missing unified tool {name}"
+            );
+        }
+        let legacy = tools
+            .iter()
+            .find(|t| t.get("name").and_then(Value::as_str) == Some("analyze_impact"))
+            .unwrap();
+        assert_eq!(
+            legacy.get("deprecated").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ozy_skills_lists_official_metadata_without_backend() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let request = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(
+                json!({"name":"ozy_skills","arguments":{"action":"search","query":"react","limit":5}}),
+            ),
+        };
+        let response = handle_request(&backend, request, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            response.error.is_none(),
+            "ozy_skills should not require initialized backend"
+        );
+        let text = response.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(text.contains("skills.sh/official"));
+        assert!(text.contains("facebook/react"));
+        assert!(text.contains("executed_external_content") || text.contains("official_only"));
+    }
+
+    #[tokio::test]
+    async fn test_ozy_code_doctor_detects_duplicate_blocks() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_code_doctor_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(tmp_root.join("src")).unwrap();
+        let duplicate = "fn duplicated() {\n let a = 1;\n let b = 2;\n let c = a + b;\n println!(\"{}\", c);\n}\n";
+        std::fs::write(tmp_root.join("src").join("a.rs"), duplicate).unwrap();
+        std::fs::write(tmp_root.join("src").join("b.rs"), duplicate).unwrap();
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(
+                json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"},"workspaceFolders":[{"uri":uri,"name":"test"}]}),
+            ),
+        };
+        handle_request(&backend_ref, init, None, None)
+            .await
+            .unwrap();
+        {
+            let guard = backend_ref.lock().unwrap();
+            guard
+                .as_ref()
+                .unwrap()
+                .full_scan(&tmp_root.to_string_lossy(), None)
+                .unwrap();
+        }
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(
+                json!({"name":"ozy_code_doctor","arguments":{"min_duplicate_lines":4,"max_findings":5}}),
+            ),
+        };
+        let response = handle_request(&backend_ref, req, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.error.is_none());
+        let text = response.result.unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(text.contains("Duplicate block") || text.contains("Duplicate findings"));
+        std::fs::remove_dir_all(&tmp_root).ok();
     }
 }

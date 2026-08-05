@@ -7,8 +7,8 @@
 - **Memoria persistente por proyecto**: Lessons, decisiones, convenciones, gotchas y reglas de módulo. Cada proyecto tiene su propia `memory.db`.
 - **Grafo de dependencias**: Indexa funciones, clases y relaciones entre archivos (soporta Python, Go, Rust, JS/TS, SQL).
 - **Búsqueda semántica**: Embeddings locales (all-MiniLM-L6-v2) para encontrar lecciones por similitud de significado.
-- **Servidor MCP**: 38 tools para exploración, memoria, paquetes, git y búsqueda inteligente.
-- **Smart Search**: Búsqueda unificada que combina símbolos (tree-sitter), texto completo (FTS5) y embeddings semánticos en una sola llamada.
+- **Servidor MCP simplificado**: 7 tools principales (`ozy_context`, `ozy_memory`, `ozy_graph`, `ozy_code_doctor`, `ozy_doctor`, `ozy_skills`, `ozy_project`) con aliases legacy compatibles.
+- **Smart Search y Ozy Query**: Búsqueda unificada MCP y traductor CLI seguro (`ozymem q`) para consultas compactas tipo `grep`, `find`, `ctx`, `trace`, `arch`, `doctor`, `code`, `skills`.
 - **Learn from Changes**: Generación automática de lecciones desde git diff usando tree-sitter (detecta funciones nuevas, borradas o modificadas) con análisis de impacto en el grafo.
 - **Impact Analysis enriquecido**: Severidad por heurísticas (`[BREAKING]`, `[WARN]`, `[INFO]`) y nombres de funciones afectadas por archivo.
 - **File Context enriquecido**: Por archivo devuelve funciones, dependientes, dependencias, último commit git y lecciones asociadas.
@@ -17,6 +17,8 @@
 - **Package management**: `create_project`, `add_package`, `remove_package`, `get_dependencies`, `run_script`.
 - **Resource subscriptions**: El LLM puede suscribirse a recursos (`ozymem://summary`) y recibir notificaciones push cuando cambian.
 - **Feedback real**: Notificaciones `notifications/methods/resources/updated` tras grabar lecciones o modificar el proyecto.
+- **Ozy Doctor / Code Doctor**: Diagnóstico preview-safe del sistema, proyectos, memorias, duplicados, hotspots de arquitectura y recomendaciones de autosanado sin ejecutar cambios automáticos.
+- **Skills oficiales**: `ozy_skills` expone metadata review-only de skills oficiales de `skills.sh` como contexto interno de buenas prácticas, sin ejecutar contenido externo.
 
 ## Inicio rápido
 
@@ -27,42 +29,61 @@ cargo run -p ozymem-server
 
 El servidor acepta conexiones vía stdio siguiendo el protocolo MCP. Se integra con clientes como Claude Desktop, Cursor, o cualquier agente que soporte MCP.
 
-## Tools principales (38)
+## Tools principales MCP (7)
+
+Las tools históricas siguen funcionando como aliases internos y aparecen marcadas como deprecated para no romper clientes existentes.
 
 ```rust
-// Exploración
-analyze_impact    // Impacto transitivo con severidad + funciones por archivo
-file_context      // Contexto enriquecido: funciones + dependientes + git + lecciones
-graph_summary     // Resumen del proyecto (archivos, funciones, lecciones)
-list_files        // Lista archivos indexados
-graph_neighbors   // Dependencias directas (incoming/outgoing)
-graph_path        // Camino de dependencia entre dos archivos (all_simple_paths)
-context_for_task  // Contexto empaquetado para una tarea (símbolos + lecciones + impacto)
+ozy_context      // Contexto de tarea, archivo, resumen, files y memorias recientes
+ozy_memory       // Record/search/list de lessons, decisions, conventions, gotchas y module rules
+ozy_graph        // Summary, neighbors, impact, paths y architecture_report
+ozy_code_doctor  // Duplicados, redundancias, hotspots, buenas prácticas y autosanado preview
+ozy_doctor       // Salud de DB, registry, proyectos, memorias, embeddings, watchers e índices
+ozy_skills       // Metadata oficial skills.sh review-only para buenas prácticas internas
+ozy_project      // Proyectos, packages, refresh index, stale projects e ignore rules
+```
 
-// Memoria
-record_lesson, record_decision, record_convention
-record_gotcha, record_module_rule
-learn_from_changes  // Auto-genera lecciones desde git diff con tree-sitter + preview
-search_lessons      // Búsqueda texto completo (FTS5)
-similar_lessons     // Búsqueda semántica por embeddings (all-MiniLM-L6-v2)
-get_file_lessons, get_symbol_lessons, recent_lessons
+### Aliases legacy
 
-// Búsqueda inteligente
-smart_search      // Busca en símbolos + lessons FTS5 + embeddings, todo en paralelo
-find_symbol       // Busca funciones/clases indexadas por tree-sitter (LIKE + filtro kind)
+`analyze_impact`, `file_context`, `graph_summary`, `list_files`, `graph_neighbors`, `graph_path`, `context_for_task`, `record_*`, `search_lessons`, `similar_lessons`, `smart_search`, `find_symbol`, tools de proyectos, paquetes y git continúan disponibles durante la transición.
 
-// Proyectos
-list_projects, get_project_memories, delete_project
-suggest_stale_projects, create_ozymignore
 
-// Paquetes (npm/pnpm)
-create_project, add_package, remove_package
-get_dependencies, run_script, analyze_package
-verify_dependencies
+## Ozy Query CLI — traductor seguro para agentes
 
-// Git
-git_recent_changes, git_diff_summary, git_diff_file
-git_blame_line, recent_changes_with_impact
+`ozymem q` permite escribir consultas cortas tipo shell, pero **no ejecuta shell externo**. Traduce la intención a consultas internas de Ozymem y devuelve salida destilada para ahorrar tokens.
+
+```powershell
+ozymem q grep auth
+ozymem q grep "record_lesson" 220-260
+ozymem q find GraphBackend
+ozymem q ctx "duplicados en doctor"
+ozymem q file crates/ozymem-server/src/main.rs
+ozymem q trace crates/ozymem-server/src/main.rs
+ozymem q tree crates/ozymem-server/src/main.rs
+ozymem q arch
+ozymem q d
+ozymem q c
+ozymem q sk react
+```
+
+Opciones útiles:
+
+```powershell
+ozymem q grep auth --limit 5
+ozymem q arch --json
+ozymem q ctx "migración" --tokens 800
+```
+
+Modo seguro:
+- No ejecuta `grep`, `rg`, PowerShell, `cmd`, ni comandos arbitrarios.
+- Si no entiende una consulta, devuelve sugerencias seguras.
+- `--json` emite JSON compacto para scripts/agentes.
+
+Alias recomendado en PowerShell:
+
+```powershell
+Set-Alias oz ozymem
+oz q arch
 ```
 
 ## Recursos MCP
