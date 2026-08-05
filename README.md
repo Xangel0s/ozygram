@@ -7,7 +7,7 @@
 - **Memoria persistente por proyecto**: Lessons, decisiones, convenciones, gotchas y reglas de módulo. Cada proyecto tiene su propia `memory.db`.
 - **Grafo de dependencias**: Indexa funciones, clases y relaciones entre archivos (soporta Python, Go, Rust, JS/TS, SQL).
 - **Búsqueda semántica**: Embeddings locales (all-MiniLM-L6-v2) para encontrar lecciones por similitud de significado.
-- **Servidor MCP simplificado**: 7 tools principales (`ozy_context`, `ozy_memory`, `ozy_graph`, `ozy_code_doctor`, `ozy_doctor`, `ozy_skills`, `ozy_project`) con aliases legacy compatibles.
+- **Servidor MCP simplificado**: 8 tools principales (`ozy_context`, `ozy_memory`, `ozy_graph`, `ozy_code_doctor`, `ozy_doctor`, `ozy_skills`, `ozy_brain`, `ozy_project`) con aliases legacy compatibles pero ocultos por defecto.
 - **Smart Search y Ozy Query**: Búsqueda unificada MCP y traductor CLI seguro (`ozymem q`) para consultas compactas tipo `grep`, `find`, `ctx`, `trace`, `arch`, `doctor`, `code`, `skills`.
 - **Learn from Changes**: Generación automática de lecciones desde git diff usando tree-sitter (detecta funciones nuevas, borradas o modificadas) con análisis de impacto en el grafo.
 - **Impact Analysis enriquecido**: Severidad por heurísticas (`[BREAKING]`, `[WARN]`, `[INFO]`) y nombres de funciones afectadas por archivo.
@@ -29,9 +29,9 @@ cargo run -p ozymem-server
 
 El servidor acepta conexiones vía stdio siguiendo el protocolo MCP. Se integra con clientes como Claude Desktop, Cursor, o cualquier agente que soporte MCP.
 
-## Tools principales MCP (7)
+## Tools principales MCP (8)
 
-Las tools históricas siguen funcionando como aliases internos y aparecen marcadas como deprecated para no romper clientes existentes.
+Las tools históricas siguen funcionando como aliases internos para no romper clientes existentes, pero no aparecen en `tools/list` salvo que se active `OZYMEM_SHOW_LEGACY_TOOLS=true`.
 
 ```rust
 ozy_context      // Contexto de tarea, archivo, resumen, files y memorias recientes
@@ -40,8 +40,19 @@ ozy_graph        // Summary, neighbors, impact, paths y architecture_report
 ozy_code_doctor  // Duplicados, redundancias, hotspots, buenas prácticas y autosanado preview
 ozy_doctor       // Salud de DB, registry, proyectos, memorias, embeddings, watchers e índices
 ozy_skills       // Metadata oficial skills.sh review-only para buenas prácticas internas
+ozy_brain        // Cerebro híbrido Rust/Python: plan, reflexión, recall profundo y revisión de riesgos
 ozy_project      // Proyectos, packages, refresh index, stale projects e ignore rules
 ```
+
+### Ozy Brain
+
+`ozy_brain` combina contexto curado por Rust con razonamiento Python local en modo asesor. La respuesta incluye:
+
+- **Structured Plan**: fases, archivos candidatos, comandos de validación y condiciones de parada.
+- **Brain Context Pack**: estado git no destructivo, scoring de archivos candidatos, nivel de riesgo y recomendaciones persistibles.
+- **Execution Policy**: acciones permitidas sin confirmación, acciones que requieren confirmación y límites explícitos del worker Python.
+
+Python no modifica archivos, no ejecuta comandos del proyecto y no escribe en SQLite; Rust conserva la autoridad MCP, memoria, grafo e indexación.
 
 ### Aliases legacy
 

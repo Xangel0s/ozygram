@@ -1,0 +1,9 @@
+[project]
+name = "ozy-brain"
+version = "0.1.0"
+description = "Local reasoning worker for Ozygram/Ozymem"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

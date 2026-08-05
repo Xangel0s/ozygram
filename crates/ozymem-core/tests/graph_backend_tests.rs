@@ -1,6 +1,8 @@
 use ozymem_core::McpBackend;
 use ozymem_core::graph_backend::{GraphBackend, SqliteBackend};
-use ozymem_core::graph_backend::{auto_manage_gitignore, legacy_global_db_path, resolve_project_db_path, mark_stale_lessons};
+use ozymem_core::graph_backend::{
+    auto_manage_gitignore, legacy_global_db_path, mark_stale_lessons, resolve_project_db_path,
+};
 use rusqlite::{Connection, params};
 use std::collections::HashSet;
 use std::io::Write;
@@ -28,7 +30,10 @@ fn test_open_for_project_canonicalization() {
 
     // Same project called twice → same DB path
     let db_a2 = resolve_project_db_path(&proj_a).unwrap();
-    assert_eq!(db_a, db_a2, "same project must always resolve to the same DB");
+    assert_eq!(
+        db_a, db_a2,
+        "same project must always resolve to the same DB"
+    );
 
     // Both DBs are valid (GraphBackend::open_for_project succeeds)
     let be_a = GraphBackend::open_for_project(&proj_a).unwrap();
@@ -53,10 +58,7 @@ fn test_auto_manage_gitignore_cases() {
     let root = dir.path();
 
     // Case A: No .git repo → no change, returns false
-    assert!(
-        !auto_manage_gitignore(root).unwrap(),
-        "no .git → no change"
-    );
+    assert!(!auto_manage_gitignore(root).unwrap(), "no .git → no change");
     assert!(
         !root.join(".gitignore").exists(),
         ".gitignore should not be created without .git"
@@ -160,8 +162,9 @@ fn setup_stale_db(db_path: &str) -> Connection {
             workspace_root TEXT NOT NULL DEFAULT '',
             kind TEXT NOT NULL DEFAULT 'lesson',
             stale INTEGER NOT NULL DEFAULT 0, stale_reason TEXT, stale_since TEXT
-        );"
-    ).unwrap();
+        );",
+    )
+    .unwrap();
     conn
 }
 
@@ -174,7 +177,10 @@ fn test_stale_file_deleted() {
     std::fs::write(&file_path, "pub fn foo() {}").unwrap();
     let abs = file_path.to_string_lossy().to_string();
 
-    let db_path = format!("{}/test_stale_file_deleted.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_stale_file_deleted.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let conn = setup_stale_db(&db_path);
 
     // Insert file record + function
@@ -186,7 +192,8 @@ fn test_stale_file_deleted() {
         "INSERT INTO functions (name, kind, start_line, end_line, strategy, file_path, tenant_id)
          VALUES ('foo', 'Function', 1, 1, 'TreeSitter', ?1, 'local')",
         params![&abs],
-    ).unwrap();
+    )
+    .unwrap();
 
     // Insert a lesson referencing the symbol
     conn.execute(
@@ -199,7 +206,10 @@ fn test_stale_file_deleted() {
 
     // File & symbol exist → nothing marked stale
     let marked = mark_stale_lessons(&conn, "local", &scanned, "").unwrap();
-    assert_eq!(marked, 0, "existing file with existing symbol should not be stale");
+    assert_eq!(
+        marked, 0,
+        "existing file with existing symbol should not be stale"
+    );
 
     // Delete the file and re-check
     std::fs::remove_file(&file_path).unwrap();
@@ -207,11 +217,13 @@ fn test_stale_file_deleted() {
     assert_eq!(marked, 1, "deleted file should mark lesson as stale");
 
     // Verify the lesson was updated
-    let row: (i64, String) = conn.query_row(
-        "SELECT stale, stale_reason FROM lessons WHERE id = 1", [], |r: &rusqlite::Row| {
-            Ok((r.get(0)?, r.get(1)?))
-        }
-    ).unwrap();
+    let row: (i64, String) = conn
+        .query_row(
+            "SELECT stale, stale_reason FROM lessons WHERE id = 1",
+            [],
+            |r: &rusqlite::Row| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
     assert_eq!(row.0, 1, "stale should be 1");
     assert_eq!(row.1, "file_deleted", "reason should be file_deleted");
 
@@ -225,7 +237,10 @@ fn test_stale_symbol_removed() {
     let file_path = dir.path().join("math.rs");
     std::fs::write(&file_path, "pub fn add(a: i32, b: i32) -> i32 { a + b }").unwrap();
 
-    let db_path = format!("{}/test_stale_symbol_removed.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_stale_symbol_removed.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let conn = setup_stale_db(&db_path);
 
     // File exists in files table
@@ -240,7 +255,8 @@ fn test_stale_symbol_removed() {
         "INSERT INTO functions (name, kind, start_line, end_line, strategy, file_path, tenant_id)
          VALUES ('add', 'Function', 1, 1, 'TreeSitter', ?1, 'local')",
         params![&abs],
-    ).unwrap();
+    )
+    .unwrap();
 
     // Lesson references the symbol
     conn.execute(
@@ -256,15 +272,18 @@ fn test_stale_symbol_removed() {
     assert_eq!(marked, 0, "existing symbol should not be stale");
 
     // Remove the function from functions table (simulates re-scan where function was deleted)
-    conn.execute("DELETE FROM functions WHERE file_path = ?1", params![&abs]).unwrap();
+    conn.execute("DELETE FROM functions WHERE file_path = ?1", params![&abs])
+        .unwrap();
     let marked = mark_stale_lessons(&conn, "local", &scanned, "").unwrap();
     assert_eq!(marked, 1, "removed symbol should mark lesson as stale");
 
-    let row: (i64, String) = conn.query_row(
-        "SELECT stale, stale_reason FROM lessons WHERE id = 1", [], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        }
-    ).unwrap();
+    let row: (i64, String) = conn
+        .query_row(
+            "SELECT stale, stale_reason FROM lessons WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
     assert_eq!(row.0, 1, "stale should be 1");
     assert_eq!(row.1, "symbol_removed", "reason should be symbol_removed");
 
@@ -283,7 +302,10 @@ fn test_stale_partial_scan_safety() {
     let a_abs = a_path.to_string_lossy().to_string();
     let b_abs = b_path.to_string_lossy().to_string();
 
-    let db_path = format!("{}/test_stale_partial.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_stale_partial.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let conn = setup_stale_db(&db_path);
 
     // Insert file records
@@ -316,11 +338,18 @@ fn test_stale_partial_scan_safety() {
 
     // Delete b.rs from disk and remove its function
     std::fs::remove_file(&b_path).unwrap();
-    conn.execute("DELETE FROM functions WHERE file_path = ?1", params![&b_abs]).unwrap();
+    conn.execute(
+        "DELETE FROM functions WHERE file_path = ?1",
+        params![&b_abs],
+    )
+    .unwrap();
 
     // mark_stale_lessons should NOT touch b.rs's lesson
     let marked = mark_stale_lessons(&conn, "local", &scanned, "").unwrap();
-    assert_eq!(marked, 0, "partial scan should not mark un-scanned files as stale");
+    assert_eq!(
+        marked, 0,
+        "partial scan should not mark un-scanned files as stale"
+    );
 
     // Now include both files in scanned set
     let scanned_both: HashSet<String> = [a_abs.clone(), b_abs.clone()].into();
@@ -333,7 +362,10 @@ fn test_stale_partial_scan_safety() {
 /// Test: Schema migration v1→v2 adds stale columns to existing DB.
 #[test]
 fn test_schema_migration_v1_to_v2() {
-    let db_path = format!("{}/test_migrate_v2.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_migrate_v2.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     // 1. Create a DB with v1 schema (lessons without stale columns)
@@ -361,22 +393,39 @@ fn test_schema_migration_v1_to_v2() {
 
     // 3. Verify old row has stale=0 via a raw connection
     let conn2 = Connection::open(&db_path).unwrap();
-    let stale: i64 = conn2.query_row(
-        "SELECT stale FROM lessons WHERE id = 1", [], |r: &rusqlite::Row| r.get(0)
-    ).unwrap();
+    let stale: i64 = conn2
+        .query_row(
+            "SELECT stale FROM lessons WHERE id = 1",
+            [],
+            |r: &rusqlite::Row| r.get(0),
+        )
+        .unwrap();
     assert_eq!(stale, 0, "migrated row should have stale=0");
 
     // 4. Verify stale_reason and stale_since are NULL for old row
-    let reason: Option<String> = conn2.query_row(
-        "SELECT stale_reason FROM lessons WHERE id = 1", [], |r: &rusqlite::Row| r.get(0)
-    ).unwrap();
-    assert!(reason.is_none(), "stale_reason should be NULL for fresh row");
+    let reason: Option<String> = conn2
+        .query_row(
+            "SELECT stale_reason FROM lessons WHERE id = 1",
+            [],
+            |r: &rusqlite::Row| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        reason.is_none(),
+        "stale_reason should be NULL for fresh row"
+    );
 
     // 5. New lessons get default stale=0
-    backend.record_lesson("local", "/new.rs", Some("func"), "err", "fix", "").unwrap();
-    let stale2: i64 = conn2.query_row(
-        "SELECT stale FROM lessons WHERE file_path = '/new.rs'", [], |r: &rusqlite::Row| r.get(0)
-    ).unwrap();
+    backend
+        .record_lesson("local", "/new.rs", Some("func"), "err", "fix", "")
+        .unwrap();
+    let stale2: i64 = conn2
+        .query_row(
+            "SELECT stale FROM lessons WHERE file_path = '/new.rs'",
+            [],
+            |r: &rusqlite::Row| r.get(0),
+        )
+        .unwrap();
     assert_eq!(stale2, 0, "new lesson should have stale=0 by default");
 
     drop(backend);
@@ -390,7 +439,11 @@ fn setup_project() -> (TempDir, String) {
 
     // main.rs has `mod lib;` — makes it depend on lib.rs (sibling)
     let mut f2 = std::fs::File::create(dir.path().join("main.rs")).unwrap();
-    write!(f2, "mod lib;\nfn main() {{ println!(\"{{}}\", lib::add(1, 2)); }}").unwrap();
+    write!(
+        f2,
+        "mod lib;\nfn main() {{ println!(\"{{}}\", lib::add(1, 2)); }}"
+    )
+    .unwrap();
 
     // lib.rs — depends on nothing project-internal
     let mut f = std::fs::File::create(dir.path().join("lib.rs")).unwrap();
@@ -425,27 +478,63 @@ async fn test_p1_record_lesson_updates_analyze_impact() {
     let lib_path = full_path(&root, "lib.rs");
 
     let impacts = backend.analyze_impact(&main_path, 3);
-    let lib_impact = impacts.iter().find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
-    assert!(lib_impact.is_some(), "analyze_impact(main) should find lib.rs");
-    assert_eq!(lib_impact.unwrap().lesson_count, 0, "lesson_count should start at 0");
+    let lib_impact = impacts
+        .iter()
+        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
+    assert!(
+        lib_impact.is_some(),
+        "analyze_impact(main) should find lib.rs"
+    );
+    assert_eq!(
+        lib_impact.unwrap().lesson_count,
+        0,
+        "lesson_count should start at 0"
+    );
 
     // Record a lesson on main.rs — lesson_count stays 0 on lib (lesson on main, not lib)
-    backend.record_lesson(&main_path, Some("main"), "panic", "handle error").await.unwrap();
+    backend
+        .record_lesson(&main_path, Some("main"), "panic", "handle error")
+        .await
+        .unwrap();
     let impacts2 = backend.analyze_impact(&main_path, 3);
-    let lib2 = impacts2.iter().find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
-    assert_eq!(lib2.unwrap().lesson_count, 0, "lesson on main should not affect lib count");
+    let lib2 = impacts2
+        .iter()
+        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
+    assert_eq!(
+        lib2.unwrap().lesson_count,
+        0,
+        "lesson on main should not affect lib count"
+    );
 
     // Record lesson on lib.rs
-    backend.record_lesson(&lib_path, Some("add"), "overflow", "use checked_add").await.unwrap();
+    backend
+        .record_lesson(&lib_path, Some("add"), "overflow", "use checked_add")
+        .await
+        .unwrap();
     let impacts3 = backend.analyze_impact(&main_path, 3);
-    let lib3 = impacts3.iter().find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
-    assert_eq!(lib3.unwrap().lesson_count, 1, "lesson on lib should reflect in impact");
+    let lib3 = impacts3
+        .iter()
+        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
+    assert_eq!(
+        lib3.unwrap().lesson_count,
+        1,
+        "lesson on lib should reflect in impact"
+    );
 
     // Second lesson on lib.rs
-    backend.record_lesson(&lib_path, Some("subtract"), "negative", "use abs").await.unwrap();
+    backend
+        .record_lesson(&lib_path, Some("subtract"), "negative", "use abs")
+        .await
+        .unwrap();
     let impacts4 = backend.analyze_impact(&main_path, 3);
-    let lib4 = impacts4.iter().find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
-    assert_eq!(lib4.unwrap().lesson_count, 2, "two lessons on lib should show count=2");
+    let lib4 = impacts4
+        .iter()
+        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
+    assert_eq!(
+        lib4.unwrap().lesson_count,
+        2,
+        "two lessons on lib should show count=2"
+    );
 
     std::fs::remove_file(&db_path).ok();
 }
@@ -467,15 +556,19 @@ async fn test_p2_scanning_flag_blocks_reload() {
     backend.reload_if_stale();
 
     let main_path = full_path(&root, "main.rs");
-    assert!(backend.analyze_impact(&main_path, 3).is_empty(),
-        "reload_if_stale should not scan when scanning=true");
+    assert!(
+        backend.analyze_impact(&main_path, 3).is_empty(),
+        "reload_if_stale should not scan when scanning=true"
+    );
 
     // scanning=false → full_scan works normally
     backend.scanning.store(false, Ordering::SeqCst);
     backend.full_scan(&root, None).unwrap();
 
-    assert!(!backend.analyze_impact(&main_path, 3).is_empty(),
-        "after full_scan, analyze_impact should find results");
+    assert!(
+        !backend.analyze_impact(&main_path, 3).is_empty(),
+        "after full_scan, analyze_impact should find results"
+    );
 
     std::fs::remove_file(&db_path).ok();
 }
@@ -545,20 +638,52 @@ async fn test_edge_noise_dir_exclusion() {
     // Real file must be present — use file_context to check (analyze_impact
     // returns empty for leaf files with no outgoing deps)
     let app_path = full_path(&root, "app.rs");
-    assert!(backend.get_file_context(&app_path).await.unwrap().is_some(),
-        "app.rs should be in the graph");
+    assert!(
+        backend.get_file_context(&app_path).await.unwrap().is_some(),
+        "app.rs should be in the graph"
+    );
 
     // Files under noise dirs must NOT be in the graph
-    assert!(backend.get_file_context(&full_path(&root, "target/lib.rs")).await.unwrap().is_none(),
-        "target/lib.rs must be excluded");
-    assert!(backend.get_file_context(&full_path(&root, "node_modules/lib.rs")).await.unwrap().is_none(),
-        "node_modules/lib.rs must be excluded");
-    assert!(backend.get_file_context(&full_path(&root, ".git/lib.rs")).await.unwrap().is_none(),
-        ".git/lib.rs must be excluded");
-    assert!(backend.get_file_context(&full_path(&root, "__pycache__/lib.rs")).await.unwrap().is_none(),
-        "__pycache__/lib.rs must be excluded");
-    assert!(backend.get_file_context(&full_path(&root, "node_modules/deep/deeper/also_hidden.rs")).await.unwrap().is_none(),
-        "nested under noise dir must be excluded");
+    assert!(
+        backend
+            .get_file_context(&full_path(&root, "target/lib.rs"))
+            .await
+            .unwrap()
+            .is_none(),
+        "target/lib.rs must be excluded"
+    );
+    assert!(
+        backend
+            .get_file_context(&full_path(&root, "node_modules/lib.rs"))
+            .await
+            .unwrap()
+            .is_none(),
+        "node_modules/lib.rs must be excluded"
+    );
+    assert!(
+        backend
+            .get_file_context(&full_path(&root, ".git/lib.rs"))
+            .await
+            .unwrap()
+            .is_none(),
+        ".git/lib.rs must be excluded"
+    );
+    assert!(
+        backend
+            .get_file_context(&full_path(&root, "__pycache__/lib.rs"))
+            .await
+            .unwrap()
+            .is_none(),
+        "__pycache__/lib.rs must be excluded"
+    );
+    assert!(
+        backend
+            .get_file_context(&full_path(&root, "node_modules/deep/deeper/also_hidden.rs"))
+            .await
+            .unwrap()
+            .is_none(),
+        "nested under noise dir must be excluded"
+    );
 
     let summary = backend.get_graph_summary().await.unwrap();
     assert_eq!(summary.file_count, 1, "only app.rs should be indexed");
@@ -595,7 +720,8 @@ async fn test_edge_debounce_500ms() {
     // b.rs still not in graph (call #1 scanned before b.rs existed,
     // call #2 skipped due to debounce)
     assert_eq!(
-        backend.get_graph_summary().await.unwrap().file_count, 1,
+        backend.get_graph_summary().await.unwrap().file_count,
+        1,
         "debounce should prevent second reload from scanning"
     );
 
@@ -605,7 +731,8 @@ async fn test_edge_debounce_500ms() {
     // reload_if_stale #3: debounce expired, mtime differs → re-scans
     backend.reload_if_stale();
     assert_eq!(
-        backend.get_graph_summary().await.unwrap().file_count, 2,
+        backend.get_graph_summary().await.unwrap().file_count,
+        2,
         "after debounce expires, reload should pick up new files"
     );
 
@@ -646,13 +773,26 @@ fn test_schema_migration_from_v0_to_v1() {
     assert_eq!(summary.engram_count, 1, "old lesson should be counted");
 
     // 4. Insert a new lesson with explicit kind
-    backend.record_lesson("local", "/new/file.rs", Some("new_func"), "new error", "new fix", "").unwrap();
+    backend
+        .record_lesson(
+            "local",
+            "/new/file.rs",
+            Some("new_func"),
+            "new error",
+            "new fix",
+            "",
+        )
+        .unwrap();
 
     // 5. Verify both old and new lessons are readable
-    let solutions = backend.get_historical_engram_solutions("local", "/old/file.rs").unwrap();
+    let solutions = backend
+        .get_historical_engram_solutions("local", "/old/file.rs")
+        .unwrap();
     assert_eq!(solutions, vec!["old fix"]);
 
-    let new_solutions = backend.get_historical_engram_solutions("local", "/new/file.rs").unwrap();
+    let new_solutions = backend
+        .get_historical_engram_solutions("local", "/new/file.rs")
+        .unwrap();
     assert_eq!(new_solutions, vec!["new fix"]);
 
     // 6. Verify kind column stores 'lesson' as default on new entries too
@@ -668,7 +808,10 @@ fn test_schema_migration_from_v0_to_v1() {
 async fn test_context_for_task_composition() {
     let (_dir, root) = setup_project();
 
-    let db_path = format!("{}/test_context_task.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_context_task.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
@@ -678,8 +821,10 @@ async fn test_context_for_task_composition() {
     let lib_path = full_path(&root, "lib.rs");
 
     // Record a lesson on lib.rs
-    backend.record_lesson(&lib_path, Some("add"), "overflow bug", "use checked_add")
-        .await.unwrap();
+    backend
+        .record_lesson(&lib_path, Some("add"), "overflow bug", "use checked_add")
+        .await
+        .unwrap();
 
     // 1. search_lessons — find the lesson
     let lessons = backend.search_lessons("overflow", None, 10).await.unwrap();
@@ -687,7 +832,10 @@ async fn test_context_for_task_composition() {
     assert!(lessons.iter().any(|l| l.solution.contains("checked_add")));
 
     // 2. get_file_context — for the matched file
-    let ctx = backend.get_file_context(&lib_path).await.unwrap()
+    let ctx = backend
+        .get_file_context(&lib_path)
+        .await
+        .unwrap()
         .expect("lib.rs should be indexed");
     assert_eq!(ctx.language, "Rust");
     assert!(ctx.functions.iter().any(|f| f.name == "add"));
@@ -707,10 +855,114 @@ async fn test_context_for_task_composition() {
         "impact(main) should find lib.rs"
     );
     // The lesson on lib should appear in the impact
-    let lib_impact = impacts.iter().find(|e| e.file_path.contains("lib.rs")).unwrap();
-    assert_eq!(lib_impact.lesson_count, 1, "lib impact should show lesson count");
+    let lib_impact = impacts
+        .iter()
+        .find(|e| e.file_path.contains("lib.rs"))
+        .unwrap();
+    assert_eq!(
+        lib_impact.lesson_count, 1,
+        "lib impact should show lesson count"
+    );
 
     std::fs::remove_file(&db_path).ok();
+}
+
+#[test]
+fn test_ozy_observations_topic_dedupe_timeline_and_soft_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+    backend.set_project_path(Some(dir.path().to_string_lossy().as_ref()));
+
+    backend
+        .memory_session_start("s1", "ozymem-test", &dir.path().to_string_lossy())
+        .unwrap();
+    backend
+        .save_user_prompt("s1", "please fix auth", Some("ozymem-test"))
+        .unwrap();
+
+    let first = backend
+        .save_observation(
+            "s1",
+            "decision",
+            "Auth model",
+            "**What**: use JWT\n**Why**: stateless",
+            Some("ozymem-test"),
+            Some("project"),
+            Some("architecture/auth-model"),
+            Some("ozy_memory"),
+        )
+        .unwrap();
+    assert_eq!(first.revision_count, 1);
+
+    let updated = backend
+        .save_observation(
+            "s1",
+            "decision",
+            "Auth model",
+            "**What**: use JWT with refresh rotation\n**Why**: safer",
+            Some("ozymem-test"),
+            Some("project"),
+            Some("architecture/auth-model"),
+            Some("ozy_memory"),
+        )
+        .unwrap();
+    assert_eq!(first.id, updated.id);
+    assert_eq!(updated.revision_count, 2);
+
+    let dup = backend
+        .save_observation(
+            "s1",
+            "bugfix",
+            "Fixed NPE",
+            "same content",
+            Some("ozymem-test"),
+            Some("project"),
+            None,
+            None,
+        )
+        .unwrap();
+    let dup_again = backend
+        .save_observation(
+            "s1",
+            "bugfix",
+            "Fixed NPE",
+            "same   content",
+            Some("ozymem-test"),
+            Some("project"),
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(dup.id, dup_again.id);
+    assert_eq!(dup_again.duplicate_count, 1);
+
+    let timeline = backend.observation_timeline(updated.id, 2, 2).unwrap();
+    assert!(timeline.iter().any(|o| o.id == updated.id));
+
+    assert!(backend.soft_delete_observation(updated.id).unwrap());
+    assert!(backend.get_observation(updated.id).is_err());
+}
+
+#[test]
+fn test_passive_capture_extracts_key_learnings() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+    backend.set_project_path(Some(dir.path().to_string_lossy().as_ref()));
+    backend
+        .memory_session_start("s1", "ozymem-test", &dir.path().to_string_lossy())
+        .unwrap();
+
+    let saved = backend
+        .passive_capture(
+            "s1",
+            "Done\n\n## Aprendizajes Clave:\n1. topic keys should upsert evolving decisions\n- soft delete keeps audit safety\n\n## Next\nnothing",
+            Some("ozymem-test"),
+        )
+        .unwrap();
+    assert_eq!(saved.len(), 2);
+    assert!(saved.iter().all(|o| o.observation_type == "learning"));
 }
 
 /// Test: LessonEntry stale fields are populated correctly.
@@ -718,7 +970,10 @@ async fn test_context_for_task_composition() {
 async fn test_lesson_entry_stale_fields() {
     let (_dir, root) = setup_project();
 
-    let db_path = format!("{}/test_stale_fields.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_stale_fields.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
@@ -727,14 +982,19 @@ async fn test_lesson_entry_stale_fields() {
     let lib_path = full_path(&root, "lib.rs");
 
     // Record a lesson
-    backend.record_lesson(&lib_path, Some("add"), "overflow", "checked_add")
-        .await.unwrap();
+    backend
+        .record_lesson(&lib_path, Some("add"), "overflow", "checked_add")
+        .await
+        .unwrap();
 
     // Fresh lesson: stale=0, stale_reason=None
     let lessons = backend.get_file_lessons(&lib_path).await.unwrap();
     assert_eq!(lessons.len(), 1);
     assert_eq!(lessons[0].stale, 0, "fresh lesson should have stale=0");
-    assert!(lessons[0].stale_reason.is_none(), "fresh lesson should have no reason");
+    assert!(
+        lessons[0].stale_reason.is_none(),
+        "fresh lesson should have no reason"
+    );
 
     // Manually mark it stale via a direct connection (simulating mark_stale_lessons)
     {
@@ -756,7 +1016,10 @@ async fn test_lesson_entry_stale_fields() {
 
     // search_lessons now filters stale lessons — confirm it's excluded
     let searched = backend.search_lessons("overflow", None, 10).await.unwrap();
-    assert!(searched.is_empty(), "stale lesson should be filtered out by search_lessons");
+    assert!(
+        searched.is_empty(),
+        "stale lesson should be filtered out by search_lessons"
+    );
 
     std::fs::remove_file(&db_path).ok();
 }
@@ -766,15 +1029,24 @@ async fn test_lesson_entry_stale_fields() {
 async fn test_search_lessons_empty_query() {
     let (_dir, root) = setup_project();
 
-    let db_path = format!("{}/test_empty_search.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_empty_search.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
     backend.full_scan(&root, None).unwrap();
 
     // Query matching nothing
-    let results = backend.search_lessons("xyznonexistent", None, 10).await.unwrap();
-    assert!(results.is_empty(), "should return empty for non-matching query");
+    let results = backend
+        .search_lessons("xyznonexistent", None, 10)
+        .await
+        .unwrap();
+    assert!(
+        results.is_empty(),
+        "should return empty for non-matching query"
+    );
 
     // Empty query (edge case)
     let results = backend.search_lessons("", None, 10).await.unwrap();
@@ -786,7 +1058,10 @@ async fn test_search_lessons_empty_query() {
 /// Test: mark_stale_lessons does not crash on empty scanned_files.
 #[test]
 fn test_mark_stale_empty_scanned() {
-    let db_path = format!("{}/test_stale_empty.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_stale_empty.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let conn = Connection::open(&db_path).unwrap();
@@ -802,7 +1077,10 @@ fn test_mark_stale_empty_scanned() {
 async fn test_search_lessons_bm25_ranking() {
     let (_dir, root) = setup_project();
 
-    let db_path = format!("{}/test_bm25_rank.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_bm25_rank.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
@@ -814,20 +1092,40 @@ async fn test_search_lessons_bm25_ranking() {
     let helper = full_path(&root, "helper.rs");
 
     // A: term in symbol_name (weight 3.0 → should rank best / lowest score)
-    backend.record_lesson(&lib, Some("overflow_handler"), "handling large values", "use checked_add")
-        .await.unwrap();
+    backend
+        .record_lesson(
+            &lib,
+            Some("overflow_handler"),
+            "handling large values",
+            "use checked_add",
+        )
+        .await
+        .unwrap();
 
     // B: term in error_context (weight 2.0)
-    backend.record_lesson(&main, Some("compute"), "overflow in computation", "use saturating_add")
-        .await.unwrap();
+    backend
+        .record_lesson(
+            &main,
+            Some("compute"),
+            "overflow in computation",
+            "use saturating_add",
+        )
+        .await
+        .unwrap();
 
     // C: term in solution (weight 1.0 → should rank worst / highest score)
-    backend.record_lesson(&helper, Some("helper"), "general utility", "avoid overflow")
-        .await.unwrap();
+    backend
+        .record_lesson(&helper, Some("helper"), "general utility", "avoid overflow")
+        .await
+        .unwrap();
 
     // Search — expected order: A (symbol_name) → B (error_context) → C (solution)
     let results = backend.search_lessons("overflow", None, 10).await.unwrap();
-    assert_eq!(results.len(), 3, "all three lessons should match 'overflow'");
+    assert_eq!(
+        results.len(),
+        3,
+        "all three lessons should match 'overflow'"
+    );
 
     let names: Vec<&str> = results.iter().map(|l| l.symbol_name.as_str()).collect();
     assert_eq!(
@@ -845,7 +1143,10 @@ async fn test_search_lessons_bm25_ranking() {
 async fn test_search_lessons_bm25_respects_stale_filter() {
     let (_dir, root) = setup_project();
 
-    let db_path = format!("{}/test_bm25_stale.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_bm25_stale.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
@@ -854,12 +1155,26 @@ async fn test_search_lessons_bm25_respects_stale_filter() {
     let lib = full_path(&root, "lib.rs");
 
     // Fresh lesson — should appear
-    backend.record_lesson(&lib, Some("fresh_fn"), "overflow bug fresh", "fix with checked_add")
-        .await.unwrap();
+    backend
+        .record_lesson(
+            &lib,
+            Some("fresh_fn"),
+            "overflow bug fresh",
+            "fix with checked_add",
+        )
+        .await
+        .unwrap();
 
     // Stale lesson — should be filtered out
-    backend.record_lesson(&lib, Some("stale_fn"), "overflow bug stale", "fix with wrapping_add")
-        .await.unwrap();
+    backend
+        .record_lesson(
+            &lib,
+            Some("stale_fn"),
+            "overflow bug stale",
+            "fix with wrapping_add",
+        )
+        .await
+        .unwrap();
 
     // Mark the second lesson as stale via direct SQLite
     {
@@ -867,16 +1182,27 @@ async fn test_search_lessons_bm25_respects_stale_filter() {
         conn.execute(
             "UPDATE lessons SET stale = 1, stale_reason = 'symbol_removed' WHERE id = 2",
             [],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // Search — only the fresh lesson should be returned
     let results = backend.search_lessons("overflow", None, 10).await.unwrap();
-    assert_eq!(results.len(), 1, "should return exactly 1 lesson (not the stale one)");
-    assert_eq!(results[0].symbol_name, "fresh_fn", "should be the fresh lesson");
+    assert_eq!(
+        results.len(),
+        1,
+        "should return exactly 1 lesson (not the stale one)"
+    );
+    assert_eq!(
+        results[0].symbol_name, "fresh_fn",
+        "should be the fresh lesson"
+    );
 
     // Confirm the stale lesson is truly gone from results (not just masked)
-    assert!(results.iter().all(|l| l.stale == 0), "all returned lessons must have stale=0");
+    assert!(
+        results.iter().all(|l| l.stale == 0),
+        "all returned lessons must have stale=0"
+    );
 
     std::fs::remove_file(&db_path).ok();
 }
@@ -888,7 +1214,10 @@ async fn test_search_lessons_bm25_respects_stale_filter() {
 async fn test_search_lessons_stale_filter_before_limit() {
     let (_dir, root) = setup_project();
 
-    let db_path = format!("{}/test_stale_before_limit.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_stale_before_limit.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
@@ -899,12 +1228,15 @@ async fn test_search_lessons_stale_filter_before_limit() {
     // Record 5 lessons, all with "overflow" in symbol_name (same column).
     // First 3 will be marked stale; last 2 stay fresh.
     for i in 0..5 {
-        backend.record_lesson(
-            &lib,
-            Some(&format!("overflow_fn_{}", i)),
-            &format!("context {}", i),
-            &format!("solution {}", i),
-        ).await.unwrap();
+        backend
+            .record_lesson(
+                &lib,
+                Some(&format!("overflow_fn_{}", i)),
+                &format!("context {}", i),
+                &format!("solution {}", i),
+            )
+            .await
+            .unwrap();
     }
 
     // Mark IDs 1,2,3 as stale
@@ -913,12 +1245,17 @@ async fn test_search_lessons_stale_filter_before_limit() {
         conn.execute(
             "UPDATE lessons SET stale = 1, stale_reason = 'symbol_removed' WHERE id IN (1,2,3)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // Search with limit=2
     let results = backend.search_lessons("overflow", None, 2).await.unwrap();
-    assert_eq!(results.len(), 2, "limit=2 should return exactly 2 results (both fresh)");
+    assert_eq!(
+        results.len(),
+        2,
+        "limit=2 should return exactly 2 results (both fresh)"
+    );
     assert!(
         results.iter().all(|l| l.stale == 0),
         "all returned lessons must have stale=0 — got stale values: {:?}",
@@ -959,12 +1296,18 @@ fn test_rebuild_graph_stable_deps() {
     let after_incoming_b = backend.get_incoming_deps(&b_abs);
     let after_incoming_c = backend.get_incoming_deps(&c_abs);
 
-    assert_eq!(before_outgoing, after_outgoing,
-        "outgoing deps from a must match across rebuild");
-    assert_eq!(before_incoming_b, after_incoming_b,
-        "incoming deps to b must match across rebuild");
-    assert_eq!(before_incoming_c, after_incoming_c,
-        "incoming deps to c must match across rebuild");
+    assert_eq!(
+        before_outgoing, after_outgoing,
+        "outgoing deps from a must match across rebuild"
+    );
+    assert_eq!(
+        before_incoming_b, after_incoming_b,
+        "incoming deps to b must match across rebuild"
+    );
+    assert_eq!(
+        before_incoming_c, after_incoming_c,
+        "incoming deps to c must match across rebuild"
+    );
 }
 
 /// Regression test: path normalization (strip `\\?\` prefix) must not break
@@ -977,7 +1320,11 @@ fn test_dependency_edges_survive_path_normalization() {
 
     // Create two Rust files where one imports the other via `mod`
     std::fs::write(root.join("lib.rs"), "pub fn helper() -> i32 { 42 }\n").unwrap();
-    std::fs::write(root.join("main.rs"), "mod lib;\nfn main() { lib::helper(); }\n").unwrap();
+    std::fs::write(
+        root.join("main.rs"),
+        "mod lib;\nfn main() { lib::helper(); }\n",
+    )
+    .unwrap();
 
     let backend = GraphBackend::open_for_project(root).unwrap();
     let root_str = root.to_string_lossy().to_string();
@@ -994,7 +1341,8 @@ fn test_dependency_edges_survive_path_normalization() {
         !incoming_lib.is_empty() || !outgoing_main.is_empty(),
         "expected at least one dependency edge between main.rs and lib.rs: \
          incoming to lib: {:?}, outgoing from main: {:?}",
-        incoming_lib, outgoing_main,
+        incoming_lib,
+        outgoing_main,
     );
 }
 
@@ -1011,22 +1359,32 @@ async fn test_similar_lessons_ranking() {
     let backend = GraphBackend::open_for_project(dir.path()).unwrap();
 
     // Record lessons with semantically different content
-    backend.record_entry(
-        "dates.rs", Some("parse_date"),
-        "date/time manipulation with chrono: parsing RFC 3339",
-        "use NaiveDateTime::parse_from_rfc3339",
-        "lesson",
-    ).await.unwrap();
+    backend
+        .record_entry(
+            "dates.rs",
+            Some("parse_date"),
+            "date/time manipulation with chrono: parsing RFC 3339",
+            "use NaiveDateTime::parse_from_rfc3339",
+            "lesson",
+        )
+        .await
+        .unwrap();
 
-    backend.record_entry(
-        "auth.rs", Some("oauth_refresh"),
-        "OAuth token refresh flow: detect expiry",
-        "check the exp claim before making API calls",
-        "lesson",
-    ).await.unwrap();
+    backend
+        .record_entry(
+            "auth.rs",
+            Some("oauth_refresh"),
+            "OAuth token refresh flow: detect expiry",
+            "check the exp claim before making API calls",
+            "lesson",
+        )
+        .await
+        .unwrap();
 
     // Query for time-related content
-    let results = backend.similar_lessons("how do I parse dates in Rust", 5, 0.0).unwrap();
+    let results = backend
+        .similar_lessons("how do I parse dates in Rust", 5, 0.0)
+        .unwrap();
 
     if results.is_empty() {
         // Embeddings not available (no model downloaded yet) — skip assertions
@@ -1038,7 +1396,8 @@ async fn test_similar_lessons_ranking() {
     assert!(
         results[0].lesson.file_path.contains("dates"),
         "expected dates lesson first, got file={}, score={:.3}",
-        results[0].lesson.file_path, results[0].score,
+        results[0].lesson.file_path,
+        results[0].score,
     );
 
     // Verify scores are reasonable (semantically related text should score > 0.3)
@@ -1068,15 +1427,26 @@ fn test_full_scan_progress_callback() {
     backend.set_project_path(Some(&root.to_string_lossy()));
 
     let calls = std::sync::Mutex::new(Vec::new());
-    backend.full_scan(&root.to_string_lossy(), Some(&|processed, total| {
-        calls.lock().unwrap().push((processed, total));
-    })).unwrap();
+    backend
+        .full_scan(
+            &root.to_string_lossy(),
+            Some(&|processed, total| {
+                calls.lock().unwrap().push((processed, total));
+            }),
+        )
+        .unwrap();
 
     let history = calls.lock().unwrap().clone();
-    assert!(!history.is_empty(), "progress callback should be called at least once");
+    assert!(
+        !history.is_empty(),
+        "progress callback should be called at least once"
+    );
     // Last call should report all files
     let last = history.last().unwrap();
-    assert_eq!(last.0, last.1, "final progress should show all files processed");
+    assert_eq!(
+        last.0, last.1,
+        "final progress should show all files processed"
+    );
     assert_eq!(last.0, 2, "expected 2 files to be scanned");
 }
 
@@ -1099,16 +1469,36 @@ async fn test_impact_entry_enriched_fields() {
     for entry in &impacts {
         assert!(
             entry.severity == "breaking" || entry.severity == "warning" || entry.severity == "info",
-            "severity should be one of breaking/warning/info, got: {}", entry.severity
+            "severity should be one of breaking/warning/info, got: {}",
+            entry.severity
         );
 
-        assert!(!entry.reason.is_empty(), "reason should not be empty for {}", entry.file_path);
-        assert!(!entry.suggestion.is_empty(), "suggestion should not be empty for {}", entry.file_path);
+        assert!(
+            !entry.reason.is_empty(),
+            "reason should not be empty for {}",
+            entry.file_path
+        );
+        assert!(
+            !entry.suggestion.is_empty(),
+            "suggestion should not be empty for {}",
+            entry.file_path
+        );
 
         if entry.file_path.contains("lib.rs") {
-            assert!(entry.start_line > 0, "lib.rs start_line should be >0, got {}", entry.start_line);
-            assert!(entry.end_line > 0, "lib.rs end_line should be >0, got {}", entry.end_line);
-            assert!(entry.function_count >= 2, "lib.rs should have at least 2 functions");
+            assert!(
+                entry.start_line > 0,
+                "lib.rs start_line should be >0, got {}",
+                entry.start_line
+            );
+            assert!(
+                entry.end_line > 0,
+                "lib.rs end_line should be >0, got {}",
+                entry.end_line
+            );
+            assert!(
+                entry.function_count >= 2,
+                "lib.rs should have at least 2 functions"
+            );
         }
     }
 
@@ -1121,13 +1511,32 @@ async fn test_graph_path_finds_chain() {
     let dir = TempDir::new().unwrap();
     let root = dir.path().to_string_lossy().to_string();
 
-    std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"chain-test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"chain-test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
 
-    std::fs::write(dir.path().join("a.rs"), "mod b;\nmod c;\nfn main() { b::work(); }\n").unwrap();
-    std::fs::write(dir.path().join("b.rs"), "use crate::c;\npub fn work() { c::help(); }\n").unwrap();
-    std::fs::write(dir.path().join("c.rs"), "pub fn help() { println!(\"ok\"); }\n").unwrap();
+    std::fs::write(
+        dir.path().join("a.rs"),
+        "mod b;\nmod c;\nfn main() { b::work(); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("b.rs"),
+        "use crate::c;\npub fn work() { c::help(); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("c.rs"),
+        "pub fn help() { println!(\"ok\"); }\n",
+    )
+    .unwrap();
 
-    let db_path = format!("{}/test_graph_path.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_graph_path.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
@@ -1140,18 +1549,34 @@ async fn test_graph_path_finds_chain() {
     // a → b direct
     let paths = backend.find_graph_path(&a_path, &b_path, 5, 5);
     assert!(!paths.is_empty(), "should find path from a.rs to b.rs");
-    assert_eq!(paths[0].len(), 2, "direct edge a→b should be 2 nodes (a, b)");
+    assert_eq!(
+        paths[0].len(),
+        2,
+        "direct edge a→b should be 2 nodes (a, b)"
+    );
 
     // a → c (via b or direct via mod c)
     let paths_ac = backend.find_graph_path(&a_path, &c_path, 5, 5);
     assert!(!paths_ac.is_empty(), "should find path from a.rs to c.rs");
     // At least one path uses the intermediate b (3 nodes: a→b→c)
     let has_via_b = paths_ac.iter().any(|p| p.len() == 3);
-    assert!(has_via_b, "expected a 3-node path a→b→c, got: {:?}", paths_ac);
+    assert!(
+        has_via_b,
+        "expected a 3-node path a→b→c, got: {:?}",
+        paths_ac
+    );
 
     // Shortest length computed as hops (min nodes - 1)
-    let shortest = paths_ac.iter().map(|p| p.len()).min().unwrap().saturating_sub(1);
-    assert_eq!(shortest, 1, "shortest path a→c should be 1 hop (direct edge)");
+    let shortest = paths_ac
+        .iter()
+        .map(|p| p.len())
+        .min()
+        .unwrap()
+        .saturating_sub(1);
+    assert_eq!(
+        shortest, 1,
+        "shortest path a→c should be 1 hop (direct edge)"
+    );
 
     // No path to nonexistent file
     let no_path = backend.find_graph_path(&a_path, "/nonexistent.rs", 5, 5);
@@ -1159,7 +1584,10 @@ async fn test_graph_path_finds_chain() {
 
     // Reverse path c → a should NOT exist (directed graph: a→c but no c→a)
     let paths_ca = backend.find_graph_path(&c_path, &a_path, 5, 5);
-    assert!(paths_ca.is_empty(), "reverse path c→a should not exist (directed graph)");
+    assert!(
+        paths_ca.is_empty(),
+        "reverse path c→a should not exist (directed graph)"
+    );
 
     std::fs::remove_file(&db_path).ok();
 }
@@ -1175,27 +1603,45 @@ fn test_learn_from_changes_confidence_heuristic() {
 
     // Same size → delta=0 → confidence=0.65
     let c1 = confidence_for(10, 10);
-    assert!((c1 - 0.65).abs() < 1e-6, "no change should give 0.65, got {c1}");
+    assert!(
+        (c1 - 0.65).abs() < 1e-6,
+        "no change should give 0.65, got {c1}"
+    );
 
     // Small change (2 lines out of 12) → 0.65+0.30*(2/12)=0.65+0.05=0.70
     let c2 = confidence_for(10, 12);
-    assert!((c2 - 0.70).abs() < 1e-6, "2-line change should give ~0.70, got {c2}");
+    assert!(
+        (c2 - 0.70).abs() < 1e-6,
+        "2-line change should give ~0.70, got {c2}"
+    );
 
     // Large change (15 lines out of 20) → 0.65+0.30*(15/20)=0.875
     let c3 = confidence_for(5, 20);
-    assert!((c3 - 0.875).abs() < 1e-6, "15-line change should give ~0.875, got {c3}");
+    assert!(
+        (c3 - 0.875).abs() < 1e-6,
+        "15-line change should give ~0.875, got {c3}"
+    );
 
     // Massive change (0→100 lines, delta == max_len) → clamped to 0.95
     let c4 = confidence_for(0, 100);
-    assert!((c4 - 0.95).abs() < 1e-6, "massive change should clamp at 0.95, got {c4}");
+    assert!(
+        (c4 - 0.95).abs() < 1e-6,
+        "massive change should clamp at 0.95, got {c4}"
+    );
 
     // Zero-length function → guard against division by zero
     let c5 = confidence_for(0, 0);
-    assert!((c5 - 0.65).abs() < 1e-6, "zero-length should fallback to 0.65, got {c5}");
+    assert!(
+        (c5 - 0.65).abs() < 1e-6,
+        "zero-length should fallback to 0.65, got {c5}"
+    );
 
     // All values in [0.65, 0.95]
     for c in &[c1, c2, c3, c4, c5] {
-        assert!(*c >= 0.65 && *c <= 0.95, "confidence should be in [0.65, 0.95], got {c}");
+        assert!(
+            *c >= 0.65 && *c <= 0.95,
+            "confidence should be in [0.65, 0.95], got {c}"
+        );
     }
 }
 
@@ -1204,7 +1650,10 @@ fn test_learn_from_changes_confidence_heuristic() {
 async fn test_search_lessons_kind_filter() {
     let (_dir, root) = setup_project();
 
-    let db_path = format!("{}/test_kind_filter.db", std::env::temp_dir().to_string_lossy());
+    let db_path = format!(
+        "{}/test_kind_filter.db",
+        std::env::temp_dir().to_string_lossy()
+    );
     let _ = std::fs::remove_file(&db_path);
 
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
@@ -1212,10 +1661,46 @@ async fn test_search_lessons_kind_filter() {
 
     let lib_path = full_path(&root, "lib.rs");
 
-    backend.record_entry(&lib_path, Some("add"), "overflow bug", "use checked_add for safety", "lesson").await.unwrap();
-    backend.record_entry(&lib_path, Some("subtract"), "negative test", "use abs() instead", "gotcha").await.unwrap();
-    backend.record_entry(&lib_path, Some("add"), "renamed to sum", "function renamed for clarity", "decision").await.unwrap();
-    backend.record_entry(&lib_path, Some("calc"), "use helper", "always call calc_helper first", "convention").await.unwrap();
+    backend
+        .record_entry(
+            &lib_path,
+            Some("add"),
+            "overflow bug",
+            "use checked_add for safety",
+            "lesson",
+        )
+        .await
+        .unwrap();
+    backend
+        .record_entry(
+            &lib_path,
+            Some("subtract"),
+            "negative test",
+            "use abs() instead",
+            "gotcha",
+        )
+        .await
+        .unwrap();
+    backend
+        .record_entry(
+            &lib_path,
+            Some("add"),
+            "renamed to sum",
+            "function renamed for clarity",
+            "decision",
+        )
+        .await
+        .unwrap();
+    backend
+        .record_entry(
+            &lib_path,
+            Some("calc"),
+            "use helper",
+            "always call calc_helper first",
+            "convention",
+        )
+        .await
+        .unwrap();
 
     // No kind filter → "overflow" matches 1 entry (the lesson)
     let all = backend.search_lessons("overflow", None, 10).await.unwrap();
@@ -1223,21 +1708,44 @@ async fn test_search_lessons_kind_filter() {
 
     // Broader search across all kinds
     let all_broad = backend.search_lessons("use", None, 10).await.unwrap();
-    assert!(all_broad.len() >= 2, "broad query 'use' should match multiple entries");
+    assert!(
+        all_broad.len() >= 2,
+        "broad query 'use' should match multiple entries"
+    );
 
     // Filter by kind = "lesson"
-    let lessons = backend.search_lessons("overflow", Some("lesson"), 10).await.unwrap();
-    assert_eq!(lessons.len(), 1, "should find exactly 1 lesson with kind=lesson");
+    let lessons = backend
+        .search_lessons("overflow", Some("lesson"), 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        lessons.len(),
+        1,
+        "should find exactly 1 lesson with kind=lesson"
+    );
     assert_eq!(lessons[0].kind, "lesson");
 
     // Filter by kind = "gotcha"
-    let gotchas = backend.search_lessons("negative", Some("gotcha"), 10).await.unwrap();
-    assert_eq!(gotchas.len(), 1, "should find exactly 1 gotcha with kind=gotcha");
+    let gotchas = backend
+        .search_lessons("negative", Some("gotcha"), 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        gotchas.len(),
+        1,
+        "should find exactly 1 gotcha with kind=gotcha"
+    );
     assert_eq!(gotchas[0].kind, "gotcha");
 
     // Non-existent kind → empty
-    let module_rules = backend.search_lessons("overflow", Some("module_rule"), 10).await.unwrap();
-    assert!(module_rules.is_empty(), "no module_rule entries should return empty");
+    let module_rules = backend
+        .search_lessons("overflow", Some("module_rule"), 10)
+        .await
+        .unwrap();
+    assert!(
+        module_rules.is_empty(),
+        "no module_rule entries should return empty"
+    );
 
     std::fs::remove_file(&db_path).ok();
 }
