@@ -2927,12 +2927,12 @@ impl SqliteBackend {
 /// Canonicalizes `project_path`, creates `.ozymem/` inside it,
 /// and returns the path to `memory.db`.
 pub fn resolve_project_db_path(project_path: &Path) -> Result<PathBuf> {
-    let canonical = project_path.canonicalize().with_context(|| {
-        format!(
-            "failed to resolve project path `{}`",
-            project_path.display()
-        )
-    })?;
+    if !project_path.exists() {
+        let _ = std::fs::create_dir_all(project_path);
+    }
+    let canonical = project_path
+        .canonicalize()
+        .unwrap_or_else(|_| project_path.to_path_buf());
     let db_dir = canonical.join(OZYMEM_DIR);
     std::fs::create_dir_all(&db_dir)
         .with_context(|| format!("failed to create `{}`", db_dir.display()))?;

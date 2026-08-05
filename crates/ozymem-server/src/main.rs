@@ -5448,15 +5448,19 @@ fn error_response(id: Value, code: i64, message: &str) -> mcp_common::JsonRpcRes
     }
 }
 
-/// Convert a `file:///C:/path` workspace URI to a `C:\path` string.
+/// Convert a `file:///C:/path` workspace URI to a platform path string (`C:\path` on Windows, `/path` on Unix).
 fn workspace_uri_to_path(uri: &str) -> String {
     let path = uri.trim_start_matches("file://");
-    let cleaned = if cfg!(windows) && path.starts_with('/') && path.chars().nth(2) == Some(':') {
-        &path[1..]
+    if cfg!(windows) {
+        let cleaned = if path.starts_with('/') && path.chars().nth(2) == Some(':') {
+            &path[1..]
+        } else {
+            path
+        };
+        cleaned.replace('/', "\\")
     } else {
-        path
-    };
-    cleaned.replace('/', "\\")
+        path.to_string()
+    }
 }
 
 /// Resolve the project root directory with fallback priority:
