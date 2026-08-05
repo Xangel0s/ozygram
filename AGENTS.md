@@ -6,9 +6,11 @@
 - `crates/ozymem-parser`: Parsers de código fuente estructurado (Python, Go, Rust, JS/TS, SQL) con tree-sitter nativo y heurística de texto.
 - `crates/ozymem-cli`: Herramienta de línea de comandos con subcomandos `scan`, `lessons`, `dashboard`, `register`, `list`, `ignore`, etc.
 - `crates/ozymem-server`: Servidor MCP sobre stdio con 30+ tools, resources, prompts, resource subscriptions y notificaciones push.
+- `python/ozy-brain`: Motor auxiliar de razonamiento pesado en Python (advisory worker) para planificación, reflexión, revisión de riesgos, recall profundo, modelo mental y patrones.
 
 ## Features Clave
-- **MCP Tools (30+)**: Exploración (`analyze_impact`, `graph_summary`, `list_files`, `graph_neighbors`), memoria (`record_lesson`, `record_decision`, `record_convention`, `record_gotcha`, `record_module_rule`, `search_lessons`, `similar_lessons`), proyectos (`list_projects`, `get_project_memories`, `delete_project`, `suggest_stale_projects`), paquetes (`create_project`, `add_package`, `remove_package`, `get_dependencies`, `run_script`, `analyze_package`, `verify_dependencies`), git (5 tools), `.ozymignore` (`create_ozymignore`).
+- **Tool `ozy_brain` (11 acciones)**: `plan`, `reflect`, `recall_deep`, `summarize_project`, `detect_patterns`, `suggest_next_steps`, `analyze_failure`, `compress_session`, `rank_memories`, `build_mental_model`, `risk_review`.
+- **MCP Tools (30+)**: Exploración (`analyze_impact`, `graph_summary`, `list_files`, `graph_neighbors`), cerebro híbrido (`ozy_brain`), memoria (`record_lesson`, `record_decision`, `record_convention`, `record_gotcha`, `record_module_rule`, `search_lessons`, `similar_lessons`), proyectos (`list_projects`, `get_project_memories`, `delete_project`, `suggest_stale_projects`), paquetes (`create_project`, `add_package`, `remove_package`, `get_dependencies`, `run_script`, `analyze_package`, `verify_dependencies`), git (5 tools), `.ozymignore` (`create_ozymignore`).
 - **Recursos MCP**: 5 recursos (`ozymem://summary`, `recent-lessons`, `full-context`, `file/{path}`, `file/{path}/neighbors`) con soporte de templates y subscriptions.
 - **Prompts MCP**: 3 prompts (`analyze-file`, `review-lessons`, `project-status`).
 - **Resource subscriptions**: LLM puede suscribirse a recursos vía `resources/subscribe` y recibir `notifications/methods/resources/updated` cuando cambian.
