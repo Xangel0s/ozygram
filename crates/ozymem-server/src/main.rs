@@ -5,6 +5,7 @@ use ozymem_core::mcp_common::{ContentBlock, ToolCallResult};
 use ozymem_core::registry::ProjectRegistry;
 use ozymem_parser::parse_source;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -4478,6 +4479,38 @@ fn official_skill_seed() -> Vec<Value> {
     ]
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct OzyBrainResponse {
+    pub action: String,
+    pub summary: String,
+    pub plan: Vec<String>,
+    pub risks: Vec<String>,
+    pub recommendations: Vec<String>,
+    pub memory_updates: Vec<String>,
+    pub confidence: f64,
+    pub brain_version: Option<String>,
+    pub brain_schema_version: Option<String>,
+    pub provenance: Option<Vec<BrainProvenance>>,
+    pub safe_mode: Option<bool>,
+    pub engine: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BrainProvenance {
+    pub path: String,
+    pub score: Option<i64>,
+    pub reasons: Option<Vec<String>>,
+    pub commit_hash: Option<String>,
+}
+
+fn validate_ozy_brain_response_schema(value: &Value) -> anyhow::Result<OzyBrainResponse> {
+    if let Some(err) = value.get("error").and_then(Value::as_str) {
+        anyhow::bail!("Ozy Brain worker error: {err}");
+    }
+    serde_json::from_value::<OzyBrainResponse>(value.clone())
+        .map_err(|e| anyhow::anyhow!("Ozy Brain response failed strict schema validation: {e}"))
+}
+
 async fn handle_ozy_brain(
     backend: &GraphBackend,
     tool_call: &mcp_common::ToolCallParams,
@@ -4556,10 +4589,44 @@ async fn handle_ozy_brain(
         "failures": tool_call.arguments.get("failures").cloned().unwrap_or_else(|| json!([])),
         "changes": tool_call.arguments.get("changes").cloned().unwrap_or_else(|| json!([])),
     });
+    let req_json = serde_json::to_string(&payload).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(req_json.as_bytes());
+    let req_hash = format!("{:x}", hasher.finalize());
+
+    let start_time = std::time::Instant::now();
     let action_owned = action.to_string();
+    let payload_for_worker = payload.clone();
     let response =
-        tokio::task::spawn_blocking(move || call_ozy_brain_worker(&action_owned, &payload, 10_000))
+        tokio::task::spawn_blocking(move || call_ozy_brain_worker_smart(&action_owned, &payload_for_worker, 10_000))
             .await??;
+
+    let validated = validate_ozy_brain_response_schema(&response)?;
+    let latency_ms = start_time.elapsed().as_millis() as u64;
+
+    let git_head = git_context
+        .get("recent_commits")
+        .and_then(Value::as_array)
+        .and_then(|arr| arr.get(0))
+        .and_then(|c| c.get("id").or(c.get("hash")))
+        .and_then(Value::as_str);
+
+    let raw_resp_str = serde_json::to_string(&response).unwrap_or_default();
+
+    let _ = backend.record_brain_audit(
+        &req_hash,
+        action,
+        Some(&project),
+        git_head,
+        validated.engine.as_deref(),
+        validated.brain_version.as_deref(),
+        validated.brain_schema_version.as_deref(),
+        latency_ms,
+        validated.confidence,
+        Some(&validated.summary),
+        Some(&raw_resp_str),
+    );
+
     Ok(format_ozy_brain_response(&response))
 }
 
@@ -4605,6 +4672,52 @@ fn build_ozy_brain_git_context(project_path: &Path, limit: usize) -> Value {
         "status_error": status_error,
         "recent_commits": recent_commits,
     })
+}
+
+fn try_call_ozy_brain_persistent(action: &str, payload: &Value, timeout_ms: u64) -> anyhow::Result<Value> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpStream;
+
+    let port = std::env::var("OZY_BRAIN_PORT").unwrap_or_else(|_| "9473".to_string());
+    let addr = format!("127.0.0.1:{port}");
+    let mut stream = TcpStream::connect_timeout(&addr.parse()?, std::time::Duration::from_millis(timeout_ms.min(800)))?;
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(timeout_ms)))?;
+
+    let req = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": action,
+        "params": payload
+    });
+
+    let mut line = serde_json::to_string(&req)?;
+    line.push('\n');
+    stream.write_all(line.as_bytes())?;
+    stream.flush()?;
+
+    let mut reader = BufReader::new(stream);
+    let mut resp_line = String::new();
+    reader.read_line(&mut resp_line)?;
+
+    let parsed: Value = serde_json::from_str(resp_line.trim())?;
+    if let Some(err) = parsed.get("error") {
+        anyhow::bail!("Persistent worker error: {err}");
+    }
+    if let Some(res) = parsed.get("result") {
+        Ok(res.clone())
+    } else {
+        Ok(parsed)
+    }
+}
+
+fn call_ozy_brain_worker_smart(action: &str, payload: &Value, timeout_ms: u64) -> anyhow::Result<Value> {
+    let mode = std::env::var("OZY_BRAIN_MODE").unwrap_or_else(|_| "auto".to_string());
+    if mode != "oneshot" {
+        if let Ok(res) = try_call_ozy_brain_persistent(action, payload, timeout_ms) {
+            return Ok(res);
+        }
+    }
+    call_ozy_brain_worker(action, payload, timeout_ms)
 }
 
 fn call_ozy_brain_worker(action: &str, payload: &Value, timeout_ms: u64) -> anyhow::Result<Value> {
@@ -4961,6 +5074,18 @@ fn format_ozy_brain_response(value: &Value) -> String {
                     .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()))
                     .unwrap_or_else(|| "{}".to_string());
                 body.push_str(&format!("- {tool} {args}\n"));
+            }
+        }
+    }
+    if let Some(prov_items) = value.get("provenance").and_then(Value::as_array) {
+        if !prov_items.is_empty() {
+            body.push_str("\n## Provenance & Source Locations\n");
+            for item in prov_items {
+                if let Some(path) = item.get("path").and_then(Value::as_str) {
+                    let score = item.get("score").and_then(Value::as_i64).unwrap_or(0);
+                    let commit = item.get("commit_hash").and_then(Value::as_str).unwrap_or("");
+                    body.push_str(&format!("- {path} (score {score}) commit: {commit}\n"));
+                }
             }
         }
     }
@@ -8118,6 +8243,40 @@ mod tests {
         assert!(text.contains("skills.sh/official"));
         assert!(text.contains("facebook/react"));
         assert!(text.contains("executed_external_content") || text.contains("official_only"));
+    }
+
+    #[test]
+    fn test_ozy_brain_persistent_server_fallback() {
+        let payload = json!({
+            "project": "ozymem-test",
+            "goal": "test persistent fallback"
+        });
+        let res = try_call_ozy_brain_persistent("plan", &payload, 50);
+        assert!(res.is_err(), "connecting to closed port must return error for fallback");
+    }
+
+    #[test]
+    fn test_ozy_brain_schema_rejection() {
+        let invalid_json = json!({
+            "action": "plan",
+            "summary": "invalid payload missing required fields"
+        });
+        let result = validate_ozy_brain_response_schema(&invalid_json);
+        assert!(result.is_err(), "malformed json response must fail schema validation");
+
+        let valid_json = json!({
+            "action": "plan",
+            "summary": "valid summary",
+            "plan": ["step 1"],
+            "risks": ["risk 1"],
+            "recommendations": ["rec 1"],
+            "memory_updates": [],
+            "confidence": 0.9,
+            "brain_version": "0.2.0",
+            "brain_schema_version": "v1"
+        });
+        let valid_res = validate_ozy_brain_response_schema(&valid_json);
+        assert!(valid_res.is_ok(), "valid json response must pass schema validation");
     }
 
     #[test]

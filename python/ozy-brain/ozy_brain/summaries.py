@@ -11,6 +11,7 @@ from ozy_brain.schemas import (
     _candidate_file_scores,
     _combined_memory_titles,
     _execution_policy,
+    _extract_provenance,
     _goal,
     _items,
     _project,
@@ -90,6 +91,7 @@ def build_mental_model(payload: dict[str, Any]) -> BrainResponse:
         execution_policy=_execution_policy(payload, autonomy="mental_model_only"),
         brain_context_pack=_brain_context_pack(payload),
         mental_model=model,
+        provenance=_extract_provenance(payload),
     )
 
 
@@ -106,6 +108,9 @@ def summarize_project(payload: dict[str, Any]) -> BrainResponse:
         recommendations=["Rebuild this summary after major architecture changes."],
         memory_updates=["Save stable module rules and project conventions."],
         confidence=0.78,
+        execution_policy=_execution_policy(payload, autonomy="summary_only"),
+        brain_context_pack=_brain_context_pack(payload),
+        provenance=_extract_provenance(payload),
     )
 
 
@@ -124,4 +129,7 @@ def compress_session(payload: dict[str, Any]) -> BrainResponse:
         recommendations=["Persist the compressed summary as a project observation/session summary."],
         memory_updates=["Save compaction summaries before context resets."],
         confidence=0.84,
+        execution_policy=_execution_policy(payload, autonomy="compaction_only"),
+        brain_context_pack=_brain_context_pack(payload),
+        provenance=_extract_provenance(payload),
     )

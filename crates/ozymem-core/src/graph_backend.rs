@@ -332,6 +332,24 @@ impl GraphBackend {
             );
             CREATE INDEX IF NOT EXISTS idx_excel_hash ON excel_templates(canonical_hash);
 
+            CREATE TABLE IF NOT EXISTS ozy_brain_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_hash TEXT NOT NULL,
+                action TEXT NOT NULL,
+                project_path TEXT,
+                git_head TEXT,
+                model_version TEXT,
+                brain_version TEXT,
+                schema_version TEXT,
+                latency_ms INTEGER,
+                confidence REAL,
+                result_summary TEXT,
+                raw_response TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_brain_audit_req_hash ON ozy_brain_audit(request_hash);
+            CREATE INDEX IF NOT EXISTS idx_brain_audit_proj_date ON ozy_brain_audit(project_path, created_at);
+
             INSERT OR IGNORE INTO tenants (id, name) VALUES ('local', 'Local Tenant');"
         )?;
 
@@ -3055,6 +3073,52 @@ impl GraphBackend {
         let backend = Self::open(Some(&db_path.to_string_lossy()))?;
         backend.set_project_path(Some(&project_path.to_string_lossy()));
         Ok(backend)
+    }
+
+    pub fn record_brain_audit(
+        &self,
+        request_hash: &str,
+        action: &str,
+        project_path: Option<&str>,
+        git_head: Option<&str>,
+        model_version: Option<&str>,
+        brain_version: Option<&str>,
+        schema_version: Option<&str>,
+        latency_ms: u64,
+        confidence: f64,
+        result_summary: Option<&str>,
+        raw_response: Option<&str>,
+    ) -> Result<()> {
+        let inner = self.inner.lock().unwrap();
+        inner.sqlite.execute(
+            "INSERT INTO ozy_brain_audit (
+                request_hash, action, project_path, git_head, model_version,
+                brain_version, schema_version, latency_ms, confidence, result_summary, raw_response
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                request_hash,
+                action,
+                project_path,
+                git_head,
+                model_version,
+                brain_version.unwrap_or("0.2.0"),
+                schema_version.unwrap_or("v1"),
+                latency_ms as i64,
+                confidence,
+                result_summary,
+                raw_response
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn clean_old_brain_audits(&self, days: u32) -> Result<usize> {
+        let inner = self.inner.lock().unwrap();
+        let rows = inner.sqlite.execute(
+            "DELETE FROM ozy_brain_audit WHERE created_at < datetime('now', '-' || ?1 || ' days')",
+            params![days],
+        )?;
+        Ok(rows)
     }
 }
 

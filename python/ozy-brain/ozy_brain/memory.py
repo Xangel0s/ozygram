@@ -8,6 +8,7 @@ from ozy_brain.schemas import (
     _brain_context_pack,
     _combined_memory_titles,
     _execution_policy,
+    _extract_provenance,
     _safe_mcp_calls,
 )
 
@@ -61,6 +62,7 @@ def recall_deep(payload: dict[str, Any]) -> BrainResponse:
         suggested_mcp_calls=_safe_mcp_calls(payload),
         execution_policy=_execution_policy(payload, autonomy="recall_only"),
         brain_context_pack=_brain_context_pack(payload),
+        provenance=_extract_provenance(payload),
     )
 
 
@@ -83,4 +85,7 @@ def rank_memories(payload: dict[str, Any]) -> BrainResponse:
         recommendations=["Use ranking order for retrieval priority during agent context loading."],
         memory_updates=[],
         confidence=0.80 if clustered else 0.50,
+        execution_policy=_execution_policy(payload, autonomy="ranking_only"),
+        brain_context_pack=_brain_context_pack(payload),
+        provenance=_extract_provenance(payload),
     )

@@ -10,6 +10,7 @@ from ozy_brain.schemas import (
     _brain_context_pack,
     _candidate_file_scores,
     _execution_policy,
+    _extract_provenance,
     _git_status_files,
     _goal,
     _items,
@@ -112,4 +113,5 @@ def risk_review(payload: dict[str, Any]) -> BrainResponse:
         execution_policy=_execution_policy(payload, autonomy="risk_review_only"),
         brain_context_pack=_brain_context_pack(payload),
         risk_assessment=assessment,
+        provenance=_extract_provenance(payload),
     )

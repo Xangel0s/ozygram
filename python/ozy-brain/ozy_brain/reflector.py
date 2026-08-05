@@ -10,6 +10,7 @@ from ozy_brain.schemas import (
     _brain_context_pack,
     _candidate_files,
     _execution_policy,
+    _extract_provenance,
     _goal,
     _items,
     _project,
@@ -107,4 +108,5 @@ def reflect(payload: dict[str, Any]) -> BrainResponse:
         execution_policy=_execution_policy(payload, autonomy="reflection_only"),
         brain_context_pack=_brain_context_pack(payload),
         reflection_report=report,
+        provenance=_extract_provenance(payload),
     )

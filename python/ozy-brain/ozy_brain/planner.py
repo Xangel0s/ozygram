@@ -11,6 +11,7 @@ from ozy_brain.schemas import (
     _candidate_files,
     _combined_memory_titles,
     _execution_policy,
+    _extract_provenance,
     _goal,
     _safe_mcp_calls,
     _validation_commands,
@@ -82,4 +83,5 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
         structured_plan=_structured_plan(payload),
         execution_policy=_execution_policy(payload),
         brain_context_pack=_brain_context_pack(payload),
+        provenance=_extract_provenance(payload),
     )

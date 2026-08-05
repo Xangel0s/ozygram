@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 
+BRAIN_VERSION = "0.2.0"
+BRAIN_SCHEMA_VERSION = "v1"
+
+
 @dataclass
 class BrainResponse:
     action: str
@@ -20,6 +24,9 @@ class BrainResponse:
     reflection_report: dict[str, Any] | None = None
     risk_assessment: dict[str, Any] | None = None
     mental_model: dict[str, Any] | None = None
+    provenance: list[dict[str, Any]] | None = None
+    brain_version: str = BRAIN_VERSION
+    brain_schema_version: str = BRAIN_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -37,7 +44,11 @@ class BrainResponse:
             "reflection_report": self.reflection_report or {},
             "risk_assessment": self.risk_assessment or {},
             "mental_model": self.mental_model or {},
+            "provenance": self.provenance or [],
+            "brain_version": self.brain_version,
+            "brain_schema_version": self.brain_schema_version,
         }
+
 
 
 def _items(payload: dict[str, Any], key: str) -> list[Any]:
@@ -186,6 +197,7 @@ def _validation_commands(payload: dict[str, Any]) -> list[str]:
 def _execution_policy(payload: dict[str, Any], autonomy: str = "advisory") -> dict[str, Any]:
     return {
         "mode": autonomy,
+        "safe_mode": True,
         "can_do_without_confirmation": [
             "read indexed context and graph summary",
             "rank memories and cluster past lessons",
@@ -259,3 +271,23 @@ def _base_risks(payload: dict[str, Any]) -> list[str]:
     if not risks:
         risks.append("Context drift risk; verify current repo state before changing files.")
     return risks
+
+
+def _extract_provenance(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    provenance: list[dict[str, Any]] = []
+    git_context = payload.get("git_context") if isinstance(payload.get("git_context"), dict) else {}
+    recent_commits = git_context.get("recent_commits")
+    commit_hash = ""
+    if isinstance(recent_commits, list) and len(recent_commits) > 0 and isinstance(recent_commits[0], dict):
+        commit_hash = str(recent_commits[0].get("id") or recent_commits[0].get("hash") or "")[:7]
+
+    candidate_scores = _candidate_file_scores(payload, limit=5)
+    for cs in candidate_scores:
+        provenance.append({
+            "path": cs["path"],
+            "score": cs["score"],
+            "reasons": cs["reasons"],
+            "commit_hash": commit_hash,
+        })
+    return provenance
+
