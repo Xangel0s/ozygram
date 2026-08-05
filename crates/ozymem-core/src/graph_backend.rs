@@ -2922,6 +2922,17 @@ impl SqliteBackend {
 // Shared helpers: project DB path resolution, .gitignore, legacy detection
 // ---------------------------------------------------------------------------
 
+pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", stripped))
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path
+    }
+}
+
 /// Resolve the project-scoped database path.
 ///
 /// Canonicalizes `project_path`, creates `.ozymem/` inside it,
@@ -2932,7 +2943,8 @@ pub fn resolve_project_db_path(project_path: &Path) -> Result<PathBuf> {
     }
     let canonical = project_path
         .canonicalize()
-        .unwrap_or_else(|_| project_path.to_path_buf());
+        .map(strip_unc_prefix)
+        .unwrap_or_else(|_| strip_unc_prefix(project_path.to_path_buf()));
     let db_dir = canonical.join(OZYMEM_DIR);
     std::fs::create_dir_all(&db_dir)
         .with_context(|| format!("failed to create `{}`", db_dir.display()))?;
@@ -3069,9 +3081,10 @@ impl GraphBackend {
     ///
     /// The DB is placed at `<project_path>/.ozymem/memory.db`.
     pub fn open_for_project(project_path: &Path) -> Result<Self> {
-        let db_path = resolve_project_db_path(project_path)?;
+        let clean_path = strip_unc_prefix(project_path.to_path_buf());
+        let db_path = resolve_project_db_path(&clean_path)?;
         let backend = Self::open(Some(&db_path.to_string_lossy()))?;
-        backend.set_project_path(Some(&project_path.to_string_lossy()));
+        backend.set_project_path(Some(&clean_path.to_string_lossy()));
         Ok(backend)
     }
 
