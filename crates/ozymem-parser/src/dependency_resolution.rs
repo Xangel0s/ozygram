@@ -152,15 +152,25 @@ fn find_workspace_root(current_file: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-fn normalize_absolute_path(path: &Path) -> Option<PathBuf> {
-    if path.is_absolute() {
-        return fs::canonicalize(path)
-            .ok()
-            .or_else(|| Some(path.to_path_buf()));
+fn strip_unc_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", stripped))
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path
     }
+}
 
-    let absolute = std::env::current_dir().ok()?.join(path);
-    fs::canonicalize(&absolute).ok().or(Some(absolute))
+fn normalize_absolute_path(path: &Path) -> Option<PathBuf> {
+    let p = if path.is_absolute() {
+        fs::canonicalize(path).ok().unwrap_or_else(|| path.to_path_buf())
+    } else {
+        let absolute = std::env::current_dir().ok()?.join(path);
+        fs::canonicalize(&absolute).ok().unwrap_or(absolute)
+    };
+    Some(strip_unc_prefix(p))
 }
 
 fn normalize_import_path(label: &str) -> String {
@@ -201,7 +211,7 @@ fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates
         .iter()
         .find(|candidate| candidate.is_file())
-        .cloned()
+        .map(|p| strip_unc_prefix(p.clone()))
 }
 
 #[cfg(test)]
@@ -243,7 +253,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            fs::canonicalize(root.join("src/router.rs")).expect("canonicalize")
+            strip_unc_prefix(fs::canonicalize(root.join("src/router.rs")).expect("canonicalize"))
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -275,7 +285,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            fs::canonicalize(root.join("src/domain.rs")).expect("canonicalize")
+            strip_unc_prefix(fs::canonicalize(root.join("src/domain.rs")).expect("canonicalize"))
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -314,7 +324,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            fs::canonicalize(root.join("crates/ozymem-core/src/lib.rs")).expect("canonicalize")
+            strip_unc_prefix(fs::canonicalize(root.join("crates/ozymem-core/src/lib.rs")).expect("canonicalize"))
         );
         let _ = fs::remove_dir_all(&root);
     }
