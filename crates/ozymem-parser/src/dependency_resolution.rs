@@ -165,10 +165,9 @@ fn strip_unc_prefix(path: PathBuf) -> PathBuf {
 
 fn normalize_absolute_path(path: &Path) -> Option<PathBuf> {
     let p = if path.is_absolute() {
-        fs::canonicalize(path).ok().unwrap_or_else(|| path.to_path_buf())
+        path.to_path_buf()
     } else {
-        let absolute = std::env::current_dir().ok()?.join(path);
-        fs::canonicalize(&absolute).ok().unwrap_or(absolute)
+        std::env::current_dir().ok()?.join(path)
     };
     Some(strip_unc_prefix(p))
 }
@@ -253,7 +252,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            strip_unc_prefix(fs::canonicalize(root.join("src/router.rs")).expect("canonicalize"))
+            strip_unc_prefix(root.join("src/router.rs"))
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -285,7 +284,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            strip_unc_prefix(fs::canonicalize(root.join("src/domain.rs")).expect("canonicalize"))
+            strip_unc_prefix(root.join("src/domain.rs"))
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -324,7 +323,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            strip_unc_prefix(fs::canonicalize(root.join("crates/ozymem-core/src/lib.rs")).expect("canonicalize"))
+            strip_unc_prefix(root.join("crates/ozymem-core/src/lib.rs"))
         );
         let _ = fs::remove_dir_all(&root);
     }
