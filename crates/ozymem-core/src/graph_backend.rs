@@ -53,6 +53,63 @@ pub struct LessonEntry {
     pub created_at: String,
     pub stale: i64,
     pub stale_reason: Option<String>,
+    #[serde(default = "default_confidence")]
+    pub confidence_score: f64,
+    #[serde(default)]
+    pub touch_count: i64,
+    #[serde(default)]
+    pub last_verified_at: String,
+}
+
+fn default_confidence() -> f64 {
+    1.0
+}
+
+impl LessonEntry {
+    pub fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            file_path: row.get(1)?,
+            symbol_name: row.get(2)?,
+            error_context: row.get(3)?,
+            solution: row.get(4)?,
+            kind: row.get(5)?,
+            created_at: row.get(6)?,
+            stale: row.get(7)?,
+            stale_reason: row.get(8)?,
+            confidence_score: row.get::<_, Option<f64>>(9).unwrap_or(None).unwrap_or(1.0),
+            touch_count: row.get::<_, Option<i64>>(10).unwrap_or(None).unwrap_or(0),
+            last_verified_at: row.get::<_, Option<String>>(11).unwrap_or(None).unwrap_or_default(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrunedLessonInfo {
+    pub id: i64,
+    pub file_path: String,
+    pub symbol_name: String,
+    pub solution: String,
+    pub confidence_score: f64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneReport {
+    pub active_count: usize,
+    pub stale_count: usize,
+    pub pruned_count: usize,
+    pub pruned_lessons: Vec<PrunedLessonInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriftAlert {
+    pub file_path: String,
+    pub convention_id: i64,
+    pub rule_snippet: String,
+    pub diff_snippet: String,
+    pub severity: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +320,9 @@ impl GraphBackend {
                 created_at TEXT NOT NULL,
                 tenant_id TEXT NOT NULL,
                 workspace_root TEXT NOT NULL DEFAULT '',
+                confidence_score REAL NOT NULL DEFAULT 1.0,
+                touch_count INTEGER NOT NULL DEFAULT 0,
+                last_verified_at TEXT NOT NULL DEFAULT '',
                 kind TEXT NOT NULL DEFAULT 'lesson'
                 CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule'))
             );
@@ -425,6 +485,22 @@ impl GraphBackend {
         ) {
             if !e.to_string().contains("duplicate column") {
                 return Err(e.into());
+            }
+        }
+
+        // Migrate v5→v6: add confidence_score, touch_count, last_verified_at to lessons
+        for col in &[
+            "confidence_score REAL NOT NULL DEFAULT 1.0",
+            "touch_count INTEGER NOT NULL DEFAULT 0",
+            "last_verified_at TEXT NOT NULL DEFAULT ''",
+        ] {
+            if let Err(e) = inner
+                .sqlite
+                .execute(&format!("ALTER TABLE lessons ADD COLUMN {col}"), [])
+            {
+                if !e.to_string().contains("duplicate column") {
+                    return Err(e.into());
+                }
             }
         }
 
@@ -1343,6 +1419,218 @@ impl GraphBackend {
         }
     }
 
+    /// Extracts API route definitions across project source files or a specific file.
+    pub fn map_api_routes(&self, file_path: Option<&str>) -> Result<Vec<ozymem_parser::ApiRouteDefinition>> {
+        let mut routes = Vec::new();
+        let target_files: Vec<(String, String)> = {
+            let inner = self.inner.lock().unwrap();
+            if let Some(target) = file_path {
+                let norm = crate::normalize_path(target);
+                let mut stmt = inner.sqlite.prepare(
+                    "SELECT path, language FROM files WHERE path = ?1 AND tenant_id = ?2",
+                )?;
+                let rows = stmt.query_map(params![norm, self.tenant_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.filter_map(|r| r.ok()).collect()
+            } else {
+                let mut stmt = inner.sqlite.prepare(
+                    "SELECT path, language FROM files WHERE tenant_id = ?1 ORDER BY path ASC",
+                )?;
+                let rows = stmt.query_map(params![self.tenant_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.filter_map(|r| r.ok()).collect()
+            }
+        };
+
+        for (path_str, _lang_str) in target_files {
+            let p = Path::new(&path_str);
+            if p.exists() {
+                if let Ok(source) = std::fs::read_to_string(p) {
+                    let lang = detect_language(p);
+                    let file_routes = ozymem_parser::parse_api_routes(&source, &path_str, lang);
+                    routes.extend(file_routes);
+                }
+            }
+        }
+
+        Ok(routes)
+    }
+
+    /// Marks a lesson as recently verified / used, boosting its confidence score.
+    pub fn touch_lesson(&self, lesson_id: i64) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let inner = self.inner.lock().unwrap();
+        inner.sqlite.execute(
+            "UPDATE lessons SET touch_count = touch_count + 1, last_verified_at = ?1, confidence_score = MIN(1.0, confidence_score + 0.1) WHERE id = ?2 AND tenant_id = ?3",
+            params![now, lesson_id, self.tenant_id],
+        )?;
+        Ok(())
+    }
+
+    /// Evaluates staleness and confidence score of stored lessons.
+    /// Returns a PruneReport summarizing active, stale, and low-confidence memories.
+    pub fn rank_and_prune_lessons(&self, min_confidence: f64) -> Result<PruneReport> {
+        let now_str = chrono::Utc::now().to_rfc3339();
+        let mut active_count = 0;
+        let mut stale_count = 0;
+        let mut pruned_count = 0;
+        let mut pruned_lessons = Vec::new();
+
+        let lessons_to_evaluate: Vec<(i64, String, String, String, i64, Option<String>, f64, i64)> = {
+            let inner = self.inner.lock().unwrap();
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT id, file_path, symbol_name, solution, stale, stale_reason, confidence_score, touch_count FROM lessons WHERE tenant_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![self.tenant_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            })?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        let inner = self.inner.lock().unwrap();
+        for (id, file_path, symbol_name, solution, stale, stale_reason, mut confidence, touches) in lessons_to_evaluate {
+            let mut reasons = Vec::new();
+            if stale != 0 {
+                confidence *= 0.5;
+                if let Some(r) = stale_reason {
+                    reasons.push(r);
+                } else {
+                    reasons.push("stale_marked".to_string());
+                }
+            }
+
+            // Check if file still exists on disk
+            let file_exists = Path::new(&file_path).exists();
+            if !file_exists {
+                confidence *= 0.3;
+                reasons.push("file_not_found".to_string());
+            } else if !symbol_name.is_empty() {
+                // Check if symbol exists in functions
+                let fn_exists: i64 = inner.sqlite.query_row(
+                    "SELECT COUNT(*) FROM functions WHERE file_path = ?1 AND name = ?2 AND tenant_id = ?3",
+                    params![file_path, symbol_name, self.tenant_id],
+                    |r| r.get(0),
+                ).unwrap_or(0);
+                if fn_exists == 0 {
+                    confidence *= 0.6;
+                    reasons.push("symbol_removed".to_string());
+                }
+            }
+
+            // Add touch bonus
+            if touches > 0 {
+                confidence = (confidence + (touches as f64 * 0.05)).min(1.0);
+            }
+
+            confidence = (confidence * 100.0).round() / 100.0;
+
+            inner.sqlite.execute(
+                "UPDATE lessons SET confidence_score = ?1, last_verified_at = ?2 WHERE id = ?3",
+                params![confidence, now_str, id],
+            )?;
+
+            if confidence >= min_confidence && stale == 0 && file_exists {
+                active_count += 1;
+            } else {
+                stale_count += 1;
+                if confidence < min_confidence {
+                    pruned_count += 1;
+                    pruned_lessons.push(PrunedLessonInfo {
+                        id,
+                        file_path,
+                        symbol_name,
+                        solution,
+                        confidence_score: confidence,
+                        reason: if reasons.is_empty() { "low_confidence".to_string() } else { reasons.join(", ") },
+                    });
+                }
+            }
+        }
+
+        Ok(PruneReport {
+            active_count,
+            stale_count,
+            pruned_count,
+            pruned_lessons,
+        })
+    }
+
+    /// Audits diff content or changed files against stored conventions and rules.
+    pub fn detect_code_drift(&self, changed_files: &[String], diff_content: &str) -> Result<Vec<DriftAlert>> {
+        let mut alerts = Vec::new();
+        let conventions: Vec<(i64, String, String, String, String)> = {
+            let inner = self.inner.lock().unwrap();
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT id, file_path, symbol_name, error_context, solution FROM lessons WHERE tenant_id = ?1 AND kind IN ('convention', 'module_rule') AND stale = 0",
+            )?;
+            let rows = stmt.query_map(params![self.tenant_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        if conventions.is_empty() {
+            return Ok(alerts);
+        }
+
+        for (id, file_path, _symbol, error_context, solution) in &conventions {
+            let rule_text = format!("{} {}", error_context, solution).to_lowercase();
+            let norm_file_path = crate::normalize_path(file_path);
+            let matches_file = changed_files.is_empty() || changed_files.iter().any(|f| {
+                let norm = crate::normalize_path(f);
+                norm == norm_file_path || norm_file_path.is_empty() || norm.contains(&norm_file_path) || norm_file_path.contains(&norm)
+            });
+
+            if matches_file && !diff_content.is_empty() {
+                let prohibited_terms = extract_prohibited_terms(&rule_text);
+                for line in diff_content.lines() {
+                    if line.starts_with('+') && !line.starts_with("+++") {
+                        let line_lower = line.to_lowercase();
+
+                        let is_violation = if !prohibited_terms.is_empty() {
+                            prohibited_terms.iter().any(|term| line_lower.contains(term))
+                        } else {
+                            let has_enforcement = rule_text.contains("never")
+                                || rule_text.contains("do not")
+                                || rule_text.contains("prohibited")
+                                || rule_text.contains("deprecated")
+                                || rule_text.contains("siempre")
+                                || rule_text.contains("always")
+                                || rule_text.contains("evitar")
+                                || rule_text.contains("forbidden");
+
+                            let matches_keyword = rule_text.split(|c: char| !c.is_alphanumeric() && c != '_').any(|word| {
+                                word.len() >= 3 && !matches!(word, "never" | "always" | "with" | "from" | "that" | "this" | "have" | "para" | "siempre" | "rule" | "standard" | "cents" | "price" | "prices") && line_lower.contains(word)
+                            });
+                            has_enforcement && matches_keyword
+                        };
+
+                        if is_violation {
+                            alerts.push(DriftAlert {
+                                file_path: file_path.clone(),
+                                convention_id: *id,
+                                rule_snippet: solution.clone(),
+                                diff_snippet: line.to_string(),
+                                severity: "warning".into(),
+                                description: format!("Diff line potentially conflicts with convention #{id}: {}", solution),
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(alerts)
+    }
+
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
         let inner = self.inner.lock().unwrap();
         let Some(&start) = inner.file_index.get(file_path) else {
@@ -2032,7 +2320,7 @@ impl McpBackend for GraphBackend {
             None => ("?3", "?4", String::new()),
         };
         let sql = format!(
-            "SELECT l.id, l.file_path, l.symbol_name, l.error_context, l.solution, l.kind, l.created_at, COALESCE(l.stale,0), l.stale_reason
+            "SELECT l.id, l.file_path, l.symbol_name, l.error_context, l.solution, l.kind, l.created_at, COALESCE(l.stale,0), l.stale_reason, COALESCE(l.confidence_score, 1.0), COALESCE(l.touch_count, 0), COALESCE(l.last_verified_at, '')
              FROM lessons l
              JOIN lessons_fts fts ON l.id = fts.rowid
              WHERE lessons_fts MATCH ?1 {}
@@ -2046,17 +2334,7 @@ impl McpBackend for GraphBackend {
         if kind.is_none() {
             if let Ok(mut stmt) = inner.sqlite.prepare(&sql) {
                 if let Ok(rows) = stmt.query_map(params![query, limit, tenant_id, root], |row| {
-                    Ok(LessonEntry {
-                        id: row.get(0)?,
-                        file_path: row.get(1)?,
-                        symbol_name: row.get(2)?,
-                        error_context: row.get(3)?,
-                        solution: row.get(4)?,
-                        kind: row.get(5)?,
-                        created_at: row.get(6)?,
-                        stale: row.get(7)?,
-                        stale_reason: row.get(8)?,
-                    })
+                    LessonEntry::from_row(row)
                 }) {
                     for row in rows.flatten() {
                         results.push(row);
@@ -2066,17 +2344,7 @@ impl McpBackend for GraphBackend {
         } else if let Some(k) = kind {
             if let Ok(mut stmt) = inner.sqlite.prepare(&sql) {
                 if let Ok(rows) = stmt.query_map(params![query, limit, k, tenant_id, root], |row| {
-                    Ok(LessonEntry {
-                        id: row.get(0)?,
-                        file_path: row.get(1)?,
-                        symbol_name: row.get(2)?,
-                        error_context: row.get(3)?,
-                        solution: row.get(4)?,
-                        kind: row.get(5)?,
-                        created_at: row.get(6)?,
-                        stale: row.get(7)?,
-                        stale_reason: row.get(8)?,
-                    })
+                    LessonEntry::from_row(row)
                 }) {
                     for row in rows.flatten() {
                         results.push(row);
@@ -2094,7 +2362,7 @@ impl McpBackend for GraphBackend {
                 None => (String::new(), "?4"),
             };
             let sql = format!(
-             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason
+             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
               FROM lessons
               WHERE tenant_id = ?1
                 AND stale = 0
@@ -2108,17 +2376,7 @@ impl McpBackend for GraphBackend {
                 if let Ok(mut stmt) = inner.sqlite.prepare(&sql) {
                     if let Ok(rows) =
                         stmt.query_map(params![self.tenant_id, like, limit, root], |row| {
-                            Ok(LessonEntry {
-                                id: row.get(0)?,
-                                file_path: row.get(1)?,
-                                symbol_name: row.get(2)?,
-                                error_context: row.get(3)?,
-                                solution: row.get(4)?,
-                                kind: row.get(5)?,
-                                created_at: row.get(6)?,
-                                stale: row.get(7)?,
-                                stale_reason: row.get(8)?,
-                            })
+                            LessonEntry::from_row(row)
                         })
                     {
                         for row in rows.flatten() {
@@ -2130,17 +2388,7 @@ impl McpBackend for GraphBackend {
                 if let Ok(mut stmt) = inner.sqlite.prepare(&sql) {
                     if let Ok(rows) =
                         stmt.query_map(params![self.tenant_id, like, limit, k, root], |row| {
-                            Ok(LessonEntry {
-                                id: row.get(0)?,
-                                file_path: row.get(1)?,
-                                symbol_name: row.get(2)?,
-                                error_context: row.get(3)?,
-                                solution: row.get(4)?,
-                                kind: row.get(5)?,
-                                created_at: row.get(6)?,
-                                stale: row.get(7)?,
-                                stale_reason: row.get(8)?,
-                            })
+                            LessonEntry::from_row(row)
                         })
                     {
                         for row in rows.flatten() {
@@ -2155,29 +2403,18 @@ impl McpBackend for GraphBackend {
     }
 
     async fn get_file_lessons(&self, file_path: &str) -> Result<Vec<LessonEntry>> {
+        let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = inner.sqlite.prepare(
-            "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason
+            "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
-             WHERE file_path = ?1 AND tenant_id = ?2 AND workspace_root = ?3
+             WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3 AND (workspace_root = ?4 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
         let results = stmt
             .query_map(
-                params![file_path, self.tenant_id, inner.workspace_root],
-                |row| {
-                    Ok(LessonEntry {
-                        id: row.get(0)?,
-                        file_path: row.get(1)?,
-                        symbol_name: row.get(2)?,
-                        error_context: row.get(3)?,
-                        solution: row.get(4)?,
-                        kind: row.get(5)?,
-                        created_at: row.get(6)?,
-                        stale: row.get(7)?,
-                        stale_reason: row.get(8)?,
-                    })
-                },
+                params![file_path, norm_path, self.tenant_id, inner.workspace_root],
+                |row| LessonEntry::from_row(row),
             )?
             .filter_map(|r| r.ok())
             .collect();
@@ -2189,29 +2426,18 @@ impl McpBackend for GraphBackend {
         file_path: &str,
         symbol_name: &str,
     ) -> Result<Vec<LessonEntry>> {
+        let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = inner.sqlite.prepare(
-            "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason
+            "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
-             WHERE file_path = ?1 AND symbol_name = ?2 AND tenant_id = ?3 AND workspace_root = ?4
+             WHERE (file_path = ?1 OR file_path = ?2) AND symbol_name = ?3 AND tenant_id = ?4 AND (workspace_root = ?5 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
         let results = stmt
             .query_map(
-                params![file_path, symbol_name, self.tenant_id, inner.workspace_root],
-                |row| {
-                    Ok(LessonEntry {
-                        id: row.get(0)?,
-                        file_path: row.get(1)?,
-                        symbol_name: row.get(2)?,
-                        error_context: row.get(3)?,
-                        solution: row.get(4)?,
-                        kind: row.get(5)?,
-                        created_at: row.get(6)?,
-                        stale: row.get(7)?,
-                        stale_reason: row.get(8)?,
-                    })
-                },
+                params![file_path, norm_path, symbol_name, self.tenant_id, inner.workspace_root],
+                |row| LessonEntry::from_row(row),
             )?
             .filter_map(|r| r.ok())
             .collect();
@@ -2224,7 +2450,7 @@ impl McpBackend for GraphBackend {
 
         let (sql, kind_clause) = match kind {
             Some(_) => (
-                "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason
+                "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
                  FROM lessons
                  WHERE tenant_id = ?1 AND kind = ?2 AND workspace_root = ?3
                  ORDER BY id DESC
@@ -2232,7 +2458,7 @@ impl McpBackend for GraphBackend {
                 true,
             ),
             None => (
-                "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason
+                "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
                  FROM lessons
                  WHERE tenant_id = ?1 AND workspace_root = ?2
                  ORDER BY id DESC
@@ -2247,19 +2473,7 @@ impl McpBackend for GraphBackend {
             let results = stmt
                 .query_map(
                     params![self.tenant_id, k, inner.workspace_root, limit],
-                    |row| {
-                        Ok(LessonEntry {
-                            id: row.get(0)?,
-                            file_path: row.get(1)?,
-                            symbol_name: row.get(2)?,
-                            error_context: row.get(3)?,
-                            solution: row.get(4)?,
-                            kind: row.get(5)?,
-                            created_at: row.get(6)?,
-                            stale: row.get(7)?,
-                            stale_reason: row.get(8)?,
-                        })
-                    },
+                    |row| LessonEntry::from_row(row),
                 )?
                 .filter_map(|r| r.ok())
                 .collect();
@@ -2269,19 +2483,7 @@ impl McpBackend for GraphBackend {
             let results = stmt
                 .query_map(
                     params![self.tenant_id, inner.workspace_root, limit],
-                    |row| {
-                        Ok(LessonEntry {
-                            id: row.get(0)?,
-                            file_path: row.get(1)?,
-                            symbol_name: row.get(2)?,
-                            error_context: row.get(3)?,
-                            solution: row.get(4)?,
-                            kind: row.get(5)?,
-                            created_at: row.get(6)?,
-                            stale: row.get(7)?,
-                            stale_reason: row.get(8)?,
-                        })
-                    },
+                    |row| LessonEntry::from_row(row),
                 )?
                 .filter_map(|r| r.ok())
                 .collect();
@@ -2451,30 +2653,9 @@ impl GraphBackend {
         )?;
 
         let rows = stmt.query_map(params![self.tenant_id, inner.workspace_root], |row| {
-            let id: i64 = row.get(0)?;
-            let file_path: String = row.get(1)?;
-            let symbol_name: String = row.get(2)?;
-            let error_context: String = row.get(3)?;
-            let solution: String = row.get(4)?;
-            let kind: String = row.get(5)?;
-            let created_at: String = row.get(6)?;
-            let stale: i64 = row.get(7)?;
-            let stale_reason: Option<String> = row.get(8)?;
             let embedding_blob: Option<Vec<u8>> = row.get(9)?;
-            Ok((
-                LessonEntry {
-                    id,
-                    file_path,
-                    symbol_name,
-                    error_context,
-                    solution,
-                    kind,
-                    created_at,
-                    stale,
-                    stale_reason,
-                },
-                embedding_blob,
-            ))
+            let lesson = LessonEntry::from_row(row)?;
+            Ok((lesson, embedding_blob))
         })?;
 
         let mut scored: Vec<SimilarLesson> = rows
@@ -3125,6 +3306,26 @@ pub fn resolve_project_db_path(project_path: &Path) -> Result<PathBuf> {
     let db_path = db_dir.join(MEMORY_DB);
     eprintln!("[ozymem] DB path: {}", db_path.display());
     Ok(db_path)
+}
+
+fn extract_prohibited_terms(rule_text: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let lower = rule_text.to_lowercase();
+    for trigger in &["never use ", "never ", "do not use ", "do not ", "prohibited ", "evitar ", "forbidden "] {
+        if let Some(pos) = lower.find(trigger) {
+            let rest = &lower[pos + trigger.len()..];
+            let clause = rest.split(|c| c == ',' || c == '.' || c == ';').next().unwrap_or(rest);
+            let clause = clause.split("always").next().unwrap_or(clause);
+            let clause = clause.split("instead").next().unwrap_or(clause);
+            for word in clause.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                let w = word.trim();
+                if w.len() >= 2 && !matches!(w, "the" | "a" | "an" | "for" | "to" | "in" | "on" | "with" | "and" | "or" | "use" | "using" | "rule" | "standard" | "point") {
+                    terms.push(w.to_string());
+                }
+            }
+        }
+    }
+    terms
 }
 
 /// Ensure `.ozymem/` is listed in the project's `.gitignore`.

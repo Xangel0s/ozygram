@@ -447,6 +447,40 @@ async fn handle_request(
                     }),
                 },
                 mcp_common::ToolDefinition {
+                    name: "ozymem_map_api_routes",
+                    description: "Extracts HTTP API endpoints, methods, parameters, and DTOs across the project (FastAPI, Express, Axum).",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Optional specific file to extract routes from" }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "detect_code_drift",
+                    description: "Audits code changes or diff against stored architecture rules and conventions, alerting if new code violates saved patterns.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "changed_files": { "type": "array", "items": { "type": "string" } },
+                            "diff_content": { "type": "string" }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "rank_memories",
+                    description: "Evaluates memory staleness and confidence scores, ranking active memories and identifying stale or deprecated ones.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "min_confidence": { "type": "number", "default": 0.5 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "ozy_project",
                     description: "Unified project/package tool: registered projects, package inspection, scripts, refresh index, stale projects, and ignore rules.",
                     input_schema: json!({
@@ -2257,12 +2291,76 @@ async fn handle_request(
                             )?
                         }
                         "architecture_report" => build_architecture_report(backend).await?,
+                        "api_routes" => {
+                            let file_path = tool_call.arguments.get("file_path").and_then(Value::as_str);
+                            let routes = backend.map_api_routes(file_path)?;
+                            serde_json::to_string_pretty(&routes)?
+                        }
                         _ => format_summary(&backend.get_graph_summary().await?),
                     };
                     ToolCallResult {
                         content: vec![ContentBlock {
                             kind: "text",
                             text: body,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "ozymem_map_api_routes" => {
+                    backend.reload_if_stale();
+                    let file_path = tool_call.arguments.get("file_path").and_then(Value::as_str);
+                    let routes = backend.map_api_routes(file_path)?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: serde_json::to_string_pretty(&routes)?,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "detect_code_drift" => {
+                    backend.reload_if_stale();
+                    let changed_files: Vec<String> = tool_call
+                        .arguments
+                        .get("changed_files")
+                        .and_then(Value::as_array)
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(Value::as_str)
+                                .map(|s| s.to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let diff_content = tool_call
+                        .arguments
+                        .get("diff_content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let alerts = backend.detect_code_drift(&changed_files, diff_content)?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: if alerts.is_empty() {
+                                "No code drift or convention violations detected.".to_string()
+                            } else {
+                                serde_json::to_string_pretty(&alerts)?
+                            },
+                        }],
+                        is_error: None,
+                    }
+                }
+                "rank_memories" => {
+                    backend.reload_if_stale();
+                    let min_confidence = tool_call
+                        .arguments
+                        .get("min_confidence")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.5);
+                    let report = backend.rank_and_prune_lessons(min_confidence)?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: serde_json::to_string_pretty(&report)?,
                         }],
                         is_error: None,
                     }

@@ -1,7 +1,9 @@
 mod dependency_resolution;
+pub mod api_routes;
 pub mod contract_parser;
 pub mod excel_parser;
 
+pub use api_routes::{parse_api_routes, parse_axum_routes, parse_express_routes, parse_fastapi_routes, ApiRouteDefinition};
 pub use contract_parser::{parse_export_contracts, ExportContractHint};
 pub use dependency_resolution::{is_internal_dependency_hint, resolve_dependency_target};
 pub use excel_parser::{

@@ -6,6 +6,7 @@ pub mod mcp_common;
 pub mod registry;
 pub mod sync;
 
+pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};
 pub use mcp_common::McpBackend;
 pub use sync::{DeltaFileEvent, DeltaIndexResult, LiveWatcher};
 
