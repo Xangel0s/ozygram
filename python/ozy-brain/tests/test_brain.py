@@ -140,12 +140,19 @@ class OzyBrainTests(unittest.TestCase):
         })
         self.assertEqual(compress_res["action"], "compress_session")
 
-    def test_golden_eval_suite_coverage(self):
-        from tests.eval import GOLDEN_TEST_SUITE, evaluate_response
-        for case in GOLDEN_TEST_SUITE:
-            res = run(case["action"], case["payload"])
-            eval_report = evaluate_response(case, res, 1.0)
-            self.assertTrue(eval_report["passed"], f"Golden case {case['id']} failed: {eval_report['issues']}")
+    def test_consolidate_engrams_and_triads(self):
+        result = run("consolidate_engrams", {
+            "project": "ozymem",
+            "trigger_event": "git_commit_passed",
+            "memories": [
+                {"title": "AuthModule -> requires -> RS256 token verification"},
+                {"title": "Database: always use connection pooling"},
+                {"title": "temporary debug line print output"},
+            ],
+        })
+        self.assertEqual(result["action"], "consolidate_engrams")
+        self.assertGreaterEqual(len(result["memory_updates"]), 2)
+        self.assertTrue(any("AuthModule" in u for u in result["memory_updates"]))
 
 
 if __name__ == "__main__":

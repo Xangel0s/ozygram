@@ -66,6 +66,114 @@ def recall_deep(payload: dict[str, Any]) -> BrainResponse:
     )
 
 
+def extract_knowledge_triads(text: str) -> list[dict[str, str]]:
+    """Extracts [Subject -> Relation/Rule -> Object/Solution] knowledge triads from text."""
+    triads: list[dict[str, str]] = []
+    lines = [line.strip() for line in text.replace(";", "\n").splitlines() if line.strip()]
+
+    for line in lines:
+        # Pattern 1: Arrow notation A -> B -> C or A -> B
+        if "->" in line:
+            parts = [p.strip() for p in line.split("->") if p.strip()]
+            if len(parts) >= 3:
+                triads.append({"subject": parts[0], "relation": parts[1], "object": parts[2]})
+            elif len(parts) == 2:
+                triads.append({"subject": parts[0], "relation": "requires", "object": parts[1]})
+            continue
+
+        # Pattern 2: Colon notation Subject: Rule / Solution
+        if ":" in line:
+            parts = line.split(":", 1)
+            subj = parts[0].strip()
+            rest = parts[1].strip()
+            relation = "must" if any(w in rest.lower() for w in ["never", "always", "must", "should"]) else "relates_to"
+            triads.append({"subject": subj, "relation": relation, "object": rest})
+            continue
+
+        # Pattern 3: Heuristic keyword extraction
+        words = line.split()
+        if len(words) >= 4:
+            triads.append({
+                "subject": words[0],
+                "relation": "standard",
+                "object": " ".join(words[1:]),
+            })
+
+    return triads
+
+
+def classify_memory_tier(text: str, trigger_event: str | None = None) -> dict[str, Any]:
+    """Classifies memory into Working Cache (Layer 1) vs Engram Store (Layer 2)."""
+    is_consolidation_trigger = bool(
+        trigger_event and any(t in trigger_event.lower() for t in ["commit", "test_pass", "bugfix", "release", "milestone"])
+    )
+
+    has_architectural_rule = any(
+        kw in text.lower() for kw in ["always", "never", "standard", "convention", "schema", "architecture", "security", "jwt", "dto"]
+    )
+
+    if is_consolidation_trigger or has_architectural_rule:
+        tier = "Engram Store (Layer 2 - Long-Term)"
+        action_needed = "consolidate_to_sqlite"
+        retention = "permanent"
+    else:
+        tier = "Working Cache (Layer 1 - Ephemeral)"
+        action_needed = "keep_in_memory"
+        retention = "session_only"
+
+    return {
+        "tier": tier,
+        "action_needed": action_needed,
+        "retention": retention,
+        "is_consolidated": action_needed == "consolidate_to_sqlite",
+    }
+
+
+def consolidate_engrams(payload: dict[str, Any]) -> BrainResponse:
+    """Processes working memories into structured [Subject -> Relation -> Object] Engram Store entries."""
+    raw_memories = _combined_memory_titles(payload, limit=20)
+    trigger = payload.get("trigger_event") or payload.get("event")
+
+    triads: list[dict[str, str]] = []
+    consolidated_entries: list[dict[str, Any]] = []
+
+    for mem in raw_memories:
+        extracted = extract_knowledge_triads(mem)
+        triads.extend(extracted)
+        tier_info = classify_memory_tier(mem, trigger)
+        if tier_info["is_consolidated"]:
+            consolidated_entries.append({
+                "source": mem,
+                "tier": tier_info["tier"],
+                "triads": extracted,
+            })
+
+    plan_steps = [
+        f"Consolidation trigger: {trigger or 'manual_eval'}",
+        f"Total knowledge triads extracted: {len(triads)}",
+        f"Promoted to Engram Store (L2): {len(consolidated_entries)} of {len(raw_memories)}",
+    ]
+    for c in consolidated_entries[:5]:
+        plan_steps.append(f"- [Engram L2] {c['source'][:75]}...")
+
+    return BrainResponse(
+        action="consolidate_engrams",
+        summary=_base_summary("2-layer memory consolidation", payload),
+        plan=plan_steps,
+        risks=["Ensure consolidated rules reflect verified architectural requirements, not transient bugs."],
+        recommendations=[
+            "Use ozymem record_convention for architectural invariants.",
+            "Use ozymem record_lesson for bugfix troubleshooting patterns.",
+        ],
+        memory_updates=[c["source"] for c in consolidated_entries],
+        confidence=0.88 if consolidated_entries else 0.50,
+        suggested_mcp_calls=_safe_mcp_calls(payload),
+        execution_policy=_execution_policy(payload, autonomy="consolidation"),
+        brain_context_pack=_brain_context_pack(payload),
+        provenance=_extract_provenance(payload),
+    )
+
+
 def rank_memories(payload: dict[str, Any]) -> BrainResponse:
     """Ranks and clusters raw memories based on relevance and topic stability."""
     raw_memories = _combined_memory_titles(payload, limit=20)
@@ -89,3 +197,4 @@ def rank_memories(payload: dict[str, Any]) -> BrainResponse:
         brain_context_pack=_brain_context_pack(payload),
         provenance=_extract_provenance(payload),
     )
+

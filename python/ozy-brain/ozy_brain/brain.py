@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ozy_brain.memory import rank_memories, recall_deep
+from ozy_brain.memory import consolidate_engrams, rank_memories, recall_deep
 from ozy_brain.patterns import detect_patterns, suggest_next_steps
 from ozy_brain.planner import plan
 from ozy_brain.reflector import reflect
@@ -16,6 +16,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "analyze_failure": reflect,
     "recall_deep": recall_deep,
     "rank_memories": rank_memories,
+    "consolidate_engrams": consolidate_engrams,
     "risk_review": risk_review,
     "build_mental_model": build_mental_model,
     "summarize_project": summarize_project,
