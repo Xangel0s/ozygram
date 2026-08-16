@@ -1,6 +1,7 @@
 //! petgraph (RAM) + SQLite (disco) backend for Ozymem MCP.
 
 use crate::mcp_common::McpBackend;
+use crate::sync::{check_noise_or_huge_file, DEFAULT_MAX_DELTA_FILE_BYTES, DeltaIndexResult, NoiseFilterDecision};
 use crate::{FileGraphContext, GraphSummary, StoredFunction};
 use anyhow::{Context, Result};
 use ozymem_parser::{
@@ -225,6 +226,7 @@ impl GraphBackend {
                 mtime TEXT NOT NULL DEFAULT '',
                 tenant_id TEXT NOT NULL,
                 workspace_root TEXT NOT NULL DEFAULT '',
+                sha256 TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (path, tenant_id)
             );
 
@@ -413,6 +415,16 @@ impl GraphBackend {
                 if !e.to_string().contains("duplicate column") {
                     return Err(e.into());
                 }
+            }
+        }
+
+        // Migrate v4→v5: add sha256 column to files for delta indexing
+        if let Err(e) = inner.sqlite.execute(
+            "ALTER TABLE files ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''",
+            [],
+        ) {
+            if !e.to_string().contains("duplicate column") {
+                return Err(e.into());
             }
         }
 
@@ -1039,10 +1051,16 @@ impl GraphBackend {
                 }
             };
 
+            let sha256_hash = {
+                let mut hasher = Sha256::new();
+                hasher.update(source.as_bytes());
+                hex::encode(hasher.finalize())
+            };
+
             let inner = self.inner.lock().unwrap();
             inner.sqlite.execute(
-                "INSERT OR REPLACE INTO files (path, language, strategy, mtime, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![abs_path, parsed.language, parsed.strategy.as_str(), mtime, self.tenant_id, inner.workspace_root],
+                "INSERT OR REPLACE INTO files (path, language, strategy, mtime, tenant_id, workspace_root, sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![abs_path, parsed.language, parsed.strategy.as_str(), mtime, self.tenant_id, inner.workspace_root, sha256_hash],
             )?;
 
             for fn_data in &parsed.functions {
@@ -1167,6 +1185,162 @@ impl GraphBackend {
         inner_w.file_index = file_index;
 
         Ok(())
+    }
+
+    /// Incrementally indexes a single file if modified (Live Delta Indexing).
+    /// Skips files that match ignore patterns, noise dirs, minified/lockfiles, or unchanged SHA-256.
+    pub fn index_file_delta(&self, file_path: &Path, project_root: &Path) -> Result<DeltaIndexResult> {
+        // 1. Noise, Lockfile, Minified, Size limit check
+        match check_noise_or_huge_file(file_path, DEFAULT_MAX_DELTA_FILE_BYTES) {
+            NoiseFilterDecision::Process => {}
+            NoiseFilterDecision::NoiseDir
+            | NoiseFilterDecision::MinifiedOrBundle
+            | NoiseFilterDecision::LockFile
+            | NoiseFilterDecision::LargeOrBinaryData => {
+                return Ok(DeltaIndexResult::SkippedNoise);
+            }
+            NoiseFilterDecision::ExceedsSizeLimit(size_bytes) => {
+                return Ok(DeltaIndexResult::SkippedTooLarge { size_bytes });
+            }
+        }
+
+        // 2. Binary file check
+        if is_binary_file(file_path) {
+            let abs_path = crate::normalize_path(&file_path.to_string_lossy());
+            if ozymem_parser::is_excel_template_candidate(&abs_path) {
+                if let Ok(Some(meta)) = ozymem_parser::parse_excel_template(file_path, &abs_path) {
+                    let _ = self.record_excel_template(&meta);
+                }
+            }
+            return Ok(DeltaIndexResult::SkippedBinary);
+        }
+
+        // 3. Ignore patterns check
+        let ignore_patterns = load_ignore_patterns(project_root);
+        if !ignore_patterns.is_empty() && path_matches_ignore(file_path, &ignore_patterns, project_root) {
+            return Ok(DeltaIndexResult::SkippedNoise);
+        }
+
+        // 4. Read source content and calculate SHA-256
+        let source = match std::fs::read_to_string(file_path) {
+            Ok(s) => s,
+            Err(_) => return Ok(DeltaIndexResult::SkippedNoise),
+        };
+
+        let sha256_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(source.as_bytes());
+            hex::encode(hasher.finalize())
+        };
+
+        let abs_path = crate::normalize_path(&file_path.to_string_lossy());
+        let mtime = file_mtime(file_path).unwrap_or_default();
+
+        // 5. Compare with existing SHA-256 in SQLite
+        {
+            let inner = self.inner.lock().unwrap();
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT sha256 FROM files WHERE path = ?1 AND tenant_id = ?2",
+            )?;
+            let mut rows = stmt.query(params![abs_path, self.tenant_id])?;
+            if let Some(row) = rows.next()? {
+                let existing_sha: String = row.get(0)?;
+                if !existing_sha.is_empty() && existing_sha == sha256_hash {
+                    return Ok(DeltaIndexResult::Unchanged);
+                }
+            }
+        }
+
+        // 6. Parse AST
+        let lang = detect_language(file_path);
+        let parsed = match parse_source(&abs_path, lang, &source) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[delta] parse error for {abs_path}: {e}");
+                return Ok(DeltaIndexResult::SkippedNoise);
+            }
+        };
+
+        let hints = extract_dependency_hints(&abs_path, lang, &source).unwrap_or_default();
+        let mut resolved_deps: Vec<String> = Vec::new();
+        for hint in &hints {
+            if is_internal_dependency_hint(hint) {
+                if let Some(target) = resolve_dependency_target(hint, &abs_path) {
+                    resolved_deps.push(crate::normalize_path(&target.to_string_lossy()));
+                }
+            }
+        }
+
+        // 7. Update SQLite atomically
+        {
+            let inner = self.inner.lock().unwrap();
+            inner.sqlite.execute(
+                "DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            )?;
+            inner.sqlite.execute(
+                "DELETE FROM file_dependencies WHERE origin_path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            )?;
+
+            inner.sqlite.execute(
+                "INSERT OR REPLACE INTO files (path, language, strategy, mtime, tenant_id, workspace_root, sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![abs_path, parsed.language, parsed.strategy.as_str(), mtime, self.tenant_id, inner.workspace_root, sha256_hash],
+            )?;
+
+            for fn_data in &parsed.functions {
+                let kind_str = match fn_data.kind {
+                    SymbolKind::Function => "Function",
+                    SymbolKind::Class => "Class",
+                };
+                inner.sqlite.execute(
+                    "INSERT OR REPLACE INTO functions (name, kind, start_line, end_line, strategy, file_path, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![fn_data.name, kind_str, fn_data.start_line as i64, fn_data.end_line as i64, parsed.strategy.as_str(), abs_path, self.tenant_id, inner.workspace_root],
+                )?;
+            }
+
+            for dep in &resolved_deps {
+                inner.sqlite.execute(
+                    "INSERT OR IGNORE INTO file_dependencies (origin_path, destination_path, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4)",
+                    params![abs_path, dep, self.tenant_id, inner.workspace_root],
+                )?;
+            }
+        }
+
+        // 8. Rebuild graph representation
+        self.rebuild_graph()?;
+
+        Ok(DeltaIndexResult::Indexed {
+            symbols: parsed.functions.len(),
+            dependencies: resolved_deps.len(),
+        })
+    }
+
+    /// Removes a file and its relations from SQLite and in-memory graph (Delta Indexing).
+    pub fn remove_file_delta(&self, file_path: &Path, _project_root: &Path) -> Result<bool> {
+        let abs_path = crate::normalize_path(&file_path.to_string_lossy());
+        let affected = {
+            let inner = self.inner.lock().unwrap();
+            inner.sqlite.execute(
+                "DELETE FROM file_dependencies WHERE (origin_path = ?1 OR destination_path = ?1) AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            )?;
+            inner.sqlite.execute(
+                "DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            )?;
+            inner.sqlite.execute(
+                "DELETE FROM files WHERE path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            )?
+        };
+
+        if affected > 0 {
+            self.rebuild_graph()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {

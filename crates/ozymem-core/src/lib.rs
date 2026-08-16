@@ -4,8 +4,10 @@ pub mod git_backend;
 pub mod graph_backend;
 pub mod mcp_common;
 pub mod registry;
+pub mod sync;
 
 pub use mcp_common::McpBackend;
+pub use sync::{DeltaFileEvent, DeltaIndexResult, LiveWatcher};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredFunction {
