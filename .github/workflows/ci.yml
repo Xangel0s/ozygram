@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-python-version: '3.12'
+          python-version: '3.12'
 
       - name: Run Python Unit Tests
         run: python -m unittest discover -s python/ozy-brain/tests -v
@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
