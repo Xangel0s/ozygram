@@ -1631,6 +1631,96 @@ impl GraphBackend {
         Ok(alerts)
     }
 
+    /// Synchronous version of recent_lessons for fast bundle export / tooling.
+    pub fn recent_lessons_sync(&self, kind: Option<&str>, limit: usize) -> Result<Vec<LessonEntry>> {
+        let inner = self.inner.lock().unwrap();
+        let limit = (limit as i64).min(10000).max(1);
+
+        let (sql, kind_clause) = match kind {
+            Some(_) => (
+                "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
+                 FROM lessons
+                 WHERE tenant_id = ?1 AND kind = ?2 AND (workspace_root = ?3 OR workspace_root = '')
+                 ORDER BY id DESC
+                 LIMIT ?4".to_string(),
+                true,
+            ),
+            None => (
+                "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
+                 FROM lessons
+                 WHERE tenant_id = ?1 AND (workspace_root = ?2 OR workspace_root = '')
+                 ORDER BY id DESC
+                 LIMIT ?3".to_string(),
+                false,
+            ),
+        };
+
+        if kind_clause {
+            let mut stmt = inner.sqlite.prepare(&sql)?;
+            let k = kind.unwrap();
+            let results = stmt
+                .query_map(
+                    params![self.tenant_id, k, inner.workspace_root, limit],
+                    |row| LessonEntry::from_row(row),
+                )?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok(results)
+        } else {
+            let mut stmt = inner.sqlite.prepare(&sql)?;
+            let results = stmt
+                .query_map(
+                    params![self.tenant_id, inner.workspace_root, limit],
+                    |row| LessonEntry::from_row(row),
+                )?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok(results)
+        }
+    }
+
+    /// Synchronous record_entry for importing bundles and fast synchronous scripting.
+    pub fn record_entry_sync(
+        &self,
+        file_path: &str,
+        symbol_name: Option<&str>,
+        error_context: &str,
+        solution: &str,
+        kind: &str,
+    ) -> Result<()> {
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
+
+        let text = format!("{} {}", error_context, solution);
+        let (embedding_bytes, _model) = self.embed_text(&[&text]);
+        let has_embedding = embedding_bytes.is_some();
+
+        {
+            let inner = self.inner.lock().unwrap();
+            inner.sqlite.execute(
+                "INSERT INTO lessons (file_path, symbol_name, error_context, solution, created_at, tenant_id, kind, workspace_root, embedding, embedding_model) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![file_path, symbol_name.unwrap_or(""), error_context, solution, created_at, self.tenant_id, kind, inner.workspace_root, embedding_bytes, if has_embedding { "all-MiniLM-L6-v2" } else { "" }],
+            )?;
+        }
+
+        let node_idx = {
+            let inner = self.inner.lock().unwrap();
+            inner.file_index.get(file_path).copied()
+        };
+
+        if let Some(idx) = node_idx {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(node) = inner.graph.node_weight_mut(idx) {
+                node.lesson_count += 1;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
         let inner = self.inner.lock().unwrap();
         let Some(&start) = inner.file_index.get(file_path) else {

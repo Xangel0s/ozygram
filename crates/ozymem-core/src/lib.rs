@@ -1,13 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+pub mod bundle;
 pub mod git_backend;
 pub mod graph_backend;
 pub mod mcp_common;
 pub mod registry;
 pub mod sync;
 
+pub use bundle::{export_bundle, import_bundle, BundleExportSummary, BundleImportSummary, KnowledgeBundle};
 pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};
 pub use mcp_common::McpBackend;
+pub use registry::{CrossRepoMemory, ProjectLink};
 pub use sync::{DeltaFileEvent, DeltaIndexResult, LiveWatcher};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -139,6 +139,24 @@ pub struct PendingSync {
     pub synced_at: Option<String>,
 }
 
+/// A cross-repo relationship link between two registered projects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectLink {
+    pub id: i64,
+    pub source_project_name: String,
+    pub target_project_name: String,
+    pub relation_type: String,
+    pub created_at: String,
+}
+
+/// A memory search result originating from a cross-repo project search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossRepoMemory {
+    pub project_name: String,
+    pub project_path: String,
+    pub lesson: crate::graph_backend::LessonEntry,
+}
+
 // ---------------------------------------------------------------------------
 // Legacy TOML structures for migration
 // ---------------------------------------------------------------------------
@@ -231,6 +249,15 @@ impl ProjectRegistry {
                 file_path  TEXT    NOT NULL,
                 queued_at  TEXT    NOT NULL DEFAULT (datetime('now')),
                 synced_at  TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS project_links (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                target_project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                relation_type     TEXT    NOT NULL DEFAULT 'depends_on',
+                created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(source_project_id, target_project_id, relation_type)
             );
 
             CREATE TABLE IF NOT EXISTS config (
@@ -661,6 +688,161 @@ impl ProjectRegistry {
             .unwrap_or_else(|| "4".to_string());
         val.parse::<u64>()
             .context("Invalid sleep_timeout_hours config value")
+    }
+
+    // -----------------------------------------------------------------------
+    // Cross-Repo Linking & Multi-Project Graph
+    // -----------------------------------------------------------------------
+
+    /// Establishes a directional link between two projects (e.g. frontend -> backend API).
+    pub fn link_projects(
+        &self,
+        source_name_or_path: &str,
+        target_name_or_path: &str,
+        relation_type: &str,
+    ) -> Result<()> {
+        let source = self.get_project_by_name(source_name_or_path)?
+            .or_else(|| self.get_project_by_path(source_name_or_path).ok().flatten())
+            .ok_or_else(|| anyhow::anyhow!("Source project '{}' not found in registry", source_name_or_path))?;
+
+        let target = self.get_project_by_name(target_name_or_path)?
+            .or_else(|| self.get_project_by_path(target_name_or_path).ok().flatten())
+            .ok_or_else(|| anyhow::anyhow!("Target project '{}' not found in registry", target_name_or_path))?;
+
+        self.db.execute(
+            "INSERT INTO project_links (source_project_id, target_project_id, relation_type) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(source_project_id, target_project_id, relation_type) DO NOTHING",
+            params![source.id, target.id, relation_type],
+        )?;
+
+        Ok(())
+    }
+
+    /// Removes a link between two projects.
+    pub fn unlink_projects(
+        &self,
+        source_name_or_path: &str,
+        target_name_or_path: &str,
+    ) -> Result<bool> {
+        let source = self.get_project_by_name(source_name_or_path)?
+            .or_else(|| self.get_project_by_path(source_name_or_path).ok().flatten())
+            .ok_or_else(|| anyhow::anyhow!("Source project '{}' not found", source_name_or_path))?;
+
+        let target = self.get_project_by_name(target_name_or_path)?
+            .or_else(|| self.get_project_by_path(target_name_or_path).ok().flatten())
+            .ok_or_else(|| anyhow::anyhow!("Target project '{}' not found", target_name_or_path))?;
+
+        let affected = self.db.execute(
+            "DELETE FROM project_links WHERE source_project_id = ?1 AND target_project_id = ?2",
+            params![source.id, target.id],
+        )?;
+
+        Ok(affected > 0)
+    }
+
+    /// Returns all linked target projects for a given source project.
+    pub fn get_linked_projects(&self, name_or_path: &str) -> Result<Vec<(Project, String)>> {
+        let source = self.get_project_by_name(name_or_path)?
+            .or_else(|| self.get_project_by_path(name_or_path).ok().flatten())
+            .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", name_or_path))?;
+
+        let mut stmt = self.db.prepare(
+            "SELECT p.id, p.name, p.path, p.status, p.scale, p.file_count, p.vector_count, \
+                    p.growth_rate, p.watcher_pid, p.last_opened, p.last_scan, p.created_at, p.updated_at, \
+                    l.relation_type \
+             FROM project_links l \
+             JOIN projects p ON l.target_project_id = p.id \
+             WHERE l.source_project_id = ?1 \
+             ORDER BY p.name ASC",
+        )?;
+
+        let rows = stmt.query_map(params![source.id], |row| {
+            let project = row_to_project(row)?;
+            let relation: String = row.get(13)?;
+            Ok((project, relation))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+        Ok(results)
+    }
+
+    /// Lists all project links across the entire registry.
+    pub fn list_all_links(&self) -> Result<Vec<ProjectLink>> {
+        let mut stmt = self.db.prepare(
+            "SELECT l.id, sp.name, tp.name, l.relation_type, l.created_at \
+             FROM project_links l \
+             JOIN projects sp ON l.source_project_id = sp.id \
+             JOIN projects tp ON l.target_project_id = tp.id \
+             ORDER BY l.id ASC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(ProjectLink {
+                id: row.get(0)?,
+                source_project_name: row.get(1)?,
+                target_project_name: row.get(2)?,
+                relation_type: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+
+        let mut links = Vec::new();
+        for r in rows {
+            links.push(r?);
+        }
+        Ok(links)
+    }
+
+    /// Searches memories across multiple registered projects.
+    pub fn search_cross_repo_memories(
+        &self,
+        query: &str,
+        project_names: Option<&[&str]>,
+        limit: usize,
+    ) -> Result<Vec<CrossRepoMemory>> {
+        let all_projects = self.list_projects()?;
+        let targets: Vec<Project> = match project_names {
+            Some(names) => all_projects
+                .into_iter()
+                .filter(|p| names.contains(&p.name.as_str()))
+                .collect(),
+            None => all_projects,
+        };
+
+        let mut results = Vec::new();
+        for proj in targets {
+            let mem_db_path = Path::new(&proj.path).join(".ozymem").join("memory.db");
+            if !mem_db_path.exists() {
+                continue;
+            }
+
+            if let Ok(backend) = crate::graph_backend::GraphBackend::open_for_project(Path::new(&proj.path)) {
+                if let Ok(lessons) = backend.recent_lessons_sync(None, limit) {
+                    let query_lower = query.to_lowercase();
+                    for lesson in lessons {
+                        if query.is_empty()
+                            || lesson.error_context.to_lowercase().contains(&query_lower)
+                            || lesson.solution.to_lowercase().contains(&query_lower)
+                            || lesson.file_path.to_lowercase().contains(&query_lower)
+                            || lesson.symbol_name.to_lowercase().contains(&query_lower)
+                        {
+                            results.push(CrossRepoMemory {
+                                project_name: proj.name.clone(),
+                                project_path: proj.path.clone(),
+                                lesson,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        results.truncate(limit.max(1));
+        Ok(results)
     }
 }
 

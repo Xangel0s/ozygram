@@ -481,6 +481,59 @@ async fn handle_request(
                     }),
                 },
                 mcp_common::ToolDefinition {
+                    name: "export_knowledge_bundle",
+                    description: "Exports project knowledge, lessons, conventions, and mapped API routes to a portable, verifiable .ozymem bundle file.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "output_path": { "type": "string", "description": "Destination file path (.ozymem)" },
+                            "project_name": { "type": "string", "description": "Optional project identifier name" }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "import_knowledge_bundle",
+                    description: "Imports knowledge from a .ozymem bundle into the current project, with deduplication and checksum verification.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Source .ozymem bundle path" },
+                            "merge": { "type": "boolean", "default": true, "description": "Merge into existing memories or overwrite" }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "cross_repo_query",
+                    description: "Performs cross-repository memory and lesson searches across all registered projects or a linked subset.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "Search query across repositories" },
+                            "project_names": { "type": "array", "items": { "type": "string" }, "description": "Optional list of project names to scope" },
+                            "limit": { "type": "integer", "default": 20 }
+                        },
+                        "required": ["query"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "link_projects",
+                    description: "Links two projects in the registry to represent dependency or API consumer/provider relations.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "source": { "type": "string", "description": "Source project name or path" },
+                            "target": { "type": "string", "description": "Target project name or path" },
+                            "relation": { "type": "string", "default": "depends_on", "description": "Relation type (e.g. depends_on, api_consumer, shared_lib)" }
+                        },
+                        "required": ["source", "target"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "ozy_project",
                     description: "Unified project/package tool: registered projects, package inspection, scripts, refresh index, stale projects, and ignore rules.",
                     input_schema: json!({
@@ -2361,6 +2414,104 @@ async fn handle_request(
                         content: vec![ContentBlock {
                             kind: "text",
                             text: serde_json::to_string_pretty(&report)?,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "export_knowledge_bundle" => {
+                    backend.reload_if_stale();
+                    let proj_name = tool_call
+                        .arguments
+                        .get("project_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("project");
+                    let default_path = format!("{}.ozymem", proj_name);
+                    let out_path_str = tool_call
+                        .arguments
+                        .get("output_path")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&default_path);
+                    let summary = ozymem_core::export_bundle(backend, proj_name, std::path::Path::new(out_path_str))?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: serde_json::to_string_pretty(&summary)?,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "import_knowledge_bundle" => {
+                    backend.reload_if_stale();
+                    let file_path = tool_call
+                        .arguments
+                        .get("file_path")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing required file_path parameter"))?;
+                    let merge = tool_call
+                        .arguments
+                        .get("merge")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true);
+                    let summary = ozymem_core::import_bundle(backend, std::path::Path::new(file_path), merge).await?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: serde_json::to_string_pretty(&summary)?,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "cross_repo_query" => {
+                    let query = tool_call
+                        .arguments
+                        .get("query")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing required query parameter"))?;
+                    let limit = tool_call
+                        .arguments
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(20) as usize;
+                    let project_names: Option<Vec<String>> = tool_call
+                        .arguments
+                        .get("project_names")
+                        .and_then(Value::as_array)
+                        .map(|arr| arr.iter().filter_map(Value::as_str).map(|s| s.to_string()).collect());
+
+                    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+                    let name_refs: Option<Vec<&str>> = project_names.as_ref().map(|v| v.iter().map(|s| s.as_str()).collect());
+                    let results = reg.search_cross_repo_memories(query, name_refs.as_deref(), limit)?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: serde_json::to_string_pretty(&results)?,
+                        }],
+                        is_error: None,
+                    }
+                }
+                "link_projects" => {
+                    let source = tool_call
+                        .arguments
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing required source parameter"))?;
+                    let target = tool_call
+                        .arguments
+                        .get("target")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("missing required target parameter"))?;
+                    let relation = tool_call
+                        .arguments
+                        .get("relation")
+                        .and_then(Value::as_str)
+                        .unwrap_or("depends_on");
+
+                    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+                    reg.link_projects(source, target, relation)?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: format!("Successfully linked '{}' -> '{}' with relation '{}'", source, target, relation),
                         }],
                         is_error: None,
                     }

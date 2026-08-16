@@ -162,6 +162,28 @@ enum Commands {
     /// Listar todos los proyectos registrados en registry.db
     #[command(alias = "projects")]
     List,
+    /// Exportar el conocimiento del proyecto a un paquete portable (.ozymem)
+    Export {
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Importar un paquete de conocimiento (.ozymem) al proyecto actual
+    Import {
+        path: PathBuf,
+        #[arg(long, default_value_t = true)]
+        merge: bool,
+    },
+    /// Vincular o consultar proyectos relacionados (Cross-Repo)
+    Link {
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long, default_value = "depends_on")]
+        relation: String,
+        #[arg(long)]
+        list: bool,
+    },
     /// Traductor seguro y compacto para consultas de agentes (grep/find/ctx/trace/tree/arch/doctor/code/skills)
     #[command(alias = "q", alias = "ask", alias = "x")]
     Query {
@@ -432,6 +454,57 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init => {
             return run_init().await;
         }
+        Commands::Export { output, project } => {
+            let cwd = std::env::current_dir()?;
+            let backend = ozymem_core::graph_backend::GraphBackend::open_for_project(&cwd)?;
+            let proj_name = project.clone().unwrap_or_else(|| {
+                cwd.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("project")
+                    .to_string()
+            });
+            let out_file = output.clone().unwrap_or_else(|| PathBuf::from(format!("{}.ozymem", proj_name)));
+            let summary = ozymem_core::export_bundle(&backend, &proj_name, &out_file)?;
+            println!("[OzyMem] Paquete de conocimiento exportado exitosamente:");
+            println!("  Archivo:   {}", summary.file_path);
+            println!("  Proyecto:  {}", summary.project_name);
+            println!("  Lecciones: {}", summary.lessons_exported);
+            println!("  Rutas API: {}", summary.routes_exported);
+            println!("  Checksum:  {}", summary.sha256);
+            println!("  Tamano:    {} bytes", summary.file_size_bytes);
+            return Ok(());
+        }
+        Commands::Import { path, merge } => {
+            let cwd = std::env::current_dir()?;
+            let backend = ozymem_core::graph_backend::GraphBackend::open_for_project(&cwd)?;
+            let summary = ozymem_core::import_bundle(&backend, path, *merge).await?;
+            println!("[OzyMem] Paquete de conocimiento importado exitosamente:");
+            println!("  Archivo:     {}", summary.file_path);
+            println!("  Proyecto:    {}", summary.project_name);
+            println!("  Importadas:  {}", summary.lessons_imported);
+            println!("  Duplicadas:  {} (omitidas)", summary.lessons_skipped_duplicate);
+            println!("  Rutas API:   {}", summary.routes_imported);
+            println!("  Modo:        {}", summary.mode);
+            return Ok(());
+        }
+        Commands::Link { target, relation, list } => {
+            let reg = ozymem_core::registry::ProjectRegistry::open()?;
+            if *list || target.is_none() {
+                let links = reg.list_all_links()?;
+                println!("[OzyMem] Enlaces entre proyectos registrados ({})", links.len());
+                for l in links {
+                    println!("  #{} {} --[{}]--> {}", l.id, l.source_project_name, l.relation_type, l.target_project_name);
+                }
+                return Ok(());
+            }
+
+            let cwd = std::env::current_dir()?;
+            let current_proj = cwd.file_name().and_then(|n| n.to_str()).unwrap_or("current");
+            let target_name = target.as_ref().unwrap();
+            reg.link_projects(current_proj, target_name, relation)?;
+            println!("[OzyMem] Vinculado exitosamente: {} --[{}]--> {}", current_proj, relation, target_name);
+            return Ok(());
+        }
         Commands::Mcp { .. } => {
             return mcp::run_mcp_server().await;
         }
@@ -523,6 +596,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Deregister { .. } => unreachable!(),
         Commands::List => unreachable!(),
         Commands::Init => unreachable!(),
+        Commands::Export { .. } => unreachable!(),
+        Commands::Import { .. } => unreachable!(),
+        Commands::Link { .. } => unreachable!(),
         Commands::Mcp { .. } => unreachable!(),
         Commands::Doctor { .. } => unreachable!(),
         Commands::Query { .. } => unreachable!(),
