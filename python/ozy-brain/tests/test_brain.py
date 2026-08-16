@@ -98,6 +98,55 @@ class OzyBrainTests(unittest.TestCase):
         result = run("unknown", {"project": "p"})
         self.assertEqual(result["action"], "plan")
 
+    def test_rank_memories_action(self):
+        result = run("rank_memories", {
+            "project": "ozymem",
+            "memories": [
+                {"id": 1, "title": "high touch", "touch_count": 10, "confidence_score": 0.95},
+                {"id": 2, "title": "stale touch", "touch_count": 0, "confidence_score": 0.2},
+            ],
+        })
+        self.assertEqual(result["action"], "rank_memories")
+        self.assertIn("rank", result["summary"].lower())
+
+    def test_detect_patterns_and_suggest_next_steps(self):
+        patterns_res = run("detect_patterns", {
+            "project": "ozymem",
+            "files": ["src/api/auth.rs", "src/api/user.rs", "src/api/order.rs"],
+            "memories": [{"title": "jwt validation"}],
+        })
+        self.assertEqual(patterns_res["action"], "detect_patterns")
+
+        steps_res = run("suggest_next_steps", {
+            "project": "ozymem",
+            "goal": "implement mfa authentication",
+            "files": ["src/api/auth.rs"],
+        })
+        self.assertEqual(steps_res["action"], "suggest_next_steps")
+        self.assertGreaterEqual(len(steps_res["plan"]), 1)
+
+    def test_summarize_project_and_compress_session(self):
+        summary_res = run("summarize_project", {
+            "project": "ozymem",
+            "files": ["crates/ozymem-core/src/lib.rs"],
+            "graph_summary": {"file_count": 10, "function_count": 45},
+        })
+        self.assertEqual(summary_res["action"], "summarize_project")
+
+        compress_res = run("compress_session", {
+            "project": "ozymem",
+            "changes": ["crates/ozymem-core/src/sync.rs"],
+            "failures": ["none"],
+        })
+        self.assertEqual(compress_res["action"], "compress_session")
+
+    def test_golden_eval_suite_coverage(self):
+        from tests.eval import GOLDEN_TEST_SUITE, evaluate_response
+        for case in GOLDEN_TEST_SUITE:
+            res = run(case["action"], case["payload"])
+            eval_report = evaluate_response(case, res, 1.0)
+            self.assertTrue(eval_report["passed"], f"Golden case {case['id']} failed: {eval_report['issues']}")
+
 
 if __name__ == "__main__":
     unittest.main()
