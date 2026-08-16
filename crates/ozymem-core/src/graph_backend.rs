@@ -1297,8 +1297,8 @@ impl GraphBackend {
             return Ok(DeltaIndexResult::SkippedNoise);
         }
 
-        // 4. Read source content and calculate SHA-256
-        let source = match std::fs::read_to_string(file_path) {
+        // 4. Read source content and calculate SHA-256 (with Windows lock backoff)
+        let source = match crate::sync::read_file_with_backoff(file_path, 3) {
             Ok(s) => s,
             Err(_) => return Ok(DeltaIndexResult::SkippedNoise),
         };

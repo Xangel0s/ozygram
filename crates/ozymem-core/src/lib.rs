@@ -11,7 +11,7 @@ pub use bundle::{export_bundle, import_bundle, BundleExportSummary, BundleImport
 pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};
 pub use mcp_common::McpBackend;
 pub use registry::{CrossRepoMemory, ProjectLink};
-pub use sync::{DeltaFileEvent, DeltaIndexResult, LiveWatcher};
+pub use sync::{read_file_with_backoff, DeltaFileEvent, DeltaIndexResult, LiveWatcher};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredFunction {

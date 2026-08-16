@@ -157,3 +157,19 @@ impl LiveWatcher {
         self.rx.recv_timeout(timeout).ok()
     }
 }
+
+/// Reads a file from disk with exponential backoff retries to mitigate Windows file locks (EBUSY / ERROR_SHARING_VIOLATION).
+pub fn read_file_with_backoff(path: &Path, max_retries: usize) -> std::io::Result<String> {
+    let mut delay = Duration::from_millis(5);
+    for attempt in 0..max_retries {
+        match std::fs::read_to_string(path) {
+            Ok(content) => return Ok(content),
+            Err(_) if attempt + 1 < max_retries => {
+                std::thread::sleep(delay);
+                delay *= 2;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    std::fs::read_to_string(path)
+}
