@@ -1,8 +1,20 @@
 # Ozymem / Ozygram — Cerebro Híbrido y Memoria Persistente para Agentes IA
 
-> **Ozygram no solo recuerda; entiende el proyecto, aprende del usuario, anticipa riesgos y guía al agente con planes, memoria y criterio técnico.**
+> **Ozygram no solo recuerda; entiende el proyecto, aprende del usuario, anticipa riesgos, previene desviaciones de arquitectura y guía al agente con planes, memoria y criterio técnico.**
 
-**Ozymem / Ozygram** es un motor de memoria persistente, grafo de código y razonamiento pesado para asistentes de código LLM vía **Model Context Protocol (MCP)**. Combina un núcleo en **Rust** de ultra-alta velocidad y baja latencia con un motor auxiliar de razonamiento en **Python (`ozy-brain`)**.
+**Ozymem / Ozygram** es un motor de memoria persistente, grafo de código multi-lenguaje y razonamiento cognitivo para asistentes de código LLM vía **Model Context Protocol (MCP)**. Combina un núcleo en **Rust** de ultra-alta velocidad y baja latencia con un motor auxiliar de razonamiento en **Python (`ozy-brain`)**.
+
+---
+
+## 🚀 Capacidades Destacadas (v0.1.0)
+
+- **⚡ Live Delta Indexing & Watcher Reactivo**: Detección e indexación incremental en caliente (<50ms) sobre eventos de archivos con debouncing de 300ms, filtrado de ruido/bloqueos (`cargo.lock`, minificados, >256KB) y cálculo SHA-256 por archivo.
+- **🛣️ Mapeo Sintético de Rutas HTTP (`ozymem_map_api_routes`)**: Extracción estructurada de endpoints y DTOs para **FastAPI**, **Express** y **Axum** sin dependencias externas.
+- **🛡️ Detección Proactiva de Code Drift (`detect_code_drift`)**: Auditoría de diffs contra reglas de negocio y convenciones registradas (`record_convention`), alertando discrepancias antes de romper estándares.
+- **📦 Portabilidad de Conocimiento (.ozymem Bundles)**: Exportación e importación (`ozymem export` / `ozymem import`) de memorias y rutas con verificación criptográfica SHA-256 y deduplicación inteligente.
+- **🌐 Malla Multi-Repositorio (Cross-Repo Graph)**: Vinculación relacional de proyectos (`ozymem link`) y consultas transversales de memoria (`cross_repo_query`).
+- **🧠 Memoria Cognitiva de Dos Capas (Working Cache vs Engram Store)**: Extracción de tríadas `[Sujeto -> Relación -> Objeto]` y consolidación a largo plazo activada por hitos (`git commit`, `test pass`, `bugfix`).
+- **🔍 Adaptador de Tipado Semántico (`ozymem_python_typecheck`)**: Inferencia profunda de contratos Python / Pydantic con Pyrefly o validación AST nativa.
 
 ---
 
@@ -30,11 +42,9 @@
 
 ---
 
-## ⚡ Instalación Fácil para Release
+## ⚡ Instalación Rápida
 
 ### Windows (PowerShell)
-
-Ejecuta el instalador automático para compilar e instalar Ozygram en tu sistema:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -55,7 +65,7 @@ chmod +x ./install.sh
 
 ---
 
-## ⚙️ Configuración MCP Server (`mcp_servers`)
+## ⚙️ Configuración MCP Server (`mcpServers`)
 
 Agrega Ozygram a tu cliente MCP favorito (Antigravity IDE, Claude Desktop, Cursor, VS Code):
 
@@ -75,62 +85,68 @@ Agrega Ozygram a tu cliente MCP favorito (Antigravity IDE, Claude Desktop, Curso
 ## 🧠 Arquitectura Híbrida Rust / Python
 
 ```text
-MCP Client
+MCP Client (Antigravity, Claude, Cursor)
    ↓
-ozymem-server (Rust — Autoridad MCP, SQLite, Grafo, Seguridad, CLI)
+ozymem-server (Rust — Autoridad MCP, SQLite, FastEmbed, AST Tree-Sitter, CLI)
    ↓ (Stdio JSON Payload)
 ozy-brain (Python — Worker de Razonamiento Pesado en ozy_brain/)
    ↓ (Stdio JSON Response)
-ozymem-server (Rust — Formateador Markdown)
+ozymem-server (Rust — Formateador y Sanitizador Markdown)
    ↓
 MCP Client
 ```
 
-### Garantías de Seguridad (Sección 7)
-- **Rust tiene la Autoridad**: Administra SQLite, MCP stdio, lectura de archivos, validación y compatibilidad en Windows.
-- **Python es un Asesor Consultivo**: `ozy-brain` no puede borrar archivos directamente, no hace git commits, no hace push, no ejecuta comandos arbitrarios y no modifica SQLite sin pasar por Rust.
+### Garantías de Seguridad
+- **Rust tiene la Autoridad**: Administra SQLite, MCP stdio, lectura de archivos con backoff exponencial contra locks de Windows (`EBUSY`), indexación vectorial y validación.
+- **Python es un Asesor Consultivo**: `ozy-brain` no puede borrar archivos directamente, no hace commits, no hace push y no ejecuta comandos arbitrarios sin pasar por Rust.
 
 ---
 
-## 🛠️ Tools MCP Principales (8 Unificadas)
+## 🛠️ Herramientas MCP Disponibles
 
 ```rust
-ozy_brain        // Cerebro híbrido: plan, reflect, recall_deep, risk_review, build_mental_model, detect_patterns
-ozy_context      // Contexto de tarea, archivos, resúmenes y memorias recientes
-ozy_memory       // Guardar/buscar lecciones, decisiones, convenciones, gotchas y reglas de módulo
-ozy_graph        // Grafo de código, vecinos, análisis de impacto, caminos y reporte de arquitectura
-ozy_code_doctor  // Diagnóstico preview-safe, duplicados, hotspots y autosanado
-ozy_doctor       // Salud de base de datos, registro de proyectos, embeddings e índices
-ozy_skills       // Metadata review-only de skills oficiales para mejores prácticas
-ozy_project      // Gestión de proyectos, paquetes, scripts, ignore rules y actualización de índice
+// Core y Memoria
+ozy_brain                 // Razonamiento pesado: plan, reflect, risk_review, consolidate_engrams, build_mental_model
+ozy_context               // Contexto de tarea, archivos, resúmenes y memorias recientes
+ozy_memory                // Guardar/buscar lecciones, decisiones, convenciones, gotchas y reglas
+
+// Análisis y Diagnóstico
+ozy_graph                 // Grafo de código, vecinos, análisis de impacto y dependencias
+ozymem_map_api_routes     // Extracción automática de rutas HTTP (FastAPI, Express, Axum)
+detect_code_drift         // Detección de drift entre commits y convenciones guardadas
+rank_memories             // Evaluación de vigencia y ranking temporal de memorias
+ozymem_python_typecheck   // Inferencia semántica y tipado estricto Python / Pyrefly
+ozy_code_doctor           // Diagnóstico preview-safe, duplicados y autosanado
+ozy_doctor                // Salud de base de datos, embeddings e índices
+
+// Portabilidad y Multi-Repo
+export_knowledge_bundle   // Exportación de paquete portable .ozymem con SHA-256
+import_knowledge_bundle   // Importación con deduplicación y verificación de integridad
+cross_repo_query          // Búsqueda de memorias a través de múltiples repositorios
+link_projects             // Vinculación de dependencias entre proyectos registrados
 ```
-
-### Acciones de `ozy_brain` (11)
-
-- `plan`: Plan estructurado en 5 fases con puntuación de archivos candidatos, validación y *"Qué No Tocar"*.
-- `reflect` / `analyze_failure`: Análisis de causa raíz y detección de scope creep.
-- `risk_review`: Evaluación de riesgos de Auth, Pérdida de Datos, Migraciones SQL y Refactorizaciones.
-- `build_mental_model`: Síntesis de arquitectura, módulos, flujos de control y *"Dónde mirar primero"*.
-- `recall_deep`: Recuperación priorizada con clustering semántico y deduplicación.
-- `rank_memories`: Clasificación y orden de relevancia de memorias pasadas.
-- `summarize_project`: Resumen técnico compacto y estadísticas del grafo.
-- `detect_patterns`: Detección de patrones del usuario, reglas de dominio CRM y restricciones de plataforma.
-- `suggest_next_steps`: Recomendación de siguientes hitos seguros.
-- `compress_session`: Compactación de contexto de sesión antes de resets.
 
 ---
 
-## 🔍 Ozy Query CLI (`ozymem q`)
-
-Traductor seguro de comandos tipo shell para agentes de IA sin ejecución de shell externo:
+## 🔍 Ozy CLI Commands
 
 ```powershell
+# Búsqueda y Navegación Rápida
 ozymem q grep auth                # Buscar símbolos o lecciones
 ozymem q find GraphBackend        # Buscar definición de símbolos
 ozymem q ctx "refactor cotizador" # Contexto priorizado de tarea
-ozymem q file crates/server.rs    # Contexto enriquecido de archivo
-ozymem q trace crates/server.rs   # Camino de impacto en el grafo
-ozymem q arch                     # Reporte de arquitectura del proyecto
+ozymem q trace src/main.rs        # Camino de impacto en el grafo
+
+# Portabilidad y Multi-Repo
+ozymem export --output backup.ozymem  # Exportar paquete de conocimiento
+ozymem import backup.ozymem --merge   # Importar con deduplicación
+ozymem link --target api-backend      # Vincular proyecto relacionado
+ozymem link --list                    # Listar enlaces multi-repo
+
+# Watcher y Sincronización
+ozymem watch                      # Iniciar watcher reactivo en primer plano
+ozymem scan .                     # Escaneo completo e indexación del grafo
+ozymem doctor                     # Diagnóstico de salud del entorno
 ```
 
 ---
@@ -151,8 +167,23 @@ ozymem q arch                     # Reporte de arquitectura del proyecto
 
 ---
 
+## 🧪 Pruebas y Validación
+
+```powershell
+# Ejecutar todas las pruebas del workspace en Rust (134 tests)
+cargo test --workspace
+
+# Ejecutar las pruebas del motor de razonamiento Python
+python -m unittest discover -s python/ozy-brain/tests -v
+
+# Ejecutar el arnés de evaluación dorada (Golden Eval)
+python python/ozy-brain/tests/eval.py
+```
+
+---
+
 ## 📄 Licencia y Requisitos
 
-- **SO**: Windows, Linux, macOS.
+- **SO**: Windows, Linux, macOS (x86_64 y ARM64 Apple Silicon).
 - **Requisitos**: Rust stable (edición 2021) y Python 3.9+.
 - **Cero Dependencias Externas**: SQLite integrado, sin necesidad de Docker ni bases de datos remotas.
