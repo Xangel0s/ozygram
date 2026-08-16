@@ -165,9 +165,14 @@ fn strip_unc_prefix(path: PathBuf) -> PathBuf {
 
 fn normalize_absolute_path(path: &Path) -> Option<PathBuf> {
     let p = if path.is_absolute() {
-        path.to_path_buf()
+        // Use canonicalize so resolved paths are consistent with paths
+        // stored by full_scan (which also canonicalizes).  Fall back to the
+        // raw path when the file doesn't exist yet (e.g. resolution of a
+        // not-yet-created file during a live-coding session).
+        fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     } else {
-        std::env::current_dir().ok()?.join(path)
+        let absolute = std::env::current_dir().ok()?.join(path);
+        fs::canonicalize(&absolute).unwrap_or(absolute)
     };
     Some(strip_unc_prefix(p))
 }
@@ -225,6 +230,12 @@ mod tests {
         fs::write(path, "// test").expect("write file");
     }
 
+    /// Canonicalize an expected path, stripping UNC prefix.
+    /// This ensures tests pass on macOS where /tmp is a symlink to /private/tmp.
+    fn canon(path: PathBuf) -> PathBuf {
+        strip_unc_prefix(fs::canonicalize(&path).unwrap_or(path))
+    }
+
     #[test]
     fn resolves_mod_item_in_same_directory() {
         let root = std::env::temp_dir().join(format!("ozymem-resolve-mod-{}", std::process::id()));
@@ -252,7 +263,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            strip_unc_prefix(root.join("src/router.rs"))
+            canon(root.join("src/router.rs"))
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -284,7 +295,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            strip_unc_prefix(root.join("src/domain.rs"))
+            canon(root.join("src/domain.rs"))
         );
         let _ = fs::remove_dir_all(&root);
     }
@@ -323,7 +334,7 @@ mod tests {
 
         assert_eq!(
             resolved,
-            strip_unc_prefix(root.join("crates/ozymem-core/src/lib.rs"))
+            canon(root.join("crates/ozymem-core/src/lib.rs"))
         );
         let _ = fs::remove_dir_all(&root);
     }

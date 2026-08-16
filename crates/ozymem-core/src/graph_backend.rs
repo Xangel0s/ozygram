@@ -1085,8 +1085,13 @@ impl GraphBackend {
                 continue;
             }
             if is_binary_file(path) {
-                let abs_path = crate::normalize_path(&path.to_string_lossy());
-                if ozymem_parser::is_excel_template_candidate(&abs_path) {
+            let abs_path = {
+                let raw = crate::normalize_path(&path.to_string_lossy());
+                std::fs::canonicalize(path)
+                    .map(|c| crate::normalize_path(&c.to_string_lossy()))
+                    .unwrap_or(raw)
+            };
+            if ozymem_parser::is_excel_template_candidate(&abs_path) {
                     if let Ok(Some(meta)) = ozymem_parser::parse_excel_template(path, &abs_path) {
                         let _ = self.record_excel_template(&meta);
                     }
@@ -1098,7 +1103,12 @@ impl GraphBackend {
                 }
                 continue;
             }
-            let abs_path = crate::normalize_path(&path.to_string_lossy());
+            let abs_path = {
+                let raw = crate::normalize_path(&path.to_string_lossy());
+                std::fs::canonicalize(path)
+                    .map(|c| crate::normalize_path(&c.to_string_lossy()))
+                    .unwrap_or(raw)
+            };
             scanned_files.insert(abs_path.clone());
             let mtime = file_mtime(path).unwrap_or_default();
 
