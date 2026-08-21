@@ -10,6 +10,7 @@ pub mod sync;
 pub use bundle::{export_bundle, import_bundle, BundleExportSummary, BundleImportSummary, KnowledgeBundle};
 pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};
 pub use mcp_common::McpBackend;
+pub use ozymem_parser::AstDiagnostic;
 pub use registry::{CrossRepoMemory, ProjectLink};
 pub use sync::{read_file_with_backoff, DeltaFileEvent, DeltaIndexResult, LiveWatcher};
 

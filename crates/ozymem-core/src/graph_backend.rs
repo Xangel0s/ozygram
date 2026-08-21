@@ -383,6 +383,18 @@ impl GraphBackend {
 
             CREATE INDEX IF NOT EXISTS idx_user_prompts_project ON user_prompts(project, tenant_id);
 
+            CREATE TABLE IF NOT EXISTS ast_diagnostics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL,
+                line_number INTEGER NOT NULL DEFAULT 0,
+                severity TEXT NOT NULL DEFAULT 'warning',
+                message TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                workspace_root TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ast_diags_file ON ast_diagnostics(file_path, tenant_id);
+
             CREATE TABLE IF NOT EXISTS excel_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL UNIQUE,
@@ -1033,6 +1045,10 @@ impl GraphBackend {
                 "DELETE FROM files WHERE tenant_id = ?1",
                 params![self.tenant_id],
             )?;
+            inner.sqlite.execute(
+                "DELETE FROM ast_diagnostics WHERE tenant_id = ?1",
+                params![self.tenant_id],
+            )?;
         }
 
         let proj_root = Path::new(project_path);
@@ -1172,6 +1188,14 @@ impl GraphBackend {
                         params![abs_path, target_str, self.tenant_id, inner.workspace_root],
                     )?;
                 }
+            }
+
+            let diags = ozymem_parser::extract_ast_diagnostics(&abs_path, lang, &source);
+            for d in &diags {
+                inner.sqlite.execute(
+                    "INSERT INTO ast_diagnostics (file_path, line_number, severity, message, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![abs_path, d.line_number as i64, d.severity, d.message, self.tenant_id, inner.workspace_root],
+                )?;
             }
 
             file_count += 1;
@@ -1368,6 +1392,10 @@ impl GraphBackend {
                 "DELETE FROM file_dependencies WHERE origin_path = ?1 AND tenant_id = ?2",
                 params![abs_path, self.tenant_id],
             )?;
+            inner.sqlite.execute(
+                "DELETE FROM ast_diagnostics WHERE file_path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            )?;
 
             inner.sqlite.execute(
                 "INSERT OR REPLACE INTO files (path, language, strategy, mtime, tenant_id, workspace_root, sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1389,6 +1417,14 @@ impl GraphBackend {
                 inner.sqlite.execute(
                     "INSERT OR IGNORE INTO file_dependencies (origin_path, destination_path, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4)",
                     params![abs_path, dep, self.tenant_id, inner.workspace_root],
+                )?;
+            }
+
+            let diags = ozymem_parser::extract_ast_diagnostics(&abs_path, lang, &source);
+            for d in &diags {
+                inner.sqlite.execute(
+                    "INSERT INTO ast_diagnostics (file_path, line_number, severity, message, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![abs_path, d.line_number as i64, d.severity, d.message, self.tenant_id, inner.workspace_root],
                 )?;
             }
         }
@@ -1732,8 +1768,13 @@ impl GraphBackend {
     }
 
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
-        let Some(&start) = inner.file_index.get(file_path) else {
+        let start_opt = inner.file_index.get(&resolved)
+            .or_else(|| inner.file_index.get(&norm_path))
+            .or_else(|| inner.file_index.get(file_path));
+        let Some(&start) = start_opt else {
             return vec![];
         };
 
@@ -2130,12 +2171,14 @@ impl GraphBackend {
         max_paths: usize,
         max_hops: usize,
     ) -> Vec<Vec<String>> {
+        let from_res = self.resolve_target_path(from).unwrap_or_else(|| from.to_string());
+        let to_res = self.resolve_target_path(to).unwrap_or_else(|| to.to_string());
         let inner = self.inner.lock().unwrap();
-        let start = match inner.file_index.get(from) {
+        let start = match inner.file_index.get(&from_res).or_else(|| inner.file_index.get(from)) {
             Some(n) => *n,
             None => return Vec::new(),
         };
-        let end = match inner.file_index.get(to) {
+        let end = match inner.file_index.get(&to_res).or_else(|| inner.file_index.get(to)) {
             Some(n) => *n,
             None => return Vec::new(),
         };
@@ -2179,6 +2222,201 @@ impl GraphBackend {
             params![self.tenant_id],
         )?;
         Ok(())
+    }
+
+    /// Resolve an input file path in cascade: exact, relative to project_path, normalized, or suffix matching.
+    pub fn resolve_target_path(&self, input_path: &str) -> Option<String> {
+        let norm = crate::normalize_path(input_path);
+        let inner = self.inner.lock().unwrap();
+
+        // 1. Direct match in in-memory file index
+        if inner.file_index.contains_key(&norm) {
+            return Some(norm);
+        }
+        if inner.file_index.contains_key(input_path) {
+            return Some(input_path.to_string());
+        }
+
+        // 2. Direct match in SQLite files table
+        let mut stmt = match inner.sqlite.prepare(
+            "SELECT path FROM files WHERE (path = ?1 OR path = ?2) AND tenant_id = ?3 LIMIT 1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+        if let Ok(found) = stmt.query_row(params![input_path, norm, self.tenant_id], |row| row.get::<_, String>(0)) {
+            return Some(found);
+        }
+
+        // 3. Resolve relative path against project_path / workspace_root
+        let root_opt = inner.project_path.as_deref().or(if !inner.workspace_root.is_empty() { Some(&inner.workspace_root) } else { None });
+        if let Some(root) = root_opt {
+            let joined = crate::normalize_path(&std::path::Path::new(root).join(input_path).to_string_lossy());
+            if inner.file_index.contains_key(&joined) {
+                return Some(joined);
+            }
+            if let Ok(found) = stmt.query_row(params![joined, joined, self.tenant_id], |row| row.get::<_, String>(0)) {
+                return Some(found);
+            }
+        }
+
+        // 4. Suffix matching in in-memory index
+        let norm_clean = norm.replace('\\', "/");
+        for k in inner.file_index.keys() {
+            let k_norm = k.replace('\\', "/");
+            if k_norm.ends_with(&norm_clean) || k_norm.ends_with(&format!("/{}", norm_clean)) {
+                return Some(k.clone());
+            }
+        }
+
+        // 5. Fallback SQLite LIKE on suffix
+        let suffix_like = format!("%{}", input_path.replace('/', "\\"));
+        let suffix_like_fwd = format!("%{}", input_path.replace('\\', "/"));
+        let mut suffix_stmt = match inner.sqlite.prepare(
+            "SELECT path FROM files WHERE (path LIKE ?1 OR path LIKE ?2 OR replace(path, '\\', '/') LIKE ?2) AND tenant_id = ?3 ORDER BY length(path) ASC LIMIT 1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+        if let Ok(found) = suffix_stmt.query_row(params![suffix_like, suffix_like_fwd, self.tenant_id], |row| row.get::<_, String>(0)) {
+            return Some(found);
+        }
+
+        None
+    }
+
+    /// Search AST indexed symbols (functions, classes, structs) when explicit lessons are empty.
+    pub fn search_ast_symbols(&self, query: &str, limit: usize) -> Result<Vec<StoredFunction>> {
+        let inner = self.inner.lock().unwrap();
+        let limit = (limit as i64).min(50).max(1);
+        let like_pattern = format!("%{}%", query);
+
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT name, kind, start_line, end_line, strategy, file_path 
+             FROM functions 
+             WHERE (name LIKE ?1 OR file_path LIKE ?1) AND tenant_id = ?2 
+             ORDER BY CASE WHEN name LIKE ?1 THEN 0 ELSE 1 END, name ASC 
+             LIMIT ?3"
+        )?;
+
+        let funcs: Vec<StoredFunction> = stmt
+            .query_map(params![like_pattern, self.tenant_id, limit], |row| {
+                Ok(StoredFunction {
+                    name: row.get(0)?,
+                    kind: row.get(1)?,
+                    start_line: row.get(2)?,
+                    end_line: row.get(3)?,
+                    strategy: format!("{} in {}", row.get::<_, String>(4)?, row.get::<_, String>(5)?),
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(funcs)
+    }
+
+    /// Filter graph summary by a subpath or monorepo sub-scope.
+    pub fn get_subpath_graph_summary(&self, subpath: &str) -> Result<GraphSummary> {
+        let norm_sub = crate::normalize_path(subpath).replace('\\', "/");
+        let like1 = format!("%{}%", norm_sub);
+        let like2 = format!("%{}%", norm_sub.replace('/', "\\"));
+        let inner = self.inner.lock().unwrap();
+
+        let file_count: i64 = inner
+            .sqlite
+            .query_row(
+                "SELECT COUNT(*) FROM files WHERE tenant_id = ?1 AND (path LIKE ?2 OR replace(path, '\\', '/') LIKE ?3)",
+                params![self.tenant_id, like2, like1],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let function_count: i64 = inner
+            .sqlite
+            .query_row(
+                "SELECT COUNT(*) FROM functions WHERE tenant_id = ?1 AND (file_path LIKE ?2 OR replace(file_path, '\\', '/') LIKE ?3)",
+                params![self.tenant_id, like2, like1],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let engram_count: i64 = inner
+            .sqlite
+            .query_row(
+                "SELECT COUNT(*) FROM lessons WHERE tenant_id = ?1 AND (file_path LIKE ?2 OR replace(file_path, '\\', '/') LIKE ?3)",
+                params![self.tenant_id, like2, like1],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let edge_count: i64 = inner
+            .sqlite
+            .query_row(
+                "SELECT COUNT(*) FROM file_dependencies WHERE tenant_id = ?1 AND (origin_path LIKE ?2 OR replace(origin_path, '\\', '/') LIKE ?3)",
+                params![self.tenant_id, like2, like1],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let mut native = 0i64;
+        let mut extension = 0i64;
+        let mut text = 0i64;
+        if let Ok(mut stmt) = inner.sqlite.prepare(
+            "SELECT strategy, COUNT(*) FROM functions WHERE tenant_id = ?1 AND (file_path LIKE ?2 OR replace(file_path, '\\', '/') LIKE ?3) GROUP BY strategy",
+        ) {
+            if let Ok(rows) = stmt.query_map(params![self.tenant_id, like2, like1], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            }) {
+                for row in rows.flatten() {
+                    match row.0.as_str() {
+                        "NativeAST" => native += row.1,
+                        "ExtensionWASM" => extension += row.1,
+                        _ => text += row.1,
+                    }
+                }
+            }
+        }
+
+        Ok(GraphSummary {
+            file_count,
+            function_count,
+            engram_count,
+            native_ast_function_count: native,
+            extension_wasm_function_count: extension,
+            text_heuristic_function_count: text,
+            vertex_count: file_count,
+            edge_count,
+            memory_usage: format!("{} MB", (file_count * 200) / 1024 / 1024 + 1),
+            lessons_without_embedding: 0,
+        })
+    }
+
+    /// Retrieve static AST diagnostics recorded during indexing.
+    pub fn get_ast_diagnostics(&self, limit: usize) -> Result<Vec<ozymem_parser::AstDiagnostic>> {
+        let inner = self.inner.lock().unwrap();
+        let limit = (limit as i64).min(100).max(1);
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT file_path, line_number, severity, message FROM ast_diagnostics WHERE tenant_id = ?1 ORDER BY id DESC LIMIT ?2"
+        )?;
+        let diags = stmt.query_map(params![self.tenant_id, limit], |row| {
+            Ok(ozymem_parser::AstDiagnostic {
+                file_path: row.get(0)?,
+                line_number: row.get::<_, i64>(1)? as usize,
+                severity: row.get(2)?,
+                message: row.get(3)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(diags)
+    }
+
+    /// Count total static AST diagnostics.
+    pub fn count_ast_diagnostics(&self) -> Result<i64> {
+        let inner = self.inner.lock().unwrap();
+        inner.sqlite.query_row(
+            "SELECT COUNT(*) FROM ast_diagnostics WHERE tenant_id = ?1",
+            params![self.tenant_id],
+            |r| r.get(0),
+        ).map_err(Into::into)
     }
 
     /// Count lessons for the current tenant.
@@ -2298,22 +2536,24 @@ impl McpBackend for GraphBackend {
     }
 
     async fn get_file_context(&self, file_path: &str) -> Result<Option<FileGraphContext>> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = inner
             .sqlite
-            .prepare("SELECT language FROM files WHERE path = ?1 AND tenant_id = ?2")?;
-        let language: String =
-            match stmt.query_row(params![file_path, self.tenant_id], |row| row.get(0)) {
+            .prepare("SELECT language, path FROM files WHERE (path = ?1 OR path = ?2 OR path = ?3) AND tenant_id = ?4 LIMIT 1")?;
+        let (language, actual_path): (String, String) =
+            match stmt.query_row(params![file_path, norm_path, resolved, self.tenant_id], |row| Ok((row.get(0)?, row.get(1)?))) {
                 Ok(v) => v,
                 Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
                 Err(e) => return Err(e.into()),
             };
 
         let mut func_stmt = inner.sqlite.prepare(
-            "SELECT name, kind, start_line, end_line, strategy FROM functions WHERE file_path = ?1 AND tenant_id = ?2 ORDER BY start_line, name"
+            "SELECT name, kind, start_line, end_line, strategy FROM functions WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3 ORDER BY start_line, name"
         )?;
         let funcs: Vec<StoredFunction> = func_stmt
-            .query_map(params![file_path, self.tenant_id], |row| {
+            .query_map(params![file_path, actual_path, self.tenant_id], |row| {
                 Ok(StoredFunction {
                     name: row.get(0)?,
                     kind: row.get(1)?,
@@ -2326,7 +2566,7 @@ impl McpBackend for GraphBackend {
             .collect();
 
         Ok(Some(FileGraphContext {
-            file_path: file_path.to_string(),
+            file_path: actual_path,
             language,
             functions: funcs,
         }))
@@ -2503,17 +2743,18 @@ impl McpBackend for GraphBackend {
     }
 
     async fn get_file_lessons(&self, file_path: &str) -> Result<Vec<LessonEntry>> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
-             WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3 AND (workspace_root = ?4 OR workspace_root = '')
+             WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND tenant_id = ?4 AND (workspace_root = ?5 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
         let results = stmt
             .query_map(
-                params![file_path, norm_path, self.tenant_id, inner.workspace_root],
+                params![file_path, norm_path, resolved, self.tenant_id, inner.workspace_root],
                 |row| LessonEntry::from_row(row),
             )?
             .filter_map(|r| r.ok())
@@ -2526,17 +2767,18 @@ impl McpBackend for GraphBackend {
         file_path: &str,
         symbol_name: &str,
     ) -> Result<Vec<LessonEntry>> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
-             WHERE (file_path = ?1 OR file_path = ?2) AND symbol_name = ?3 AND tenant_id = ?4 AND (workspace_root = ?5 OR workspace_root = '')
+             WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND symbol_name = ?4 AND tenant_id = ?5 AND (workspace_root = ?6 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
         let results = stmt
             .query_map(
-                params![file_path, norm_path, symbol_name, self.tenant_id, inner.workspace_root],
+                params![file_path, norm_path, resolved, symbol_name, self.tenant_id, inner.workspace_root],
                 |row| LessonEntry::from_row(row),
             )?
             .filter_map(|r| r.ok())

@@ -1677,7 +1677,10 @@ async fn handle_request(
 
             if tool_call.name == "ozy_doctor" || tool_call.name == "ozy_skills" {
                 let result = match tool_call.name.as_str() {
-                    "ozy_doctor" => handle_ozy_doctor(&tool_call).await?,
+                    "ozy_doctor" => {
+                        let guard = backend.lock().unwrap();
+                        handle_ozy_doctor(guard.as_ref(), &tool_call).await?
+                    }
                     "ozy_skills" => handle_ozy_skills(&tool_call).await?,
                     _ => unreachable!(),
                 };
@@ -1799,7 +1802,16 @@ async fn handle_request(
                         .unwrap_or("task");
                     match action {
                         "summary" => {
-                            let summary = backend.get_graph_summary().await?;
+                            let subpath = tool_call
+                                .arguments
+                                .get("subpath")
+                                .or_else(|| tool_call.arguments.get("scope"))
+                                .and_then(Value::as_str);
+                            let summary = if let Some(sub) = subpath {
+                                backend.get_subpath_graph_summary(sub)?
+                            } else {
+                                backend.get_graph_summary().await?
+                            };
                             ToolCallResult {
                                 content: vec![ContentBlock {
                                     kind: "text",
@@ -2361,7 +2373,19 @@ async fn handle_request(
                             let routes = backend.map_api_routes(file_path)?;
                             serde_json::to_string_pretty(&routes)?
                         }
-                        _ => format_summary(&backend.get_graph_summary().await?),
+                        _ => {
+                            let subpath = tool_call
+                                .arguments
+                                .get("subpath")
+                                .or_else(|| tool_call.arguments.get("scope"))
+                                .and_then(Value::as_str);
+                            let summary = if let Some(sub) = subpath {
+                                backend.get_subpath_graph_summary(sub)?
+                            } else {
+                                backend.get_graph_summary().await?
+                            };
+                            format_summary(&summary)
+                        }
                     };
                     ToolCallResult {
                         content: vec![ContentBlock {
@@ -2831,7 +2855,7 @@ async fn handle_request(
                     let sp = backend.scan_progress.lock().unwrap();
                     let scanning_note = if sp.scanning {
                         format!(
-                            "\n\n⚠ Scan in progress: {} of {} files processed (results may be partial)",
+                            "\n\n[Warning] Scan in progress: {} of {} files processed (results may be partial)",
                             sp.processed, sp.total
                         )
                     } else {
@@ -3514,23 +3538,58 @@ async fn handle_request(
                             .filter(|l| l.stale == 0)
                             .collect();
 
-                        // 2. Collect unique file paths from matched lessons
-                        let mut file_paths: Vec<String> = lessons
-                            .iter()
-                            .map(|l| l.file_path.clone())
-                            .collect::<std::collections::HashSet<String>>()
-                            .into_iter()
-                            .collect();
+                        let mut ast_symbols: Vec<ozymem_core::StoredFunction> = Vec::new();
+
+                        // 2. Collect unique file paths from matched lessons (or AST fallback)
+                        let mut file_paths: Vec<String> = if !lessons.is_empty() {
+                            lessons
+                                .iter()
+                                .map(|l| l.file_path.clone())
+                                .collect::<std::collections::HashSet<String>>()
+                                .into_iter()
+                                .collect()
+                        } else {
+                            if let Ok(syms) = backend.search_ast_symbols(query, 10) {
+                                let paths: Vec<String> = syms
+                                    .iter()
+                                    .filter_map(|s| {
+                                        let parts: Vec<&str> = s.strategy.split(" in ").collect();
+                                        parts.get(1).map(|p| p.to_string())
+                                    })
+                                    .collect::<std::collections::HashSet<String>>()
+                                    .into_iter()
+                                    .collect();
+                                ast_symbols = syms;
+                                paths
+                            } else {
+                                Vec::new()
+                            }
+                        };
                         file_paths.sort();
                         file_paths.truncate(5);
 
                         // 3. Build response
                         let mut body = String::new();
 
-                        // Lessons section
+                        // Lessons section or AST fallback
                         body.push_str(&format!("[Lessons matching \"{query}\"]\n"));
                         if lessons.is_empty() {
-                            body.push_str("(none)\n");
+                            if ast_symbols.is_empty() {
+                                body.push_str("(none)\n");
+                            } else {
+                                body.push_str("(no explicit lessons found — falling back to indexed AST symbols)\n\n[AST Symbols matching query]\n");
+                                for (i, s) in ast_symbols.iter().enumerate() {
+                                    body.push_str(&format!(
+                                        "{}. {} [{}] L{}-L{} ({})\n",
+                                        i + 1,
+                                        s.name,
+                                        s.kind,
+                                        s.start_line,
+                                        s.end_line,
+                                        s.strategy
+                                    ));
+                                }
+                            }
                         } else {
                             for (i, e) in lessons.iter().enumerate() {
                                 body.push_str(&format!(
@@ -4620,9 +4679,30 @@ async fn build_ozy_task_context(
         .into_iter()
         .filter(|l| l.stale == 0)
         .collect();
+    let mut ast_symbols: Vec<ozymem_core::StoredFunction> = Vec::new();
     let mut body = format!("[Ozy Context for \"{query}\"]\n");
     if lessons.is_empty() {
-        body.push_str("No matching memories found.\n");
+        if let Ok(syms) = backend.search_ast_symbols(query, 10) {
+            if syms.is_empty() {
+                body.push_str("No matching memories found.\n");
+            } else {
+                body.push_str("(no explicit lessons found — falling back to indexed AST symbols)\n\n[AST Symbols matching query]\n");
+                for (i, s) in syms.iter().enumerate() {
+                    body.push_str(&format!(
+                        "{}. {} [{}] L{}-L{} ({})\n",
+                        i + 1,
+                        s.name,
+                        s.kind,
+                        s.start_line,
+                        s.end_line,
+                        s.strategy
+                    ));
+                }
+                ast_symbols = syms;
+            }
+        } else {
+            body.push_str("No matching memories found.\n");
+        }
     } else {
         for (i, e) in lessons.iter().enumerate() {
             body.push_str(&format!(
@@ -4635,12 +4715,24 @@ async fn build_ozy_task_context(
             ));
         }
     }
-    let mut files: Vec<String> = lessons
-        .iter()
-        .map(|l| l.file_path.clone())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
+    let mut files: Vec<String> = if !lessons.is_empty() {
+        lessons
+            .iter()
+            .map(|l| l.file_path.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect()
+    } else {
+        ast_symbols
+            .iter()
+            .filter_map(|s| {
+                let parts: Vec<&str> = s.strategy.split(" in ").collect();
+                parts.get(1).map(|p| p.to_string())
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect()
+    };
     files.sort();
     for fp in files.iter().take(5) {
         if body.len() / 4 >= max_tokens {
@@ -4666,6 +4758,7 @@ async fn build_ozy_task_context(
 }
 
 async fn handle_ozy_doctor(
+    backend: Option<&GraphBackend>,
     tool_call: &mcp_common::ToolCallParams,
 ) -> anyhow::Result<ToolCallResult> {
     let include_projects = tool_call
@@ -4689,6 +4782,13 @@ async fn handle_ozy_doctor(
     let mut checks = Vec::new();
     checks.push(serde_json::json!({"name":"config", "severity": if config_path.exists() {"ok"} else {"warning"}, "detail": config_path.display().to_string()}));
     checks.push(serde_json::json!({"name":"registry_db", "severity": if registry_path.exists() {"ok"} else {"warning"}, "detail": registry_path.display().to_string()}));
+
+    let ast_diags_count = backend.and_then(|b| b.count_ast_diagnostics().ok()).unwrap_or(0);
+    checks.push(serde_json::json!({
+        "name": "ast_diagnostics",
+        "severity": if ast_diags_count == 0 { "ok" } else { "warning" },
+        "detail": format!("{} static AST/syntax warning(s) detected during index scan", ast_diags_count)
+    }));
     let mut projects_json = Vec::new();
     if include_projects {
         match ozymem_core::registry::ProjectRegistry::open().and_then(|r| r.list_projects()) {
@@ -5608,6 +5708,41 @@ async fn build_architecture_report(backend: &GraphBackend) -> anyhow::Result<Str
     Ok(body)
 }
 
+fn classify_duplicate_block(block: &str) -> (&'static str, &'static str) {
+    let lower = block.to_lowercase();
+    let is_procedural = lower.contains("if ")
+        || lower.contains("for ")
+        || lower.contains("while ")
+        || lower.contains("match ")
+        || lower.contains("switch ")
+        || lower.contains("try ")
+        || lower.contains("catch ")
+        || lower.contains("except ")
+        || lower.contains("return ")
+        || lower.contains("def ")
+        || lower.contains("fn ");
+
+    let is_structural = lower.contains("class ")
+        || lower.contains("basemodel")
+        || lower.contains("interface ")
+        || lower.contains("struct ")
+        || lower.contains("schema")
+        || lower.contains("type ")
+        || lower.contains("enum ");
+
+    if is_structural && !is_procedural {
+        (
+            "[STRUCTURAL BOILERPLATE]",
+            "DTO/Model/Schema structure repeated by design. Safe to keep modular or unify if domain contracts match.",
+        )
+    } else {
+        (
+            "[HIGH-PRIORITY REFACTOR CANDIDATE]",
+            "Procedural logic or utility repeated across modules. Consider consolidating into a shared helper function.",
+        )
+    }
+}
+
 async fn build_code_doctor_report(
     backend: &GraphBackend,
     scope: Option<&str>,
@@ -5658,24 +5793,61 @@ async fn build_code_doctor_report(
         .filter(|(_, locs)| locs.len() > 1)
         .collect();
     duplicates.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    let mut refactor_candidates = Vec::new();
+    let mut boilerplate_findings = Vec::new();
+    for (block, locs) in duplicates {
+        let (category, suggestion) = classify_duplicate_block(&block);
+        if category == "[HIGH-PRIORITY REFACTOR CANDIDATE]" {
+            refactor_candidates.push((category, suggestion, locs));
+        } else {
+            boilerplate_findings.push((category, suggestion, locs));
+        }
+    }
+
     let arch = build_architecture_report(backend).await?;
     let mut body = format!(
-        "# Ozy Doctor Code\n\nMode: preview_safe (no files modified)\n\n## Duplicate findings\n"
+        "# Ozy Doctor Code\n\nMode: preview_safe (no files modified)\n\n## Duplicate findings (Refactor Candidates: {}, Structural Boilerplate: {})\n\n",
+        refactor_candidates.len(),
+        boilerplate_findings.len()
     );
-    if duplicates.is_empty() {
+
+    if refactor_candidates.is_empty() && boilerplate_findings.is_empty() {
         body.push_str("No duplicate blocks found with current threshold.\n");
-    }
-    for (idx, (_block, locs)) in duplicates.iter().take(max_findings).enumerate() {
-        body.push_str(&format!(
-            "{}. Duplicate block in {} locations:\n",
-            idx + 1,
-            locs.len()
-        ));
-        for (fp, line) in locs.iter().take(6) {
-            body.push_str(&format!("   - {fp}:L{line}\n"));
+    } else {
+        if !refactor_candidates.is_empty() {
+            body.push_str("### [High-Priority Refactor Candidates] (Procedural / Utility Logic)\n");
+            for (idx, (cat, sugg, locs)) in refactor_candidates.iter().take(max_findings).enumerate() {
+                body.push_str(&format!(
+                    "{}. {} Duplicate block in {} locations:\n",
+                    idx + 1,
+                    cat,
+                    locs.len()
+                ));
+                for (fp, line) in locs.iter().take(6) {
+                    body.push_str(&format!("   - {fp}:L{line}\n"));
+                }
+                body.push_str(&format!("   suggestion: {sugg}\n\n"));
+            }
         }
-        body.push_str("   suggestion: consider extracting shared helper only after reviewing behavior parity.\n");
+
+        if !boilerplate_findings.is_empty() {
+            body.push_str("### [Structural Boilerplate] (Schemas / DTOs / Types)\n");
+            for (idx, (cat, sugg, locs)) in boilerplate_findings.iter().take(max_findings).enumerate() {
+                body.push_str(&format!(
+                    "{}. {} Duplicate structure in {} locations:\n",
+                    idx + 1,
+                    cat,
+                    locs.len()
+                ));
+                for (fp, line) in locs.iter().take(6) {
+                    body.push_str(&format!("   - {fp}:L{line}\n"));
+                }
+                body.push_str(&format!("   suggestion: {sugg}\n\n"));
+            }
+        }
     }
+
     body.push_str("\n## Architecture and best-practice feedback\n");
     body.push_str(&arch);
     body.push_str("\n## Autosanado preview\n- safe: refresh stale indexes before making decisions.\n- needs_confirmation: remove redundant code only after tests and user approval.\n- manual: review official skills.sh guidance before applying framework-specific changes.\n");
@@ -6989,10 +7161,10 @@ async fn handle_package_tool(
             body.push_str(&format!("  Used in imports: {}\n\n", used.len()));
 
             if missing.is_empty() {
-                body.push_str("✅ All used dependencies are declared in package.json\n");
+                body.push_str("[OK] All used dependencies are declared in package.json\n");
             } else {
                 body.push_str(&format!(
-                    "❌ Missing from package.json (used but not declared, {})",
+                    "[Missing] Missing from package.json (used but not declared, {})",
                     missing.len()
                 ));
                 for p in &missing {
@@ -7001,10 +7173,10 @@ async fn handle_package_tool(
                 body.push('\n');
             }
             if unused.is_empty() {
-                body.push_str("✅ All declared dependencies are used\n");
+                body.push_str("[OK] All declared dependencies are used\n");
             } else {
                 body.push_str(&format!(
-                    "⚠ Unused in source (declared but not imported, {})",
+                    "[Unused] Unused in source (declared but not imported, {})",
                     unused.len()
                 ));
                 for p in &unused {
@@ -7234,7 +7406,7 @@ async fn handle_learn_from_changes(
                         .await?;
                 }
                 entries.push(format!(
-                    "📘 {}: {} `{}` (line {}) [confidence: 0.92]",
+                    "[New] {}: {} `{}` (line {}) [confidence: 0.92]",
                     file, kind_str, f.name, f.start_line
                 ));
             }
@@ -7258,7 +7430,7 @@ async fn handle_learn_from_changes(
                         .await?;
                 }
                 entries.push(format!(
-                    "📗 {}: removed {} `{}` [confidence: 0.88]",
+                    "[Removed] {}: removed {} `{}` [confidence: 0.88]",
                     file, kind_str, f.name
                 ));
             }
@@ -7296,7 +7468,7 @@ async fn handle_learn_from_changes(
                         .await?;
                 }
                 entries.push(format!(
-                    "📙 {}: {} `{}` modified (L{}-L{} → L{}-L{}) [confidence: {:.2}]",
+                    "[Modified] {}: {} `{}` modified (L{}-L{} → L{}-L{}) [confidence: {:.2}]",
                     file,
                     kind_str,
                     f.name,
@@ -7367,7 +7539,7 @@ async fn handle_learn_from_changes(
     } else {
         let header = if preview {
             format!(
-                "🔍 PREVIEW — {} entries from {} files (diff {from}..{to}):\n",
+                "[PREVIEW] — {} entries from {} files (diff {from}..{to}):\n",
                 entries.len(),
                 parsed_files.len()
             )
@@ -7389,7 +7561,7 @@ async fn handle_learn_from_changes(
                 body.push_str(l);
                 body.push('\n');
             }
-            body.push_str("⚠ Run analyze_impact for full transitive depth.\n");
+            body.push_str("[Notice] Run analyze_impact for full transitive depth.\n");
         }
         body
     };

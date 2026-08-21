@@ -8,7 +8,13 @@
 - `crates/ozymem-server`: Servidor MCP sobre stdio con 30+ tools, resources, prompts, resource subscriptions y notificaciones push.
 - `python/ozy-brain`: Motor auxiliar de razonamiento pesado en Python (advisory worker) para planificación, reflexión, revisión de riesgos, recall profundo, modelo mental y patrones.
 
-## Features Clave
+## Features Clave (v0.2.0)
+- **Documentación Completa**: Consulte la carpeta [`docs/`](docs/INDEX.md) para guías detalladas de arquitectura, herramientas MCP y mejoras.
+- **Resolución de Rutas en Cascada**: `resolve_target_path` resuelve rutas relativas, normalizadas y sufijos en `get_file_context`, `analyze_impact`, `find_graph_path` y lecciones.
+- **Fallback a Símbolos AST**: Búsqueda automática en AST cuando `context_for_task` / `ozy_context` no tiene lecciones explícitas.
+- **Clasificación de Duplicados**: `ozy_code_doctor` categoriza `[High-Priority Refactor Candidates]` vs `[Structural Boilerplate]`.
+- **Diagnósticos AST / Linter**: Detección de errores y advertencias de sintaxis con Tree-Sitter reportados en `ozy_doctor`.
+- **Soporte de Subdirectorios Monorepo**: Filtrado por `subpath` en `ozy_graph` y `ozy_context`.
 - **Tool `ozy_brain` (11 acciones)**: `plan`, `reflect`, `recall_deep`, `summarize_project`, `detect_patterns`, `suggest_next_steps`, `analyze_failure`, `compress_session`, `rank_memories`, `build_mental_model`, `risk_review`.
 - **MCP Tools (30+)**: Exploración (`analyze_impact`, `graph_summary`, `list_files`, `graph_neighbors`), cerebro híbrido (`ozy_brain`), memoria (`record_lesson`, `record_decision`, `record_convention`, `record_gotcha`, `record_module_rule`, `search_lessons`, `similar_lessons`), proyectos (`list_projects`, `get_project_memories`, `delete_project`, `suggest_stale_projects`), paquetes (`create_project`, `add_package`, `remove_package`, `get_dependencies`, `run_script`, `analyze_package`, `verify_dependencies`), git (5 tools), `.ozymignore` (`create_ozymignore`).
 - **Recursos MCP**: 5 recursos (`ozymem://summary`, `recent-lessons`, `full-context`, `file/{path}`, `file/{path}/neighbors`) con soporte de templates y subscriptions.

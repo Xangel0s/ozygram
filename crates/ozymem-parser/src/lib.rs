@@ -51,6 +51,14 @@ pub struct ParsedDependencyHint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AstDiagnostic {
+    pub file_path: String,
+    pub line_number: usize,
+    pub severity: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedFunction {
     pub name: String,
     pub kind: SymbolKind,
@@ -601,10 +609,111 @@ fn indent_width(line: &str) -> usize {
         .count()
 }
 
+pub fn extract_ast_diagnostics(
+    file_path: &str,
+    language: SupportedLanguage,
+    source_code: &str,
+) -> Vec<AstDiagnostic> {
+    let Some(ts_language) = language.native_tree_sitter_language() else {
+        return Vec::new();
+    };
+
+    let mut parser = Parser::new();
+    if parser.set_language(&ts_language).is_err() {
+        return Vec::new();
+    }
+
+    let Some(tree) = parser.parse(source_code, None) else {
+        return vec![AstDiagnostic {
+            file_path: file_path.to_string(),
+            line_number: 1,
+            severity: "error".to_string(),
+            message: "Failed to parse source file into AST".to_string(),
+        }];
+    };
+
+    if !tree.root_node().has_error() {
+        return Vec::new();
+    }
+
+    let mut diagnostics = Vec::new();
+    let mut cursor = tree.walk();
+    let mut reached_limit = false;
+
+    loop {
+        let node = cursor.node();
+        if node.is_error() || node.is_missing() {
+            let row = node.start_position().row + 1;
+            let kind_desc = if node.is_missing() {
+                "missing token syntax error"
+            } else {
+                "syntax error or invalid token"
+            };
+            let snippet = node.utf8_text(source_code.as_bytes()).unwrap_or("").trim();
+            let msg = if snippet.is_empty() {
+                format!("{kind_desc} near line {row}")
+            } else {
+                let clean_snip = snippet
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(40)
+                    .collect::<String>();
+                format!("{kind_desc}: '{clean_snip}'")
+            };
+
+            diagnostics.push(AstDiagnostic {
+                file_path: file_path.to_string(),
+                line_number: row,
+                severity: "warning".to_string(),
+                message: msg,
+            });
+
+            if diagnostics.len() >= 10 {
+                break;
+            }
+        }
+
+        if cursor.goto_first_child() {
+            continue;
+        }
+        if cursor.goto_next_sibling() {
+            continue;
+        }
+        loop {
+            if !cursor.goto_parent() {
+                reached_limit = true;
+                break;
+            }
+            if cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        if reached_limit {
+            break;
+        }
+    }
+
+    diagnostics
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn test_extract_ast_diagnostics_on_broken_syntax() {
+        let broken_py = "def broken_func(\n    return 42\n";
+        let diags = extract_ast_diagnostics("broken.py", SupportedLanguage::Python, broken_py);
+        assert!(!diags.is_empty(), "Should detect syntax error in broken Python code");
+        assert_eq!(diags[0].file_path, "broken.py");
+
+        let valid_py = "def valid_func():\n    return 42\n";
+        let diags_clean = extract_ast_diagnostics("valid.py", SupportedLanguage::Python, valid_py);
+        assert!(diags_clean.is_empty(), "Clean Python code should have no diagnostics");
+    }
 
     #[test]
     fn parses_python_functions_and_classes() {
