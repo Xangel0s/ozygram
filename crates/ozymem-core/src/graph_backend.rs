@@ -1343,16 +1343,19 @@ impl GraphBackend {
             hex::encode(hasher.finalize())
         };
 
-        let abs_path = crate::normalize_path(&file_path.to_string_lossy());
+        let raw_path = crate::normalize_path(&file_path.to_string_lossy());
+        let abs_path = std::fs::canonicalize(file_path)
+            .map(|c| crate::normalize_path(&c.to_string_lossy()))
+            .unwrap_or_else(|_| raw_path.clone());
         let mtime = file_mtime(file_path).unwrap_or_default();
 
         // 5. Compare with existing SHA-256 in SQLite
         {
             let inner = self.inner.lock().unwrap();
             let mut stmt = inner.sqlite.prepare(
-                "SELECT sha256 FROM files WHERE path = ?1 AND tenant_id = ?2",
+                "SELECT sha256 FROM files WHERE (path = ?1 OR path = ?2) AND tenant_id = ?3",
             )?;
-            let mut rows = stmt.query(params![abs_path, self.tenant_id])?;
+            let mut rows = stmt.query(params![abs_path, raw_path, self.tenant_id])?;
             if let Some(row) = rows.next()? {
                 let existing_sha: String = row.get(0)?;
                 if !existing_sha.is_empty() && existing_sha == sha256_hash {
@@ -1385,16 +1388,16 @@ impl GraphBackend {
         {
             let inner = self.inner.lock().unwrap();
             inner.sqlite.execute(
-                "DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2",
-                params![abs_path, self.tenant_id],
+                "DELETE FROM functions WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3",
+                params![abs_path, raw_path, self.tenant_id],
             )?;
             inner.sqlite.execute(
-                "DELETE FROM file_dependencies WHERE origin_path = ?1 AND tenant_id = ?2",
-                params![abs_path, self.tenant_id],
+                "DELETE FROM file_dependencies WHERE (origin_path = ?1 OR origin_path = ?2) AND tenant_id = ?3",
+                params![abs_path, raw_path, self.tenant_id],
             )?;
             inner.sqlite.execute(
-                "DELETE FROM ast_diagnostics WHERE file_path = ?1 AND tenant_id = ?2",
-                params![abs_path, self.tenant_id],
+                "DELETE FROM ast_diagnostics WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3",
+                params![abs_path, raw_path, self.tenant_id],
             )?;
 
             inner.sqlite.execute(
@@ -1440,20 +1443,27 @@ impl GraphBackend {
 
     /// Removes a file and its relations from SQLite and in-memory graph (Delta Indexing).
     pub fn remove_file_delta(&self, file_path: &Path, _project_root: &Path) -> Result<bool> {
-        let abs_path = crate::normalize_path(&file_path.to_string_lossy());
+        let raw_path = crate::normalize_path(&file_path.to_string_lossy());
+        let abs_path = std::fs::canonicalize(file_path)
+            .map(|c| crate::normalize_path(&c.to_string_lossy()))
+            .unwrap_or_else(|_| raw_path.clone());
         let affected = {
             let inner = self.inner.lock().unwrap();
             inner.sqlite.execute(
-                "DELETE FROM file_dependencies WHERE (origin_path = ?1 OR destination_path = ?1) AND tenant_id = ?2",
-                params![abs_path, self.tenant_id],
+                "DELETE FROM file_dependencies WHERE (origin_path = ?1 OR origin_path = ?2 OR destination_path = ?1 OR destination_path = ?2) AND tenant_id = ?3",
+                params![abs_path, raw_path, self.tenant_id],
             )?;
             inner.sqlite.execute(
-                "DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2",
-                params![abs_path, self.tenant_id],
+                "DELETE FROM functions WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3",
+                params![abs_path, raw_path, self.tenant_id],
             )?;
             inner.sqlite.execute(
-                "DELETE FROM files WHERE path = ?1 AND tenant_id = ?2",
-                params![abs_path, self.tenant_id],
+                "DELETE FROM ast_diagnostics WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3",
+                params![abs_path, raw_path, self.tenant_id],
+            )?;
+            inner.sqlite.execute(
+                "DELETE FROM files WHERE (path = ?1 OR path = ?2) AND tenant_id = ?3",
+                params![abs_path, raw_path, self.tenant_id],
             )?
         };
 
