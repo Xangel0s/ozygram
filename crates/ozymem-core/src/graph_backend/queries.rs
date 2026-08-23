@@ -393,12 +393,18 @@ impl GraphBackend {
     ) -> Vec<Vec<String>> {
         let from_res = self.resolve_target_path(from).unwrap_or_else(|| from.to_string());
         let to_res = self.resolve_target_path(to).unwrap_or_else(|| to.to_string());
+        let from_norm = crate::normalize_path(from);
+        let to_norm = crate::normalize_path(to);
         let inner = self.inner.lock().unwrap();
-        let start = match inner.file_index.get(&from_res).or_else(|| inner.file_index.get(from)) {
+        let start = match inner.file_index.get(&from_res)
+            .or_else(|| inner.file_index.get(&from_norm))
+            .or_else(|| inner.file_index.get(from)) {
             Some(n) => *n,
             None => return Vec::new(),
         };
-        let end = match inner.file_index.get(&to_res).or_else(|| inner.file_index.get(to)) {
+        let end = match inner.file_index.get(&to_res)
+            .or_else(|| inner.file_index.get(&to_norm))
+            .or_else(|| inner.file_index.get(to)) {
             Some(n) => *n,
             None => return Vec::new(),
         };
@@ -447,11 +453,19 @@ impl GraphBackend {
     /// Resolve an input file path in cascade: exact, relative to project_path, normalized, or suffix matching.
     pub fn resolve_target_path(&self, input_path: &str) -> Option<String> {
         let norm = crate::normalize_path(input_path);
+        let canonical = std::fs::canonicalize(input_path)
+            .ok()
+            .map(|p| crate::normalize_path(&p.to_string_lossy()));
         let inner = self.inner.lock().unwrap();
 
         // 1. Direct match in in-memory file index
         if inner.file_index.contains_key(&norm) {
             return Some(norm);
+        }
+        if let Some(canon) = canonical.as_ref() {
+            if inner.file_index.contains_key(canon) {
+                return Some(canon.clone());
+            }
         }
         if inner.file_index.contains_key(input_path) {
             return Some(input_path.to_string());
@@ -467,6 +481,11 @@ impl GraphBackend {
         if let Ok(found) = stmt.query_row(params![input_path, norm, self.tenant_id], |row| row.get::<_, String>(0)) {
             return Some(found);
         }
+        if let Some(canon) = canonical.as_ref() {
+            if let Ok(found) = stmt.query_row(params![canon, canon, self.tenant_id], |row| row.get::<_, String>(0)) {
+                return Some(found);
+            }
+        }
 
         // 3. Resolve relative path against project_path / workspace_root
         let root_opt = inner.project_path.as_deref().or(if !inner.workspace_root.is_empty() { Some(&inner.workspace_root) } else { None });
@@ -481,10 +500,30 @@ impl GraphBackend {
         }
 
         // 4. Suffix matching in in-memory index
-        let norm_clean = norm.replace('\\', "/");
+        let mut candidates = vec![norm.clone(), input_path.to_string()];
+        if let Some(canon) = canonical.as_ref() {
+            candidates.push(canon.clone());
+        }
+        let candidate_pairs: Vec<(String, String)> = candidates
+            .into_iter()
+            .map(|c| {
+                let normalized = c.replace('\\', "/");
+                let lower = normalized.to_lowercase();
+                (normalized, lower)
+            })
+            .collect();
         for k in inner.file_index.keys() {
             let k_norm = k.replace('\\', "/");
-            if k_norm.ends_with(&norm_clean) || k_norm.ends_with(&format!("/{}", norm_clean)) {
+            let k_lower = k_norm.to_lowercase();
+            let matched = candidate_pairs.iter().any(|(cand, cand_lower)| {
+                k_norm == *cand
+                    || k_lower == *cand_lower
+                    || k_norm.ends_with(cand)
+                    || k_lower.ends_with(cand_lower)
+                    || k_norm.ends_with(&format!("/{}", cand))
+                    || k_lower.ends_with(&format!("/{}", cand_lower))
+            });
+            if matched {
                 return Some(k.clone());
             }
         }
