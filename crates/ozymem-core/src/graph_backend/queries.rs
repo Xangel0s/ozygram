@@ -141,8 +141,17 @@ impl GraphBackend {
     }
 
     pub fn get_incoming_deps(&self, file_path: &str) -> Vec<String> {
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
+        let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
-        let Some(&idx) = inner.file_index.get(file_path) else {
+        let start_opt = inner
+            .file_index
+            .get(&resolved)
+            .or_else(|| inner.file_index.get(&norm_path))
+            .or_else(|| inner.file_index.get(file_path));
+        let Some(&idx) = start_opt else {
             return vec![];
         };
         inner
@@ -153,8 +162,17 @@ impl GraphBackend {
     }
 
     pub fn get_outgoing_deps(&self, file_path: &str) -> Vec<String> {
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
+        let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
-        let Some(&idx) = inner.file_index.get(file_path) else {
+        let start_opt = inner
+            .file_index
+            .get(&resolved)
+            .or_else(|| inner.file_index.get(&norm_path))
+            .or_else(|| inner.file_index.get(file_path));
+        let Some(&idx) = start_opt else {
             return vec![];
         };
         inner
