@@ -171,6 +171,9 @@ impl McpBackend for GraphBackend {
         solution: &str,
         kind: &str,
     ) -> Result<()> {
+        let stored_path = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| crate::normalize_path(file_path));
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -186,13 +189,13 @@ impl McpBackend for GraphBackend {
             let inner = self.inner.lock().unwrap();
             inner.sqlite.execute(
                 "INSERT INTO lessons (file_path, symbol_name, error_context, solution, created_at, tenant_id, kind, workspace_root, embedding, embedding_model) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![file_path, symbol_name.unwrap_or(""), error_context, solution, created_at, self.tenant_id, kind, inner.workspace_root, embedding_bytes, if has_embedding { "all-MiniLM-L6-v2" } else { "" }],
+                params![stored_path, symbol_name.unwrap_or(""), error_context, solution, created_at, self.tenant_id, kind, inner.workspace_root, embedding_bytes, if has_embedding { "all-MiniLM-L6-v2" } else { "" }],
             )?;
         }
 
         let node_idx = {
             let inner = self.inner.lock().unwrap();
-            inner.file_index.get(file_path).copied()
+            inner.file_index.get(&stored_path).copied()
         };
 
         if let Some(idx) = node_idx {
@@ -450,4 +453,3 @@ impl McpBackend for GraphBackend {
 // ---------------------------------------------------------------------------
 // Embedding / Semantic Search
 // ---------------------------------------------------------------------------
-

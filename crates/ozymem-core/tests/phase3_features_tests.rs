@@ -78,7 +78,8 @@ async def health():
 
 #[tokio::test]
 async fn test_project_registry_linking_and_unlinking() {
-    let reg = ProjectRegistry::open().unwrap();
+    let registry_dir = tempdir().unwrap();
+    let reg = ProjectRegistry::open_at(registry_dir.path().join(".ozymem/registry.db")).unwrap();
 
     let dir_api = tempdir().unwrap();
     let dir_web = tempdir().unwrap();
@@ -111,7 +112,8 @@ async fn test_project_registry_linking_and_unlinking() {
 
 #[tokio::test]
 async fn test_cross_repo_memory_search() {
-    let reg = ProjectRegistry::open().unwrap();
+    let registry_dir = tempdir().unwrap();
+    let reg = ProjectRegistry::open_at(registry_dir.path().join(".ozymem/registry.db")).unwrap();
 
     let dir_be = tempdir().unwrap();
     let dir_fe = tempdir().unwrap();

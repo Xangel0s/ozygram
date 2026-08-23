@@ -186,6 +186,13 @@ impl ProjectRegistry {
     /// Automatically runs migrations to ensure the schema is up to date.
     pub fn open() -> Result<Self> {
         let db_path = Self::db_path()?;
+        Self::open_at(db_path)
+    }
+
+    /// Opens (or creates) a registry database at an explicit path.
+    /// Useful for tests that need isolated registries.
+    pub fn open_at(db_path: impl AsRef<Path>) -> Result<Self> {
+        let db_path = db_path.as_ref();
 
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
@@ -193,7 +200,7 @@ impl ProjectRegistry {
                 .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
 
-        let db = Connection::open(&db_path)
+        let db = Connection::open(db_path)
             .with_context(|| format!("Failed to open SQLite database at {}", db_path.display()))?;
 
         // Enable WAL mode for concurrent read performance
