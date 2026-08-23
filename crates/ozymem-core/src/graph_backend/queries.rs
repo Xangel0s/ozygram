@@ -457,6 +457,14 @@ impl GraphBackend {
             return Some(input_path.to_string());
         }
 
+        // 1b. Canonicalized path match (resolves symlinks such as /tmp -> /private/tmp on macOS)
+        if let Ok(canon) = std::fs::canonicalize(input_path) {
+            let canon_norm = crate::normalize_path(&canon.to_string_lossy());
+            if inner.file_index.contains_key(&canon_norm) {
+                return Some(canon_norm);
+            }
+        }
+
         // 2. Direct match in SQLite files table
         let mut stmt = match inner.sqlite.prepare(
             "SELECT path FROM files WHERE (path = ?1 OR path = ?2) AND tenant_id = ?3 LIMIT 1"
@@ -471,9 +479,16 @@ impl GraphBackend {
         // 3. Resolve relative path against project_path / workspace_root
         let root_opt = inner.project_path.as_deref().or(if !inner.workspace_root.is_empty() { Some(&inner.workspace_root) } else { None });
         if let Some(root) = root_opt {
-            let joined = crate::normalize_path(&std::path::Path::new(root).join(input_path).to_string_lossy());
+            let joined_path = std::path::Path::new(root).join(input_path);
+            let joined = crate::normalize_path(&joined_path.to_string_lossy());
             if inner.file_index.contains_key(&joined) {
                 return Some(joined);
+            }
+            if let Ok(canon) = std::fs::canonicalize(&joined_path) {
+                let canon_norm = crate::normalize_path(&canon.to_string_lossy());
+                if inner.file_index.contains_key(&canon_norm) {
+                    return Some(canon_norm);
+                }
             }
             if let Ok(found) = stmt.query_row(params![joined, joined, self.tenant_id], |row| row.get::<_, String>(0)) {
                 return Some(found);

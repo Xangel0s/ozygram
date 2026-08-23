@@ -435,7 +435,12 @@ fn test_schema_migration_v1_to_v2() {
 
 fn setup_project() -> (TempDir, String) {
     let dir = TempDir::new().unwrap();
-    let root = dir.path().to_string_lossy().to_string();
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf())
+        .to_string_lossy()
+        .to_string();
 
     // main.rs has `mod lib;` — makes it depend on lib.rs (sibling)
     let mut f2 = std::fs::File::create(dir.path().join("main.rs")).unwrap();
@@ -457,7 +462,8 @@ fn setup_project() -> (TempDir, String) {
 }
 
 fn full_path(root: &str, rel: &str) -> String {
-    Path::new(root).join(rel).to_string_lossy().to_string()
+    let p = Path::new(root).join(rel);
+    p.canonicalize().unwrap_or(p).to_string_lossy().to_string()
 }
 
 /// P1: record_lesson updates lesson_count atomically in RAM,

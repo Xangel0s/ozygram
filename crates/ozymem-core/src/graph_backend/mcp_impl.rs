@@ -194,8 +194,14 @@ impl McpBackend for GraphBackend {
         }
 
         let node_idx = {
+            let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+            let norm_path = crate::normalize_path(file_path);
             let inner = self.inner.lock().unwrap();
-            inner.file_index.get(&stored_path).copied()
+            inner.file_index.get(&stored_path)
+                .or_else(|| inner.file_index.get(&resolved))
+                .or_else(|| inner.file_index.get(&norm_path))
+                .or_else(|| inner.file_index.get(file_path))
+                .copied()
         };
 
         if let Some(idx) = node_idx {
