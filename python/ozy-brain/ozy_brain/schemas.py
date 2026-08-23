@@ -25,6 +25,7 @@ class BrainResponse:
     risk_assessment: dict[str, Any] | None = None
     mental_model: dict[str, Any] | None = None
     provenance: list[dict[str, Any]] | None = None
+    procedural_rules: list[dict[str, Any]] | None = None
     brain_version: str = BRAIN_VERSION
     brain_schema_version: str = BRAIN_SCHEMA_VERSION
 
@@ -45,6 +46,7 @@ class BrainResponse:
             "risk_assessment": self.risk_assessment or {},
             "mental_model": self.mental_model or {},
             "provenance": self.provenance or [],
+            "procedural_rules": self.procedural_rules or [],
             "brain_version": self.brain_version,
             "brain_schema_version": self.brain_schema_version,
         }

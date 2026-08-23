@@ -18,3 +18,5 @@ tree-sitter-go.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-javascript.workspace = true
 tree-sitter-rust.workspace = true
+rkyv.workspace = true
+twox-hash.workspace = true

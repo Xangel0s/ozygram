@@ -25,6 +25,9 @@ git2 = { version = "0.19", features = ["vendored-openssl", "vendored-libgit2"] }
 fastembed = "4.9.1"
 notify = "6.1"
 notify-debouncer-mini = "0.4"
+rkyv.workspace = true
+memmap2.workspace = true
+twox-hash.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

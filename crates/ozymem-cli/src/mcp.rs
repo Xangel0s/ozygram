@@ -201,18 +201,18 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn get_connection(cell: &OnceCell<crate::BackendClient>) -> anyhow::Result<&crate::BackendClient> {
+async fn get_connection(cell: &OnceCell<crate::client::BackendClient>) -> anyhow::Result<&crate::client::BackendClient> {
     cell.get_or_try_init(|| async {
         let proj_path = {
             let session = SESSION.lock().unwrap();
             session.project_path.clone().map(PathBuf::from)
         };
-        crate::build_backend_client_with_path(proj_path).await
+        crate::client::build_backend_client_with_path(proj_path).await
     }).await
 }
 
 async fn handle_request(
-    connection_cell: &OnceCell<crate::BackendClient>,
+    connection_cell: &OnceCell<crate::client::BackendClient>,
     request: JsonRpcRequest,
 ) -> anyhow::Result<Option<JsonRpcResponse>> {
     if request.jsonrpc != "2.0" {

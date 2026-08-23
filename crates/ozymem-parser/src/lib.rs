@@ -1,7 +1,10 @@
-mod dependency_resolution;
+pub mod dependency_resolution;
 pub mod api_routes;
 pub mod contract_parser;
 pub mod excel_parser;
+pub mod engram;
+
+pub use engram::{extract_engram_contracts, EngramContract, EngramTable, ArchivedEngramContract, ArchivedEngramTable};
 
 pub use api_routes::{parse_api_routes, parse_axum_routes, parse_express_routes, parse_fastapi_routes, ApiRouteDefinition};
 pub use contract_parser::{parse_export_contracts, ExportContractHint};

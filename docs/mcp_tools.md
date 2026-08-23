@@ -1,64 +1,55 @@
-# Referencia de Herramientas MCP
+# Referencia de Herramientas MCP en Ozygram
 
-Ozygram expone un conjunto integral de herramientas accesibles para cualquier cliente MCP (Claude Desktop, Antigravity, Cursor, etc.).
-
----
-
-## 🧠 1. Memoria Contextual y Engramas
-
-| Herramienta | Parámetros Principales | Descripción |
-| :--- | :--- | :--- |
-| `ozy_memory` | `action`, `query`, `kind`, `limit` | Búsqueda y gestión de memorias (`lesson`, `decision`, `convention`, `gotcha`, `module_rule`). |
-| `ozy_context` | `action`, `query`, `subpath`, `max_tokens` | Provee contexto enriquecido para tareas, con fallback inteligente a AST y filtrado por subpath. |
-| `record_lesson` | `file_path`, `symbol_name`, `context`, `solution` | Registra una lección aprendida tras resolver un problema en un archivo o símbolo. |
-| `record_decision` | `file_path`, `symbol_name`, `context`, `decision` | Documenta una decisión arquitectónica o de diseño. |
-| `record_convention` | `file_path`, `symbol_name`, `context`, `convention` | Define una convención de código para un archivo o módulo. |
-| `record_gotcha` | `file_path`, `symbol_name`, `context`, `gotcha` | Advierte sobre trampas conocidas o peculiaridades del entorno. |
-| `record_module_rule` | `file_path`, `context`, `rule` | Establece una regla estricta para un módulo. |
+Ozygram expone una suite completa de más de 30 herramientas a través del Model Context Protocol (MCP).
 
 ---
 
-## 🕸️ 2. Grafo de Dependencias e Impacto
+## 1. Herramientas de Memoria y Engrams
 
-| Herramienta | Parámetros Principales | Descripción |
-| :--- | :--- | :--- |
-| `ozy_graph` | `action` (`summary`, `neighbors`, `impact`, `path`), `subpath`, `depth` | Inspección del grafo de dependencias de archivos. Admite rutas relativas y subrutas monorepo. |
-| `analyze_impact` | `file_path`, `depth` | Análisis de impacto de modificar un archivo, calculando dependientes transitivos y severidad. |
-| `file_context` | `file_path` | Retorna el lenguaje, funciones indexadas, engramas históricos y vecinos en el grafo. |
-| `ozymem_map_api_routes` | `file_path` | Mapea endpoints HTTP de FastAPI, Express o Axum con sus métodos y DTOs. |
-
----
-
-## 🩺 3. Diagnóstico y Calidad de Código
-
-| Herramienta | Parámetros Principales | Descripción |
-| :--- | :--- | :--- |
-| `ozy_doctor` | `include_projects`, `format` | Verifica el estado del sistema, bases de datos y advertencias de sintaxis AST registradas. |
-| `ozy_code_doctor` | `min_duplicate_lines`, `max_findings`, `scope` | Detecta bloques de código duplicado separando `[High-Priority Refactor Candidates]` de `[Structural Boilerplate]`. |
-| `detect_code_drift` | `changed_files`, `diff_content` | Compara un diff contra las convenciones registradas y alerta si hay desvíos. |
-| `ozymem_python_typecheck` | `file_path`, `strict` | Ejecuta verificación de tipos y sintaxis Python usando Pyrefly o el compilador AST nativo. |
+- **`lookup_engram` / `ozy_lookup_engram`**: Consulta un contrato determinista de símbolo $O(1)$ por nombre o ruta canónica (`file_path::symbol_name`).
+- **`record_lesson`**: Registra una lección aprendida ante un error o solución técnica.
+- **`record_decision`**: Registra una decisión de arquitectura o diseño.
+- **`record_convention`**: Registra una convención de estilo o regla de código.
+- **`record_gotcha`**: Registra una trampa técnica o caso borde detectado.
+- **`record_module_rule`**: Registra una regla estricta aplicable a un módulo.
+- **`search_lessons`**: Búsqueda textual y BM25 ponderada sobre lecciones y memorias.
+- **`similar_lessons`**: Búsqueda de lecciones similares mediante embeddings semánticos (`FastEmbed`).
 
 ---
 
-## 🧩 4. Cerebro Híbrido (`ozy_brain`)
+## 2. Herramientas de Grafo y Contexto de Código
 
-| Acción (`action`) | Propósito |
-| :--- | :--- |
-| `plan` | Genera un plan de acción estructurado y seguro antes de realizar cambios en el código. |
-| `reflect` | Analiza el impacto de los cambios completados y extrae lecciones aprendidas. |
-| `risk_review` | Evalúa riesgos de regresión, acoplamiento y rotura de contratos de datos. |
-| `summarize_project` | Sintetiza el propósito, arquitectura y estado del repositorio. |
-| `recall_deep` | Recuperación profunda de decisiones históricas y contexto disperso. |
-| `consolidate_engrams` | Sintetiza y compacta observaciones repetidas o fragmentadas. |
+- **`file_context`**: Retorna el contexto AST y prefill determinista de engrams para un archivo dado.
+- **`context_for_task`**: Agrupa lecciones relevantes, símbolos AST y archivos críticos para una tarea de desarrollo.
+- **`analyze_impact`**: Realiza un análisis de impacto transitivo a $N$ niveles de profundidad en el grafo.
+- **`graph_summary`**: Retorna estadísticas de archivos, funciones, aristas y uso de memoria.
+- **`graph_neighbors`**: Lista dependencias directas entrantes y salientes de un archivo.
+- **`list_files`**: Lista todos los archivos indexados en el grafo del proyecto.
 
 ---
 
-## 📦 5. Proyectos y Gestión de Paquetes
+## 3. Sandbox de Validación Test-Time y Diagnósticos
 
-| Herramienta | Parámetros Principales | Descripción |
-| :--- | :--- | :--- |
-| `ozy_project` | `action` (`list`, `refresh`, `create_ignore`) | Administra proyectos registrados en el registry global. |
-| `link_projects` | `source_project`, `target_project` | Establece enlaces lógicos entre proyectos en arquitecturas multi-repo. |
-| `export_knowledge_bundle` | `project_name`, `output_path` | Exporta todo el conocimiento y grafo a un archivo empaquetado `.ozymem`. |
-| `import_knowledge_bundle` | `file_path`, `target_project` | Importa conocimiento de un bundle a un proyecto local. |
-| `rank_memories` | `min_confidence` | Audita y poda memorias obsoletas o de baja confianza. |
+- **`ozy_verify_diff`**: Evalúa un parche o diff propuesto en un sandbox antes de aplicarlo a disco, detectando errores de sintaxis y discrepancias de contratos.
+- **`ozy_doctor`**: Diagnostica la salud del backend, integridad de la base de datos, estado del watcher y errores de sintaxis AST detectados.
+- **`ozy_code_doctor`**: Detecta bloques de código duplicados clasificando candidatos a refactorización vs boilerplate estructural.
+- **`detect_code_drift`**: Audita modificaciones contra convenciones registradas.
+
+---
+
+## 4. Herramientas Git y Colaboración P2P
+
+- **`ozy_export_memory_notes`**: Exporta las memorias, contratos y reglas procedimentales hacia `refs/notes/ozymem` en el commit actual.
+- **`ozy_import_memory_notes`**: Importa y fusiona notas de memoria desde `refs/notes/ozymem` de forma descentralizada.
+- **`learn_from_changes`**: Analiza el diff de git y extrae automáticamente lecciones de código.
+- **`git_recent_changes`**: Lista los archivos modificados recientemente en git.
+- **`git_diff_summary`**: Resume los cambios del repositorio.
+
+---
+
+## 5. Herramientas Unificadas `ozy_*` y Razonamiento
+
+- **`ozy_context`**: Punto de entrada unificado para búsqueda semántica, contratos, dependientes e historial git.
+- **`ozy_graph`**: Acciones compuestas sobre el grafo (`summary`, `impact`, `neighbors`, `trace`, `path`).
+- **`ozy_brain`**: Motor de razonamiento cognitivo con 11 acciones (`plan`, `reflect`, `recall_deep`, `summarize_project`, `detect_patterns`, `suggest_next_steps`, `analyze_failure`, `compress_session`, `rank_memories`, `build_mental_model`, `risk_review`).
+- **`ozy_skills`**: Lista metadatos de habilidades oficiales de desarrollo integradas.

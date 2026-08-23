@@ -6,13 +6,15 @@ pub mod graph_backend;
 pub mod mcp_common;
 pub mod registry;
 pub mod sync;
+pub mod engram_store;
 
 pub use bundle::{export_bundle, import_bundle, BundleExportSummary, BundleImportSummary, KnowledgeBundle};
+pub use engram_store::{FastEngramReader, IncrementalEngramStore, ENGRAM_FILE};
 pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};
 pub use mcp_common::McpBackend;
 pub use ozymem_parser::AstDiagnostic;
 pub use registry::{CrossRepoMemory, ProjectLink};
-pub use sync::{read_file_with_backoff, DeltaFileEvent, DeltaIndexResult, LiveWatcher};
+pub use sync::{read_file_with_backoff, DeltaFileEvent, DeltaIndexResult, LiveWatcher, OzymemGitNotePayload};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredFunction {
@@ -28,6 +30,8 @@ pub struct FileGraphContext {
     pub file_path: String,
     pub language: String,
     pub functions: Vec<StoredFunction>,
+    #[serde(default)]
+    pub engram_contracts: Vec<ozymem_parser::EngramContract>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -173,3 +173,46 @@ pub fn read_file_with_backoff(path: &Path, max_retries: usize) -> std::io::Resul
     }
     std::fs::read_to_string(path)
 }
+
+use crate::graph_backend::types::LessonEntry;
+
+/// Payload estructurado para persistir y sincronizar conocimiento y contratos en `refs/notes/ozymem`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OzymemGitNotePayload {
+    pub version: String,
+    pub timestamp: String,
+    pub commit_hash: String,
+    pub branch: Option<String>,
+    pub lessons: Vec<LessonEntry>,
+    pub engram_contracts: Vec<ozymem_parser::EngramContract>,
+    pub procedural_rules: Vec<serde_json::Value>,
+}
+
+impl OzymemGitNotePayload {
+    pub fn new(
+        commit_hash: String,
+        branch: Option<String>,
+        lessons: Vec<LessonEntry>,
+        engram_contracts: Vec<ozymem_parser::EngramContract>,
+        procedural_rules: Vec<serde_json::Value>,
+    ) -> Self {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        Self {
+            version: "0.2.0".to_string(),
+            timestamp,
+            commit_hash,
+            branch,
+            lessons,
+            engram_contracts,
+            procedural_rules,
+        }
+    }
+
+    pub fn serialize(&self) -> Result<String> {
+        serde_json::to_string_pretty(self).map_err(Into::into)
+    }
+
+    pub fn deserialize(json_str: &str) -> Result<Self> {
+        serde_json::from_str(json_str).map_err(Into::into)
+    }
+}

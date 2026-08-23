@@ -214,6 +214,98 @@ impl GitBackend {
 
         Ok(entries)
     }
+
+    /// Retorna la rama actual si está disponible.
+    pub fn current_branch(&self) -> Option<String> {
+        self.repo.head().ok().and_then(|h| h.shorthand().map(str::to_string))
+    }
+
+    /// Retorna el commit hash actual del HEAD.
+    pub fn head_commit_hash(&self) -> Option<String> {
+        self.repo.head().ok().and_then(|h| h.peel_to_commit().ok()).map(|c| c.id().to_string())
+    }
+
+    /// Escribe una nota en `refs/notes/ozymem` vinculada a un commit.
+    pub fn write_note(
+        &self,
+        commit_ref: Option<&str>,
+        note_ref: Option<&str>,
+        message: &str,
+        force: bool,
+    ) -> Result<String, String> {
+        let note_ref_name = note_ref.unwrap_or("refs/notes/ozymem");
+        let target_oid = if let Some(cr) = commit_ref {
+            self.repo.revparse_single(cr)
+                .map_err(|e| format!("Invalid commit ref `{}`: {}", cr, e))?
+                .id()
+        } else {
+            self.repo.head()
+                .and_then(|h| h.peel_to_commit())
+                .map(|c| c.id())
+                .map_err(|e| format!("Cannot resolve HEAD commit: {}", e))?
+        };
+
+        let sig = self.repo.signature().unwrap_or_else(|_| {
+            git2::Signature::now("Ozymem Agent", "agent@ozymem.local").unwrap()
+        });
+
+        let note_oid = self.repo.note(&sig, &sig, Some(note_ref_name), target_oid, message, force)
+            .map_err(|e| format!("Failed to write git note on `{}` (ref `{}`): {}", target_oid, note_ref_name, e))?;
+
+        Ok(note_oid.to_string())
+    }
+
+    /// Lee la nota asociada a un commit desde `refs/notes/ozymem`.
+    pub fn read_note(
+        &self,
+        commit_ref: Option<&str>,
+        note_ref: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let note_ref_name = note_ref.unwrap_or("refs/notes/ozymem");
+        let target_oid = if let Some(cr) = commit_ref {
+            self.repo.revparse_single(cr)
+                .map_err(|e| format!("Invalid commit ref `{}`: {}", cr, e))?
+                .id()
+        } else {
+            match self.repo.head().and_then(|h| h.peel_to_commit()) {
+                Ok(c) => c.id(),
+                Err(_) => return Ok(None),
+            }
+        };
+
+        match self.repo.find_note(Some(note_ref_name), target_oid) {
+            Ok(note) => Ok(note.message().map(|s| s.to_string())),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(e) => Err(format!("Failed to find note on `{}`: {}", target_oid, e)),
+        }
+    }
+
+    /// Lista todas las notas registradas en `refs/notes/ozymem`.
+    pub fn list_notes(
+        &self,
+        note_ref: Option<&str>,
+    ) -> Result<Vec<(String, String)>, String> {
+        let note_ref_name = note_ref.unwrap_or("refs/notes/ozymem");
+        let mut notes = Vec::new();
+
+        let iter = match self.repo.notes(Some(note_ref_name)) {
+            Ok(it) => it,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => return Ok(vec![]),
+            Err(e) => return Err(format!("Failed to list notes for `{}`: {}", note_ref_name, e)),
+        };
+
+        for item in iter {
+            if let Ok((_note_oid, commit_oid)) = item {
+                if let Ok(note) = self.repo.find_note(Some(note_ref_name), commit_oid) {
+                    if let Some(msg) = note.message() {
+                        notes.push((commit_oid.to_string(), msg.to_string()));
+                    }
+                }
+            }
+        }
+
+        Ok(notes)
+    }
 }
 
 fn resolve_commit<'a>(repo: &'a Repository, name: &str) -> Result<git2::Commit<'a>, String> {

@@ -28,3 +28,6 @@ tree-sitter-javascript = "0.25"
 tree-sitter-rust = "0.24.2"
 walkdir = "2"
 sha2 = "0.10"
+rkyv = { version = "0.7.45", features = ["validation"] }
+memmap2 = "0.9"
+twox-hash = "1.6"

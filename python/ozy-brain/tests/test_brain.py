@@ -32,6 +32,39 @@ class OzyBrainTests(unittest.TestCase):
         self.assertTrue(result["brain_context_pack"]["dirty"])
         self.assertEqual(result["brain_context_pack"]["risk_level"], "high")
         self.assertEqual(result["brain_context_pack"]["candidate_file_scores"][0]["path"], "src/main.rs")
+        self.assertIn("blast_radius_analysis", result["structured_plan"])
+        self.assertIn("topological_edit_sequence", result["structured_plan"])
+
+    def test_plan_topological_refactoring_ordering(self):
+        result = run("plan", {
+            "project": "ozygram",
+            "goal": "refactor memory store interface",
+            "files": [
+                "crates/ozymem-server/src/dispatch.rs",
+                "crates/ozymem-core/src/graph_backend/types.rs",
+                "crates/ozymem-core/src/graph_backend/indexing.rs",
+            ],
+            "impact": [
+                {"file_path": "crates/ozymem-cli/src/main.rs", "depth": 1, "severity": "high"},
+            ],
+        })
+        self.assertEqual(result["action"], "plan")
+        struct_plan = result["structured_plan"]
+        
+        # Verify Blast Radius calculation
+        blast = struct_plan["blast_radius_analysis"]
+        self.assertEqual(blast["candidate_files_count"], 3)
+        self.assertGreaterEqual(blast["total_blast_radius"], 4)
+        self.assertIn("crates/ozymem-cli/src/main.rs", blast["high_severity_files"])
+
+        # Verify Topological sequence: types.rs (leaf) MUST precede dispatch.rs (root)
+        seq = struct_plan["topological_edit_sequence"]
+        self.assertEqual(len(seq), 3)
+        files_in_order = [item["file"] for item in seq]
+        
+        types_idx = files_in_order.index("crates/ozymem-core/src/graph_backend/types.rs")
+        dispatch_idx = files_in_order.index("crates/ozymem-server/src/dispatch.rs")
+        self.assertLess(types_idx, dispatch_idx, "Base types must be edited BEFORE dispatch router")
 
     def test_recall_deep_combines_relevant_memory_and_lessons(self):
         result = run(
@@ -66,6 +99,36 @@ class OzyBrainTests(unittest.TestCase):
         self.assertTrue(any("Permission" in rc for rc in report["root_causes"]))
         self.assertTrue(report["scope_creep_detected"])
         self.assertIn("src/extra_file.rs", report["out_of_scope_files"])
+
+    def test_reflect_synthesizes_procedural_rules(self):
+        result = run("reflect", {
+            "project": "ozygram",
+            "goal": "fix compiler trait method error",
+            "failures": [
+                "error[E0599]: no method named `id` found for struct `petgraph::graph::EdgeReference` in current scope",
+                "error[E0063]: missing field `engram_contracts` in initializer of `FileGraphContext`",
+            ],
+            "changes": ["crates/ozymem-core/src/indexing.rs"],
+            "files": ["crates/ozymem-core/src/indexing.rs"],
+        })
+        self.assertEqual(result["action"], "reflect")
+        self.assertIn("procedural_rules", result)
+        rules = result["procedural_rules"]
+        self.assertEqual(len(rules), 2)
+        
+        # Verify Rust E0599 Trait rule
+        r1 = rules[0]
+        self.assertIn("E0599", r1["trigger"])
+        self.assertIn("id", r1["trigger"])
+        self.assertIn("EdgeRef", r1["action"])
+        self.assertTrue(r1["engram_block"].startswith("[TRIGGER:"))
+        self.assertIn("-> [ACTION:", r1["engram_block"])
+
+        # Verify Rust E0063 Struct field rule
+        r2 = rules[1]
+        self.assertIn("E0063", r2["trigger"])
+        self.assertIn("engram_contracts", r2["trigger"])
+        self.assertIn("engram_contracts", r2["action"])
 
     def test_risk_review_categories(self):
         result = run("risk_review", {

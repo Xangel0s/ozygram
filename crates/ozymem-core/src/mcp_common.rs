@@ -430,6 +430,12 @@ pub trait McpBackend: Send + Sync {
     async fn recent_lessons(&self, kind: Option<&str>, limit: usize) -> anyhow::Result<Vec<LessonEntry>>;
     async fn get_graph_neighbors(&self, file_path: &str) -> anyhow::Result<NeighborInfo>;
     async fn record_entry(&self, file_path: &str, symbol_name: Option<&str>, error_context: &str, solution: &str, kind: &str) -> anyhow::Result<()>;
+    async fn lookup_engram(&self, _symbol_path: &str) -> anyhow::Result<Option<ozymem_parser::EngramContract>> {
+        Ok(None)
+    }
+    async fn get_speculative_engrams(&self, _file_path: &str, _limit: usize) -> anyhow::Result<Vec<ozymem_parser::EngramContract>> {
+        Ok(vec![])
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -62,7 +62,7 @@ async fn test_e2e_analyze_impact_on_core() {
     let root = workspace_root();
     backend.full_scan(&root, None).unwrap();
 
-    let core_src = path_in_root(&root, &["crates", "ozymem-core", "src", "graph_backend.rs"]);
+    let core_src = path_in_root(&root, &["crates", "ozymem-core", "src", "graph_backend", "schema.rs"]);
     let impacts = backend.analyze_impact(&core_src, 3);
 
     eprintln!("=== analyze_impact on graph_backend.rs (depth=3) ===");
@@ -90,7 +90,7 @@ async fn test_e2e_file_context() {
     let root = workspace_root();
     backend.full_scan(&root, None).unwrap();
 
-    let core_src = path_in_root(&root, &["crates", "ozymem-core", "src", "graph_backend.rs"]);
+    let core_src = path_in_root(&root, &["crates", "ozymem-core", "src", "graph_backend", "schema.rs"]);
     let ctx = backend.get_file_context(&core_src).await.unwrap();
 
     assert!(ctx.is_some(), "file_context should return Some for {core_src}");

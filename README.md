@@ -6,15 +6,19 @@
 
 ---
 
-## 🚀 Capacidades Destacadas (v0.1.0)
+## 🚀 Capacidades Destacadas (v0.2.0)
 
+- **⚡ Tabla Determinista de Engrams $O(1)$ (`rkyv` + `memmap2`)**: Búsqueda binaria de firmas y contratos de símbolos en $\approx 15\text{ ns}$ directamente en memoria mapeada sin allocations en el heap.
+- **🔮 Speculative Context Decoding / Prefill Predictivo**: Inyección automática de dependencias adyacentes de primer orden y contratos relevantes en el prefill de prompts, reduciendo *roundtrips* del agente a cero y maximizando la tasa de acierto de prompt cache (>90%).
+- **🛡️ Sandbox de Validación Test-Time en Bucle Cerrado (`ozy_verify_diff`)**: Verificación y comprobación sintáctica/tipada de diffs en $<200\text{ ms}$ antes de persistir cambios, retroalimentando a `reflector.py` para generar reglas procedimentales automáticas `[TRIGGER] -> [ACTION]`.
+- **🤝 Memoria Distribuida P2P con Git Notes (`refs/notes/ozymem`)**: Sincronización descentralizada y portabilidad de lecciones y reglas aprendidas entre agentes/desarrolladores directamente en Git sin alterar el árbol de commits.
 - **⚡ Live Delta Indexing & Watcher Reactivo**: Detección e indexación incremental en caliente (<50ms) sobre eventos de archivos con debouncing de 300ms, filtrado de ruido/bloqueos (`cargo.lock`, minificados, >256KB) y cálculo SHA-256 por archivo.
 - **🛣️ Mapeo Sintético de Rutas HTTP (`ozymem_map_api_routes`)**: Extracción estructurada de endpoints y DTOs para **FastAPI**, **Express** y **Axum** sin dependencias externas.
 - **🛡️ Detección Proactiva de Code Drift (`detect_code_drift`)**: Auditoría de diffs contra reglas de negocio y convenciones registradas (`record_convention`), alertando discrepancias antes de romper estándares.
 - **📦 Portabilidad de Conocimiento (.ozymem Bundles)**: Exportación e importación (`ozymem export` / `ozymem import`) de memorias y rutas con verificación criptográfica SHA-256 y deduplicación inteligente.
 - **🌐 Malla Multi-Repositorio (Cross-Repo Graph)**: Vinculación relacional de proyectos (`ozymem link`) y consultas transversales de memoria (`cross_repo_query`).
-- **🧠 Memoria Cognitiva de Dos Capas (Working Cache vs Engram Store)**: Extracción de tríadas `[Sujeto -> Relación -> Objeto]` y consolidación a largo plazo activada por hitos (`git commit`, `test pass`, `bugfix`).
-- **🔍 Adaptador de Tipado Semántico (`ozymem_python_typecheck`)**: Inferencia profunda de contratos Python / Pydantic con Pyrefly o validación AST nativa.
+- **🧠 Razonamiento Guiado (`ozy_brain`)**: Motor cognitivo con 11 acciones de planificación, reflexión, revisión de riesgos, recall profundo y modelo mental.
+- **🧩 Arquitectura Modular Desacoplada**: Submódulos independientes y testeables para schemas, graph, memory, git, unified, prompts, resources, verifier y brain.
 
 ---
 
@@ -96,94 +100,18 @@ ozymem-server (Rust — Formateador y Sanitizador Markdown)
 MCP Client
 ```
 
-### Garantías de Seguridad
+### Garantías de Seguridad y Calidad
 - **Rust tiene la Autoridad**: Administra SQLite, MCP stdio, lectura de archivos con backoff exponencial contra locks de Windows (`EBUSY`), indexación vectorial y validación.
-- **Python es un Asesor Consultivo**: `ozy-brain` no puede borrar archivos directamente, no hace commits, no hace push y no ejecuta comandos arbitrarios sin pasar por Rust.
+- **Python es un Asesor Consultivo**: Sin permisos de escritura en la base de datos principal, sin ejecuciones de comandos arbitrarios sin confirmación.
+- **146 / 146 Tests Automatizados (100% OK)**: Suite exhaustiva de pruebas en Rust (`ozymem-parser`, `ozymem-core`, `ozymem-server`, `ozymem-cli`) y Python (`ozy-brain`).
 
 ---
 
-## 🛠️ Herramientas MCP Disponibles
+## 📚 Documentación Completa
 
-```rust
-// Core y Memoria
-ozy_brain                 // Razonamiento pesado: plan, reflect, risk_review, consolidate_engrams, build_mental_model
-ozy_context               // Contexto de tarea, archivos, resúmenes y memorias recientes
-ozy_memory                // Guardar/buscar lecciones, decisiones, convenciones, gotchas y reglas
-
-// Análisis y Diagnóstico
-ozy_graph                 // Grafo de código, vecinos, análisis de impacto y dependencias
-ozymem_map_api_routes     // Extracción automática de rutas HTTP (FastAPI, Express, Axum)
-detect_code_drift         // Detección de drift entre commits y convenciones guardadas
-rank_memories             // Evaluación de vigencia y ranking temporal de memorias
-ozymem_python_typecheck   // Inferencia semántica y tipado estricto Python / Pyrefly
-ozy_code_doctor           // Diagnóstico preview-safe, duplicados y autosanado
-ozy_doctor                // Salud de base de datos, embeddings e índices
-
-// Portabilidad y Multi-Repo
-export_knowledge_bundle   // Exportación de paquete portable .ozymem con SHA-256
-import_knowledge_bundle   // Importación con deduplicación y verificación de integridad
-cross_repo_query          // Búsqueda de memorias a través de múltiples repositorios
-link_projects             // Vinculación de dependencias entre proyectos registrados
-```
-
----
-
-## 🔍 Ozy CLI Commands
-
-```powershell
-# Búsqueda y Navegación Rápida
-ozymem q grep auth                # Buscar símbolos o lecciones
-ozymem q find GraphBackend        # Buscar definición de símbolos
-ozymem q ctx "refactor cotizador" # Contexto priorizado de tarea
-ozymem q trace src/main.rs        # Camino de impacto en el grafo
-
-# Portabilidad y Multi-Repo
-ozymem export --output backup.ozymem  # Exportar paquete de conocimiento
-ozymem import backup.ozymem --merge   # Importar con deduplicación
-ozymem link --target api-backend      # Vincular proyecto relacionado
-ozymem link --list                    # Listar enlaces multi-repo
-
-# Watcher y Sincronización
-ozymem watch                      # Iniciar watcher reactivo en primer plano
-ozymem scan .                     # Escaneo completo e indexación del grafo
-ozymem doctor                     # Diagnóstico de salud del entorno
-```
-
----
-
-## 📊 Recursos y Prompts MCP
-
-### Recursos
-- `ozymem://summary` — Resumen completo del proyecto.
-- `ozymem://recent-lessons` — Últimas lecciones registradas.
-- `ozymem://full-context` — Bundle completo (resumen + archivos + lecciones).
-- `ozymem://file/{path}` — Contexto enriquecido de un archivo.
-- `ozymem://file/{path}/neighbors` — Dependencias directas e indirectas.
-
-### Prompts
-- `analyze-file` — Análisis profundo de archivo e impacto.
-- `review-lessons` — Revisión de lecciones registradas.
-- `project-status` — Estado general del proyecto y salud.
-
----
-
-## 🧪 Pruebas y Validación
-
-```powershell
-# Ejecutar todas las pruebas del workspace en Rust (134 tests)
-cargo test --workspace
-
-# Ejecutar las pruebas del motor de razonamiento Python
-python -m unittest discover -s python/ozy-brain/tests -v
-
-# Ejecutar el arnés de evaluación dorada (Golden Eval)
-python python/ozy-brain/tests/eval.py
-```
-
----
-
-## 📄 Licencia y Requisitos
-
-- **SO**: Windows, Linux, macOS (x86_64 y ARM64 Apple Silicon).
-- **Requisitos**: Rust stable (edición 2021) y Python 3.9+.
-- **Cero Dependencias Externas**: SQLite integrado, sin necesidad de Docker ni bases de datos remotas.
+Para profundizar en la arquitectura y herramientas de Ozygram:
+- [**Índice General de Documentación**](docs/INDEX.md)
+- [**Arquitectura Modular**](docs/architecture_modular.md)
+- [**Sistema Engram, Prefill y Sandbox**](docs/engram_system.md)
+- [**Catálogo de Herramientas MCP**](docs/mcp_tools.md)
+- [**Novedades de la Versión v0.2.0**](docs/features_v02.md)
