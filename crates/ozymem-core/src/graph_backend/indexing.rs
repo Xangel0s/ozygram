@@ -311,6 +311,7 @@ impl GraphBackend {
 
         self.rebuild_graph()?;
 
+        *self.last_check.lock().unwrap() = Instant::now();
         self.scanning.store(false, Ordering::SeqCst);
         let inner = self.inner.lock().unwrap();
         eprintln!(
