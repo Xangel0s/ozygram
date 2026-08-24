@@ -454,10 +454,18 @@ impl GraphBackend {
 
         for (id, file_path, _symbol, error_context, solution) in &conventions {
             let rule_text = format!("{} {}", error_context, solution).to_lowercase();
-            let norm_file_path = crate::normalize_path(file_path);
-            let matches_file = changed_files.is_empty() || changed_files.iter().any(|f| {
-                let norm = crate::normalize_path(f);
-                norm == norm_file_path || norm_file_path.is_empty() || norm.contains(&norm_file_path) || norm_file_path.contains(&norm)
+            let norm_file_path = crate::normalize_path(file_path).replace('\\', "/").to_lowercase();
+            let file_name_target = Path::new(file_path).file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase());
+
+            let matches_file = changed_files.is_empty() || norm_file_path.is_empty() || changed_files.iter().any(|f| {
+                let norm = crate::normalize_path(f).replace('\\', "/").to_lowercase();
+                let f_name = Path::new(f).file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase());
+                norm == norm_file_path
+                    || norm.ends_with(&norm_file_path)
+                    || norm_file_path.ends_with(&norm)
+                    || norm.contains(&norm_file_path)
+                    || norm_file_path.contains(&norm)
+                    || (f_name.is_some() && f_name == file_name_target)
             });
 
             if matches_file && !diff_content.is_empty() {
