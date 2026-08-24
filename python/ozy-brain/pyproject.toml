@@ -3,7 +3,13 @@ name = "ozy-brain"
 version = "0.1.0"
 description = "Local reasoning worker for Ozygram/Ozymem"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "pydantic>=2.0.0",
+    "duckdb>=0.10.0",
+    "polars>=0.20.0",
+    "pydantic-ai>=0.0.1",
+    "litellm>=1.0.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

@@ -36,6 +36,13 @@ Bienvenido a la documentación oficial y detallada de **Ozygram** (v0.2.0), el s
    - Diagnósticos estáticos y linter de sintaxis AST mediante Tree-Sitter.
    - Soporte de subdirectorios / subpath para monorepos (`subpath`).
 
+6. [**Novedades de Ozygram v0.3.0 (`docs/features_v03.md`)**](features_v03.md)
+   - Motor analítico de telemetría y Git Churn embebido (`DuckDB` + `Polars`).
+   - Sistema multi-agente (`Supervisor` y `Adversarial Risk Critic`).
+   - Fusión y decaimiento exponencial temporal de memoria ($S = C \cdot e^{-\lambda \Delta t}$).
+   - Integración nativa con `OpenRouter` y modelos gratuitos (`nemotron-reasoning`, `nemotron-120b`, `north-code`).
+   - Fallback heurístico offline garantizado ($0 costo).
+
 ---
 
 ## 🚀 Instalación y Uso Rápido

@@ -1284,6 +1284,27 @@ use std::sync::{Arc, Mutex};
         let mental_res = call_ozy_brain_worker("build_mental_model", &mental_payload, 10_000).unwrap();
         assert_eq!(mental_res["action"], "build_mental_model");
         assert_eq!(mental_res["mental_model"]["project"], "ozymem-test");
+
+        // Test Adversarial Critic Worker
+        let critic_payload = json!({
+            "project": "ozymem-test",
+            "files": ["src/payments.rs"],
+            "diff": "ALTER TABLE payments DROP COLUMN stripe_id;",
+            "plan": ["Remove legacy payment column"]
+        });
+        let critic_res = call_ozy_brain_worker("audit_changes_with_critic", &critic_payload, 30_000).unwrap();
+        assert_eq!(critic_res["action"], "audit_changes_with_critic");
+        assert!(critic_res["risk_assessment"]["risk_level"].is_string());
+        assert!(critic_res["risk_assessment"]["summary"].is_string());
+
+        // Test Repository Hotspots Worker
+        let hotspots_payload = json!({
+            "project": "ozymem-test",
+            "limit": 5
+        });
+        let hotspots_res = call_ozy_brain_worker("get_repository_hotspots", &hotspots_payload, 25_000).unwrap();
+        assert_eq!(hotspots_res["action"], "get_repository_hotspots");
+        assert!(hotspots_res["structured_plan"].get("hotspots").is_some());
     }
 
     #[tokio::test]

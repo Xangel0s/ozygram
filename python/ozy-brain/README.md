@@ -34,6 +34,12 @@ python/ozy-brain/
 │  ├─ __main__.py        # Python CLI entrypoint (-m ozy_brain)
 │  ├─ main.py            # CLI argument parsing & stdio IO
 │  ├─ brain.py           # Central action router/dispatcher
+│  ├─ config.py          # Universal LLM router (OpenRouter, Ollama, Fallback)
+│  ├─ data_engine.py     # OLAP Analytics & Git Churn engine (DuckDB + Polars)
+│  ├─ agents/            # Specialized Cognitive Agents
+│  │  ├─ supervisor.py   # Hierarchical orchestrator (Pydantic-AI)
+│  │  ├─ risk_critic.py  # Adversarial risk critic & regression simulator
+│  │  └─ memory_agent.py # Memory synthesizer & exponential decay calculator
 │  ├─ schemas.py         # Data structures (BrainResponse, StructuredPlan, etc.)
 │  ├─ planner.py         # Multi-phase planning & candidate file scoring
 │  ├─ reflector.py       # Reflection loop, root cause analysis & scope creep
@@ -42,7 +48,8 @@ python/ozy-brain/
 │  ├─ memory.py          # Memory ranking, deduplication & deep recall
 │  └─ patterns.py        # Domain rules, user preferences & pattern detection
 ├─ tests/
-│  └─ test_brain.py      # Unit test suite
+│  ├─ test_brain.py       # Core reasoning tests
+│  └─ test_multi_agent.py # Multi-agent, DuckDB & OpenRouter test suite
 ├─ pyproject.toml
 └─ README.md
 ```
@@ -53,6 +60,9 @@ python/ozy-brain/
 
 | Action | Module | Objective |
 | :--- | :--- | :--- |
+| `audit_changes_with_critic` | `agents/risk_critic.py` | Adversarial audit challenging plans, cross-referencing DuckDB hotspots & vetoing destructive DDL |
+| `get_repository_hotspots` | `agents/supervisor.py` | Returns top repository hotspots, churn volume and bug density via DuckDB |
+| `consolidate_memory` | `agents/memory_agent.py` | Groups redundant lessons and calculates exponential temporal decay |
 | `plan` | `planner.py` | Generates a 5-phase structured plan with candidate file scoring & exit conditions |
 | `reflect` / `analyze_failure` | `reflector.py` | Analyzes execution failures, root causes, scope creep, and extracts gotchas |
 | `risk_review` | `risk.py` | Evaluates auth, data-loss, migration, and architectural risks before edits |

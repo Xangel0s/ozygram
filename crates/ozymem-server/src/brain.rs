@@ -136,7 +136,7 @@ pub(crate) async fn handle_ozy_brain(
     let action_owned = action.to_string();
     let payload_for_worker = payload.clone();
     let response =
-        tokio::task::spawn_blocking(move || call_ozy_brain_worker_smart(&action_owned, &payload_for_worker, 10_000))
+        tokio::task::spawn_blocking(move || call_ozy_brain_worker_smart(&action_owned, &payload_for_worker, 30_000))
             .await??;
 
     let validated = validate_ozy_brain_response_schema(&response)?;
@@ -267,14 +267,7 @@ pub fn call_ozy_brain_worker(action: &str, payload: &Value, timeout_ms: u64) -> 
     let payload_text = serde_json::to_string(payload)?;
     let mut last_error = String::new();
     for candidate in python_candidates() {
-        let mut command = if cfg!(target_os = "windows") {
-            let mut c = Command::new("cmd");
-            let mut args = vec!["/C"];
-            args.extend(candidate.split_whitespace());
-            args.extend(["-m", "ozy_brain", "--action", action]);
-            c.args(args);
-            c
-        } else {
+        let mut command = {
             let mut c = Command::new(candidate);
             c.args(["-m", "ozy_brain", "--action", action]);
             c
@@ -331,19 +324,13 @@ pub(crate) fn python_candidates() -> Vec<String> {
         return vec![explicit];
     }
     if cfg!(target_os = "windows") {
-        vec!["python".to_string(), "py -3".to_string()]
+        vec!["python".to_string(), "py".to_string()]
     } else {
         vec!["python3".to_string(), "python".to_string()]
     }
 }
 
 pub fn resolve_ozy_brain_dir() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("OZY_BRAIN_PATH") {
-        let p = PathBuf::from(path);
-        if p.join("ozy_brain").join("__main__.py").exists() {
-            return Some(p);
-        }
-    }
     let mut candidates = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.clone());
@@ -360,6 +347,12 @@ pub fn resolve_ozy_brain_dir() -> Option<PathBuf> {
     }
     for base in candidates {
         let p = base.join("python").join("ozy-brain");
+        if p.join("ozy_brain").join("__main__.py").exists() {
+            return Some(p);
+        }
+    }
+    if let Ok(path) = std::env::var("OZY_BRAIN_PATH") {
+        let p = PathBuf::from(path);
         if p.join("ozy_brain").join("__main__.py").exists() {
             return Some(p);
         }
