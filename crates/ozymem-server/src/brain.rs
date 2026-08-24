@@ -282,6 +282,8 @@ pub fn call_ozy_brain_worker(action: &str, payload: &Value, timeout_ms: u64) -> 
         let mut child = match command
             .current_dir(&brain_dir)
             .env("PYTHONPATH", &brain_dir)
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONUTF8", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
