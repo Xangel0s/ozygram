@@ -55,10 +55,10 @@ Ozygram se estructura en **Dos Carriles Cognitivos** complementarios:
 - [x] **Task 2.4:** Crear acción unificada `deep_semantic_search` que combine FTS5 léxico de SQLite con búsqueda vectorial densa y re-ranking.
 
 ### Fase 3: AI Noise Gate y Crítico Antiruido (Blindaje de Datos)
-- [ ] **Task 3.1:** Implementar el **AI Noise Gate** en `python/ozy-brain/agents/memory_agent.py` para clasificar y evaluar la calidad semántica de cada memoria antes de indexar.
-- [ ] **Task 3.2:** Desviar volcados crudos de terminal, trazas de stack trace y logs a `analytics.duckdb` como telemetría, impidiendo la contaminación del índice vectorial.
-- [ ] **Task 3.3:** Crear rutina de **Clustering y Consolidación de Memorias** para sintetizar múltiples observaciones en 1 regla canónica maestra.
-- [ ] **Task 3.4:** Implementar factor de decaimiento temporal (*Memory Decay*) para rebajar la relevancia de lecciones obsoletas con más de 90 días sin confirmación.
+- [x] **Task 3.1:** Implementar el **AI Noise Gate** en `python/ozy-brain/agents/memory_agent.py` para clasificar y evaluar la calidad semántica de cada memoria antes de indexar.
+- [x] **Task 3.2:** Desviar volcados crudos de terminal, trazas de stack trace y logs a `analytics.duckdb` como telemetría, impidiendo la contaminación del índice vectorial.
+- [x] **Task 3.3:** Crear rutina de **Clustering y Consolidación de Memorias** para sintetizar múltiples observaciones en 1 regla canónica maestra.
+- [x] **Task 3.4:** Implementar factor de decaimiento temporal (*Memory Decay*) para rebajar la relevancia de lecciones obsoletas con más de 90 días sin confirmación.
 
 ### Fase 4: Orquestación Multi-Agente y Validación E2E
 - [ ] **Task 4.1:** Conectar el `SupervisorAgent` en `brain.py` para coordinar el `RiskCritic`, el `MemoryConsolidationAgent` y el motor `DataEngine` (DuckDB + Polars).

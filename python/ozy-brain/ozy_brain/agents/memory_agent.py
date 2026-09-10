@@ -34,8 +34,65 @@ class MemoryConsolidationAgent:
     and temporal decay calculations on project lessons/engrams.
     """
 
-    def __init__(self, half_life_days: float = 60.0):
+    def __init__(self, half_life_days: float = 60.0, data_engine: Any = None):
         self.half_life_days = half_life_days
+        from ozy_brain.data_engine import DataEngine
+        self.data_engine = data_engine or DataEngine()
+
+    def evaluate_noise(self, text: str, metadata: dict[str, Any] | None = None) -> tuple[bool, str, str]:
+        """Evaluates if a candidate memory is noise (logs, terminal dump, tables, code) or clean learning.
+        Returns: (is_noise, noise_type, reason)
+        """
+        raw = text.strip()
+        if len(raw) < 15:
+            return True, "TOO_SHORT", "Memory is shorter than 15 characters"
+        if len(raw) > 2500:
+            return True, "TOO_LONG", "Memory exceeds 2500 characters limit"
+        if raw.startswith("|") or (raw.count("|") >= 3 and "\n|" in raw):
+            return True, "MARKDOWN_TABLE", "Raw markdown table dump"
+        if raw.startswith("```") or raw.count("```") >= 2:
+            return True, "CODE_BLOCK", "Raw code fence block without conceptual summary"
+        if "Traceback (most recent call last)" in raw or "at Object.<anonymous>" in raw or raw.startswith("File \""):
+            return True, "STACK_TRACE", "Terminal stack trace / runtime error log"
+        if "\x1b[" in raw:
+            return True, "ANSI_ESCAPE", "Terminal ANSI control escape characters"
+        if raw.startswith("{") and raw.endswith("}") and ":" in raw:
+            return True, "RAW_JSON", "Raw unparsed JSON object payload"
+        return False, "CLEAN", "Valid conceptual lesson or architectural decision"
+
+    def filter_and_route_memories(
+        self,
+        memories: list[dict[str, Any] | str],
+        project: str = "",
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Filters noisy items, directs noise to DuckDB telemetry, and keeps clean items for Chroma/SQLite."""
+        clean_items: list[dict[str, Any]] = []
+        noise_items: list[dict[str, Any]] = []
+
+        for idx, item in enumerate(memories):
+            if isinstance(item, str):
+                text = item
+                meta = {}
+            elif isinstance(item, dict):
+                text = item.get("summary") or item.get("content") or item.get("text") or ""
+                meta = item
+            else:
+                continue
+
+            is_noise, n_type, reason = self.evaluate_noise(text, meta)
+            if is_noise:
+                noise_id = f"noise_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}"
+                self.data_engine.record_noise_telemetry(noise_id, n_type, reason, text, project=project)
+                noise_items.append({
+                    "id": noise_id,
+                    "noise_type": n_type,
+                    "reason": reason,
+                    "preview": text[:120],
+                })
+            else:
+                clean_items.append(meta if isinstance(item, dict) else {"summary": text, "topic": "general"})
+
+        return {"clean": clean_items, "noise": noise_items}
 
     def calculate_decay(self, timestamp_str: str | None, base_confidence: float = 1.0) -> float:
         """Calculates exponential temporal decay score: S = C * exp(-lambda * delta_days)."""

@@ -106,8 +106,42 @@ class DataEngine:
                     PRIMARY KEY(file_a, file_b)
                 );
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS raw_noise_telemetry (
+                    id VARCHAR PRIMARY KEY,
+                    timestamp TIMESTAMP,
+                    noise_type VARCHAR,
+                    reason VARCHAR,
+                    raw_content VARCHAR,
+                    project VARCHAR
+                );
+            """)
         except Exception:
             pass
+
+    def record_noise_telemetry(
+        self,
+        noise_id: str,
+        noise_type: str,
+        reason: str,
+        raw_content: str,
+        project: str = "",
+    ) -> bool:
+        """Persists filtered noisy/garbage terminal outputs and logs into DuckDB for telemetry."""
+        conn = self._get_connection()
+        if conn is None:
+            return False
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO raw_noise_telemetry (id, timestamp, noise_type, reason, raw_content, project)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [noise_id, datetime.now(timezone.utc), noise_type, reason, str(raw_content)[:4000], project],
+            )
+            return True
+        except Exception:
+            return False
 
     def extract_git_log(self, max_commits: int = 500) -> list[dict[str, Any]]:
         """Extracts structured commit history and numstat diffs using Git CLI."""

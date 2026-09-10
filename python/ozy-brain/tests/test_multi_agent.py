@@ -72,6 +72,34 @@ class TestMultiAgent(unittest.TestCase):
         self.assertGreaterEqual(res["clusters_count"], 2)
         self.assertGreaterEqual(len(res["consolidated"]), 2)
 
+    def test_ai_noise_gate_and_duckdb_telemetry(self):
+        engine = DataEngine(db_path=":memory:")
+        agent = MemoryConsolidationAgent(data_engine=engine)
+
+        # 1. Test noise evaluation
+        is_noise, n_type, _ = agent.evaluate_noise("Traceback (most recent call last): File main.py line 5")
+        self.assertTrue(is_noise)
+        self.assertEqual(n_type, "STACK_TRACE")
+
+        is_noise, n_type, _ = agent.evaluate_noise("| col1 | col2 | col3 |\n|---|---|---|\n| 1 | 2 | 3 |")
+        self.assertTrue(is_noise)
+        self.assertEqual(n_type, "MARKDOWN_TABLE")
+
+        is_noise, n_type, _ = agent.evaluate_noise("Normalizar siempre fechas a formato YYYY/MM/DD en backend")
+        self.assertFalse(is_noise)
+        self.assertEqual(n_type, "CLEAN")
+
+        # 2. Test routing
+        candidates = [
+            "Normalizar siempre fechas a formato YYYY/MM/DD en backend",
+            "Traceback (most recent call last): NullPointerException at server.js:12",
+            "```python\nprint('raw code dump')\n```",
+        ]
+        routed = agent.filter_and_route_memories(candidates, project="test_proj")
+        self.assertEqual(len(routed["clean"]), 1)
+        self.assertEqual(len(routed["noise"]), 2)
+        self.assertIn("YYYY/MM/DD", routed["clean"][0]["summary"])
+
     def test_supervisor_dispatcher(self):
         with patch("ozy_brain.agents.risk_critic.call_llm", return_value=None):
             res_critic = run("audit_changes_with_critic", {"files": ["src/main.py"], "diff": "+ print('hello')"})
