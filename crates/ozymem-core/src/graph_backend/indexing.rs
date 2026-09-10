@@ -88,6 +88,9 @@ impl GraphBackend {
             if !path.is_file() || is_binary_file(path) {
                 continue;
             }
+            if check_noise_or_huge_file(path, DEFAULT_MAX_DELTA_FILE_BYTES) != NoiseFilterDecision::Process {
+                continue;
+            }
             let abs_path = path.to_string_lossy().to_string();
             let current_mtime = file_mtime(path).unwrap_or_default();
             let stored = sqlite_snapshot.get(&abs_path);
@@ -153,11 +156,16 @@ impl GraphBackend {
                 true
             })
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file() && !is_binary_file(e.path()))
+            .filter(|e| {
+                e.path().is_file()
+                    && !is_binary_file(e.path())
+                    && check_noise_or_huge_file(e.path(), DEFAULT_MAX_DELTA_FILE_BYTES) == NoiseFilterDecision::Process
+            })
             .count() as u64;
 
         let mut file_count = 0i64;
         let mut skipped_noise = 0u64;
+        let mut skipped_file_noise = 0u64;
         let mut skipped_ignore = 0u64;
         let mut skipped_binary = 0u64;
         let mut skipped_read = 0u64;
@@ -187,14 +195,14 @@ impl GraphBackend {
             if !path.is_file() {
                 continue;
             }
-            if is_binary_file(path) {
             let abs_path = {
                 let raw = crate::normalize_path(&path.to_string_lossy());
                 std::fs::canonicalize(path)
                     .map(|c| crate::normalize_path(&c.to_string_lossy()))
                     .unwrap_or(raw)
             };
-            if ozymem_parser::is_excel_template_candidate(&abs_path) {
+            if is_binary_file(path) {
+                if ozymem_parser::is_excel_template_candidate(&abs_path) {
                     if let Ok(Some(meta)) = ozymem_parser::parse_excel_template(path, &abs_path) {
                         let _ = self.record_excel_template(&meta);
                     }
@@ -206,12 +214,14 @@ impl GraphBackend {
                 }
                 continue;
             }
-            let abs_path = {
-                let raw = crate::normalize_path(&path.to_string_lossy());
-                std::fs::canonicalize(path)
-                    .map(|c| crate::normalize_path(&c.to_string_lossy()))
-                    .unwrap_or(raw)
-            };
+            if check_noise_or_huge_file(path, DEFAULT_MAX_DELTA_FILE_BYTES) != NoiseFilterDecision::Process {
+                skipped_file_noise += 1;
+                if let Some(cb) = progress {
+                    processed += 1;
+                    cb(processed, total_file_count);
+                }
+                continue;
+            }
             scanned_files.insert(abs_path.clone());
             let mtime = file_mtime(path).unwrap_or_default();
 
@@ -314,8 +324,9 @@ impl GraphBackend {
         *self.last_check.lock().unwrap() = Instant::now();
         self.scanning.store(false, Ordering::SeqCst);
         let inner = self.inner.lock().unwrap();
+        let total_noise = skipped_noise + skipped_file_noise;
         eprintln!(
-            "[graph] scan complete: indexed={file_count}, noise_dirs={skipped_noise}, ignore_pat={skipped_ignore}, binary={skipped_binary}, read_err={skipped_read}, parse_err={skipped_parse}; graph: {} nodes, {} edges",
+            "[graph] scan complete: indexed={file_count}, noise_dirs={total_noise}, ignore_pat={skipped_ignore}, binary={skipped_binary}, read_err={skipped_read}, parse_err={skipped_parse}; graph: {} nodes, {} edges",
             inner.graph.node_count(),
             inner.graph.edge_count()
         );

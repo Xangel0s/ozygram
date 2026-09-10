@@ -19,7 +19,13 @@ impl GraphBackend {
 
         let sqlite =
             Connection::open(&path).with_context(|| format!("failed to open SQLite at {path}"))?;
-        sqlite.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        sqlite.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA foreign_keys=ON;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA cache_size = -64000;",
+        )?;
 
         let engram_path = Path::new(&path)
             .parent()

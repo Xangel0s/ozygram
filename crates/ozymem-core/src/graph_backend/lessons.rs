@@ -225,8 +225,16 @@ impl GraphBackend {
     ) -> Result<Vec<ObservationEntry>> {
         let mut saved = Vec::new();
         let mut in_section = false;
+        let mut in_code_block = false;
         for line in text.lines() {
             let trimmed = line.trim();
+            if trimmed.starts_with("```") {
+                in_code_block = !in_code_block;
+                continue;
+            }
+            if in_code_block {
+                continue;
+            }
             if trimmed.eq_ignore_ascii_case("## key learnings:")
                 || trimmed.eq_ignore_ascii_case("## key learnings")
                 || trimmed.eq_ignore_ascii_case("## aprendizajes clave:")
@@ -246,7 +254,14 @@ impl GraphBackend {
                     c == '-' || c == '*' || c.is_ascii_digit() || c == '.' || c == ')'
                 })
                 .trim();
-            if item.len() >= 8 {
+            if item.len() >= 12 && item.len() <= 2000 {
+                // Filter out markdown tables, JSON/HTML blobs, and raw log lines
+                if item.starts_with('|') || item.starts_with('{') || item.starts_with('<') {
+                    continue;
+                }
+                if item.contains("\x1b[") || item.starts_with("at ") || item.starts_with("Traceback ") || item.starts_with("File \"") {
+                    continue;
+                }
                 saved.push(self.save_observation(
                     session_id,
                     "learning",

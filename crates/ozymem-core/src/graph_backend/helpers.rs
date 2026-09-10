@@ -204,6 +204,16 @@ pub fn is_noise_dir(path: &Path) -> bool {
                 | "bower_components"
                 | ".idea"
                 | ".vscode"
+                | ".venv"
+                | "venv"
+                | "env"
+                | ".tox"
+                | "scratch"
+                | ".supabase"
+                | ".gemini"
+                | ".turbo"
+                | "coverage"
+                | ".output"
         )
     } else {
         false

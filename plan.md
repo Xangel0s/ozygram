@@ -1,112 +1,75 @@
-**Fase 1: Capa de Datos y Telemetría Analítica (Python)**
+# Plan Maestro de Desarrollo: Ozygram Dual-Tier Engine (v0.4.0)
 
-- **Actualización del entorno:** Añadir `polars`, `duckdb`, `pydantic-ai` y `litellm` al archivo `pyproject.toml` en `python/ozy-brain`.
+## 1. Visión y Arquitectura Dual-Tier
 
-- **Motor analítico local (`ozy_brain/data_engine.py`):** Implementar ingestión de logs de Git mediante Polars para calcular métricas de _churn_, frecuencia de cambios por archivo y complejidad de dependencias en memoria.
+Ozygram se estructura en **Dos Carriles Cognitivos** complementarios:
 
-- **Persistencia analítica embebida:** Configurar DuckDB para ejecutar consultas OLAP sobre el histórico de fallos, parches y mapas de acoplamiento de código sin sobrecargar SQLite.
-
----
-
-**Fase 2: Despliegue del Sistema Multi-Agente (Supervisor & Crítico)**
-
-- **Supervisor orquestador (`ozy_brain/brain.py`):** Sustituir la lógica monolítica determinista por un despachador jerárquico basado en esquemas de `pydantic-ai`.
-
-- **Segundo Agente Auditor (`ozy_brain/agents/risk_agent.py`):** Reemplazar las heurísticas estáticas de `risk.py` por un agente crítico adversarial que simula regresiones y audita violaciones de diseño antes de confirmar operaciones.
-
-- **Sintetizador de memoria (`ozy_brain/agents/memory_agent.py`):** Implementar algoritmos de consolidación de lecciones para agrupar patrones redundantes y aplicar factores de decaimiento temporal en SQLite.
-
----
-
-**Fase 3: Bucle Reactivo Proactivo (Rust Core)**
-
-- **Workers asíncronos en segundo plano:** Incorporar tareas periódicas con Tokio dentro de `ozymem-server` para indexación y mantenimiento no bloqueante.
-
-- **Vigilancia del sistema de archivos:** Añadir `notify` en `ozymem-server` para monitorear eventos de guardado y activar al agente crítico de forma silenciosa.
-
-- **Canal Push MCP:** Extender `crates/ozymem-server/src/mcp.rs` para emitir notificaciones push proactivas hacia el cliente sin requerir una consulta manual.
-
----
-
-**Fase 4: Exposición de Herramientas y Validación E2E**
-
-- **Catálogo de herramientas MCP:** Registrar nuevas herramientas en `crates/ozymem-server/src/tools.rs` (ej. `audit_changes_with_critic`, `get_repository_hotspots`, `consolidate_memory`).
-
-- **Pruebas integradas:** Crear suites de validación cruzada en `tests/test_brain.py` y `crates/ozymem-server/tests/mcp_server_tests.rs` para medir latencias de subprocesos y validar que el _second-agent_ no bloquee el hilo principal.
-
-**Fase 1: Capa de Datos y Telemetría Analítica (Python)**
-
-- **Actualización del entorno:** Añadir `polars`, `duckdb`, `pydantic-ai` y `litellm` al archivo `pyproject.toml` en `python/ozy-brain`.
-
-- **Motor analítico local (`ozy_brain/data_engine.py`):** Implementar ingestión de logs de Git mediante Polars para calcular métricas de _churn_, frecuencia de cambios por archivo y complejidad de dependencias en memoria.
-
-- **Persistencia analítica embebida:** Configurar DuckDB para ejecutar consultas OLAP sobre el histórico de fallos, parches y mapas de acoplamiento de código sin sobrecargar SQLite.
+```
+┌─────────────────────────────────────────────────────────────┐
+│  IDE / Agente LLM (Claude, Gemini, Cursor)                  │
+└──────────────┬──────────────────────────────▲───────────────┘
+               │ JSON-RPC (<100 ms)           │ Respuesta Inmediata
+┌──────────────▼──────────────────────────────┴───────────────┐
+│ CARRIL 1: Fast Lane (Rust Core - Ligero y Concurrente)      │
+│ • Handshake MCP instantáneo (CWD, proyectos, herramientas)  │
+│ • Hot cache en RAM + SQLite WAL transaccional               │
+│ • Filtro sanitario: bloquea archivos >256KB, .venv, etc.    │
+│ • Encolado asíncrono hacia el Worker de Python              │
+└──────────────┬──────────────────────────────▲───────────────┘
+               │ IPC / Local Socket           │ Lecciones Consolidadas
+┌──────────────▼──────────────────────────────┴───────────────┐
+│ CARRIL 2: Power Lane (Python Heavy Daemon - Potencia Bruta) │
+│ • ChromaDB: Vectores densos de alta fidelidad               │
+│ • AI Noise Gate: Crítico que destruye logs y datos basura   │
+│ • Cross-Encoder Re-Ranker: Relevancia semántica > 95%       │
+│ • Multi-Agent Supervisor: Pydantic-AI + DuckDB OLAP         │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-**Fase 2: Despliegue del Sistema Multi-Agente (Supervisor & Crítico)**
+## 2. Diagnóstico de Causas Raíz Resueltas
 
-- **Supervisor orquestador (`ozy_brain/brain.py`):** Sustituir la lógica monolítica determinista por un despachador jerárquico basado en esquemas de `pydantic-ai`.
-
-- **Segundo Agente Auditor (`ozy_brain/agents/risk_agent.py`):** Reemplazar las heurísticas estáticas de `risk.py` por un agente crítico adversarial que simula regresiones y audita violaciones de diseño antes de confirmar operaciones.
-
-- **Sintetizador de memoria (`ozy_brain/agents/memory_agent.py`):** Implementar algoritmos de consolidación de lecciones para agrupar patrones redundantes y aplicar factores de decaimiento temporal en SQLite.
-
----
-
-**Fase 3: Bucle Reactivo Proactivo (Rust Core)**
-
-- **Workers asíncronos en segundo plano:** Incorporar tareas periódicas con Tokio dentro de `ozymem-server` para indexación y mantenimiento no bloqueante.
-
-- **Vigilancia del sistema de archivos:** Añadir `notify` en `ozymem-server` para monitorear eventos de guardado y activar al agente crítico de forma silenciosa.
-
-- **Canal Push MCP:** Extender `crates/ozymem-server/src/mcp.rs` para emitir notificaciones push proactivas hacia el cliente sin requerir una consulta manual.
+1. **Corrupción del índice de código (`files`, `functions`, `file_dependencies`):**
+   - Causa: `full_scan()` en `indexing.rs` no invocaba `check_noise_or_huge_file`. Archivos gigantescos (`.bundle.js`, `.sql` de 10MB) y carpetas `.venv`, `scratch/`, `.supabase/` eran leídos e insertados en SQLite, bloqueando transacciones.
+   - Estado: Las memorias sobrevivieron porque residen en tablas aisladas (`observations`, `lessons`).
+2. **Ruido en captura pasiva:**
+   - Causa: `passive_capture` en `lessons.rs` admitía cualquier línea con longitud >= 8 caracteres bajo `## Key Learnings`, absorbiendo volcados crudos de terminal y tablas markdown.
+3. **Latencia en llamadas MCP:**
+   - Causa: Procesos síncronos pesados bloqueaban el canal JSON-RPC en el hilo principal.
 
 ---
 
-**Fase 4: Exposición de Herramientas y Validación E2E**
+## 3. Hoja de Ruta Detallada por Fases (4 Fases × 4 Tareas)
 
-- **Catálogo de herramientas MCP:** Registrar nuevas herramientas en `crates/ozymem-server/src/tools.rs` (ej. `audit_changes_with_critic`, `get_repository_hotspots`, `consolidate_memory`).
+### Fase 1: Blindaje Sanitario y Resiliencia en Rust Core (Fast Lane)
+- [ ] **Task 1.1:** Conectar `check_noise_or_huge_file` dentro de `indexing.rs::full_scan()` y `reload_if_stale()`, descartando archivos > 256 KB.
+- [ ] **Task 1.2:** Ampliar `is_noise_dir()` en `helpers.rs` con `.venv`, `venv`, `env`, `.tox`, `scratch`, `.supabase`, `.turbo`, `coverage`, `.output`, `target`.
+- [ ] **Task 1.3:** Configurar PRAGMAs de SQLite en `schema.rs`: `PRAGMA busy_timeout = 5000;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA journal_mode = WAL;`.
+- [ ] **Task 1.4:** Sanitizar `passive_capture()` en `lessons.rs` para rechazar volcados de terminal, tablas markdown y salidas de compilación crudas.
 
-- **Pruebas integradas:** Crear suites de validación cruzada en `tests/test_brain.py` y `crates/ozymem-server/tests/mcp_server_tests.rs` para medir latencias de subprocesos y validar que el _second-agent_ no bloquee el hilo principal.
+### Fase 2: Power Engine en Python (ChromaDB + Vector Store + Re-ranking)
+- [ ] **Task 2.1:** Configurar cliente persistente de **ChromaDB** en `python/ozy-brain` (almacenamiento en `.ozymem/chroma`).
+- [ ] **Task 2.2:** Implementar pipeline de embeddings densos de alta dimensionalidad (`sentence-transformers` con aceleración por hardware CUDA/DirectML).
+- [ ] **Task 2.3:** Integrar el modelo **Neural Cross-Encoder Re-ranker** (`bge-reranker`) para filtrar falsos positivos antes de entregar respuestas al LLM.
+- [ ] **Task 2.4:** Crear acción unificada `deep_semantic_search` que combine FTS5 léxico de SQLite con búsqueda vectorial densa y re-ranking.
 
-El documento propuesto es **totalmente adecuado y tácticamente acertado** para transformar Ozygram de una herramienta MCP de consulta reactiva a un sistema cognitivo autónomo y proactivo.
+### Fase 3: AI Noise Gate y Crítico Antiruido (Blindaje de Datos)
+- [ ] **Task 3.1:** Implementar el **AI Noise Gate** en `python/ozy-brain/agents/memory_agent.py` para clasificar y evaluar la calidad semántica de cada memoria antes de indexar.
+- [ ] **Task 3.2:** Desviar volcados crudos de terminal, trazas de stack trace y logs a `analytics.duckdb` como telemetría, impidiendo la contaminación del índice vectorial.
+- [ ] **Task 3.3:** Crear rutina de **Clustering y Consolidación de Memorias** para sintetizar múltiples observaciones en 1 regla canónica maestra.
+- [ ] **Task 3.4:** Implementar factor de decaimiento temporal (*Memory Decay*) para rebajar la relevancia de lecciones obsoletas con más de 90 días sin confirmación.
 
----
-
-**Verificación de Limitaciones Actuales (v0.2.0)**
-
-Las limitaciones diagnosticadas son reales en la estructura actual del proyecto:
-
-- **Heurísticas rígidas en `ozy-brain`:** Módulos como `risk.py`, `reflector.py` y `planner.py` operan con reglas estáticas y deterministas, perdiendo capacidad adaptativa frente a bases de código complejas o políglotas.
-
-- **Modelo síncrono/reactivo:** `ozymem-server` solo procesa peticiones entrantes vía MCP; no ejecuta tareas de auditoría en segundo plano ni alerta sobre anomalías de forma proactiva.
-
-- **Persistencia plana:** SQLite gestiona símbolos y grafos AST de primer orden, pero carece de análisis de series temporales (churn de Git, acoplamiento dinámico y decaimiento de memoria por desuso).
-
----
-
-**Cómo potenciar el "Segundo Agente" (Patrón Supervisor-Crítico)**
-
-Para estructurar un agente dentro de otro sin generar sobrecarga ni bucles infinitos:
-
-1. **Patrón Actor-Critic (Supervisor & Adversary):**
-
-- **Agente Principal (Planificador/Constructor):** Genera el plan, AST diffs y propuestas de refactorización o memoria.
-- **Segundo Agente (Auditor/Crítico Autónomo):** Se ejecuta en una capa paralela o "sandbox". Su único objetivo es desafiar al agente principal: detecta vectores de regresión, violaciones de arquitectura, calcula el riesgo real en base a métricas de Git y veta cambios antes de escribirlos en memoria o código.
-
-2. **Bucle Proactivo en Rust (`Tokio + Notify`):**
-
-- El núcleo en Rust vigila el sistema de archivos (`notify`). Al detectar un guardado, despierta al segundo agente en `ozy-brain` mediante un worker de fondo.
-
-- Esto permite emitir notificaciones MCP push automáticas sin requerir una consulta manual del usuario.
+### Fase 4: Orquestación Multi-Agente y Validación E2E
+- [ ] **Task 4.1:** Conectar el `SupervisorAgent` en `brain.py` para coordinar el `RiskCritic`, el `MemoryConsolidationAgent` y el motor `DataEngine` (DuckDB + Polars).
+- [ ] **Task 4.2:** Formatear salidas para el agente LLM con resúmenes ejecutivos "Token-Budget Aware" (< 1 KB) para no saturar la ventana de contexto.
+- [ ] **Task 4.3:** Incorporar soporte para manifiesto `.ozy.toml` en repositorios para configuración instantánea sin fricción.
+- [ ] **Task 4.4:** Ejecutar suites de pruebas cruzadas (`cargo test --all`, `python -m unittest discover`) y validar latencias (< 100 ms en Fast Lane y < 2.5 s en Power Lane).
 
 ---
 
-**Recomendaciones para Flexibilidad y Stack**
-
-- **Rechazar Go:** Mantener **Rust** (rendimiento, parsing AST y servidor de memoria) + **Python** (razonamiento, manipulación de datos y LLMs). Agregar Go triplicaría la fricción de despliegue sin aportar ventajas sobre Rust.
-
-- **Evitar sobrecarga de frameworks:** No combines `langgraph` y `crewai` simultáneamente. Utiliza **`pydantic-ai`** (para tipado estricto y validación de esquemas) junto a **`litellm`**.
-
-- **Persistencia y Métricas:** La combinación de **DuckDB** (consultas OLAP sobre Git churn) y **Polars** (análisis vectorial/tabular de dependencias) otorga la máxima velocidad analítica local sin requerir servicios externos pesados.
+## 4. Métricas de Éxito
+1. **Latencia Fast Lane:** Respuestas a `mem_current_project` y `mem_context` en menos de 100 ms.
+2. **Cero Polución:** 0 archivos mayores a 256 KB o de carpetas virtuales (`.venv`, `scratch`) ingeridos en `memory.db`.
+3. **Relevancia Semántica:** Precisión de Re-ranking > 90% en pruebas de búsqueda con preguntas ambiguas.
+4. **Integridad de Base de Datos:** 100% de transacciones atómicas libres de bloqueos `database is locked`.

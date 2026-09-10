@@ -1780,3 +1780,44 @@ async fn test_record_and_get_excel_templates() {
     assert_eq!(fetched[0].version_tag, Some("V03".to_string()));
     assert_eq!(fetched[0].sheets, vec!["Hoja1", "Resumen"]);
 }
+
+
+#[test]
+fn test_is_noise_dir_includes_virtual_envs_and_tool_dirs() {
+    use ozymem_core::graph_backend::is_noise_dir;
+    let dir = tempfile::tempdir().unwrap();
+
+    let noise_names = [
+        ".venv", "venv", "env", ".tox", "scratch",
+        ".supabase", ".gemini", ".turbo", "coverage", ".output",
+    ];
+
+    for name in noise_names {
+        let p = dir.path().join(name);
+        std::fs::create_dir(&p).unwrap();
+        assert!(is_noise_dir(&p), "directory {} should be recognized as noise", name);
+    }
+
+    let src = dir.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    assert!(!is_noise_dir(&src), "src should not be recognized as noise");
+}
+
+#[test]
+fn test_passive_capture_sanitizes_noise_and_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+    backend.set_project_path(Some(dir.path().to_string_lossy().as_ref()));
+    backend
+        .memory_session_start("s2", "ozymem-test", &dir.path().to_string_lossy())
+        .unwrap();
+
+    let raw_text = "Done.\n\n## Key Learnings:\n- Normalizar siempre fechas a formato YYYY/MM/DD en backend\n| id | name | value |\n|---|---|---|\n| 1 | test | 123 |\n```typescript\nconst foo = 1;\n```\n- Traceback (most recent call last): File \"main.py\", line 10\n- at Object.<anonymous> (server.js:20:15)\n- Documentar dependencias en plan maestro y validar con tests\n";
+
+    let saved = backend.passive_capture("s2", raw_text, Some("ozymem-test")).unwrap();
+    // Only the 2 valid conceptual learnings should be captured; table, code block and stacktraces discarded
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0].content, "Normalizar siempre fechas a formato YYYY/MM/DD en backend");
+    assert_eq!(saved[1].content, "Documentar dependencias en plan maestro y validar con tests");
+}
