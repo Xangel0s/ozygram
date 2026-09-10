@@ -43,16 +43,16 @@ Ozygram se estructura en **Dos Carriles Cognitivos** complementarios:
 ## 3. Hoja de Ruta Detallada por Fases (4 Fases × 4 Tareas)
 
 ### Fase 1: Blindaje Sanitario y Resiliencia en Rust Core (Fast Lane)
-- [ ] **Task 1.1:** Conectar `check_noise_or_huge_file` dentro de `indexing.rs::full_scan()` y `reload_if_stale()`, descartando archivos > 256 KB.
-- [ ] **Task 1.2:** Ampliar `is_noise_dir()` en `helpers.rs` con `.venv`, `venv`, `env`, `.tox`, `scratch`, `.supabase`, `.turbo`, `coverage`, `.output`, `target`.
-- [ ] **Task 1.3:** Configurar PRAGMAs de SQLite en `schema.rs`: `PRAGMA busy_timeout = 5000;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA journal_mode = WAL;`.
-- [ ] **Task 1.4:** Sanitizar `passive_capture()` en `lessons.rs` para rechazar volcados de terminal, tablas markdown y salidas de compilación crudas.
+- [x] **Task 1.1:** Conectar `check_noise_or_huge_file` dentro de `indexing.rs::full_scan()` y `reload_if_stale()`, descartando archivos > 256 KB.
+- [x] **Task 1.2:** Ampliar `is_noise_dir()` en `helpers.rs` con `.venv`, `venv`, `env`, `.tox`, `scratch`, `.supabase`, `.turbo`, `coverage`, `.output`, `target`.
+- [x] **Task 1.3:** Configurar PRAGMAs de SQLite en `schema.rs`: `PRAGMA busy_timeout = 5000;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA journal_mode = WAL;`.
+- [x] **Task 1.4:** Sanitizar `passive_capture()` en `lessons.rs` para rechazar volcados de terminal, tablas markdown y salidas de compilación crudas.
 
 ### Fase 2: Power Engine en Python (ChromaDB + Vector Store + Re-ranking)
-- [ ] **Task 2.1:** Configurar cliente persistente de **ChromaDB** en `python/ozy-brain` (almacenamiento en `.ozymem/chroma`).
-- [ ] **Task 2.2:** Implementar pipeline de embeddings densos de alta dimensionalidad (`sentence-transformers` con aceleración por hardware CUDA/DirectML).
-- [ ] **Task 2.3:** Integrar el modelo **Neural Cross-Encoder Re-ranker** (`bge-reranker`) para filtrar falsos positivos antes de entregar respuestas al LLM.
-- [ ] **Task 2.4:** Crear acción unificada `deep_semantic_search` que combine FTS5 léxico de SQLite con búsqueda vectorial densa y re-ranking.
+- [x] **Task 2.1:** Configurar cliente persistente de **ChromaDB** en `python/ozy-brain` (almacenamiento en `.ozymem/chroma`).
+- [x] **Task 2.2:** Implementar pipeline de embeddings densos de alta dimensionalidad (`sentence-transformers` con aceleración por hardware CUDA/DirectML).
+- [x] **Task 2.3:** Integrar el modelo **Neural Cross-Encoder Re-ranker** (`bge-reranker`) para filtrar falsos positivos antes de entregar respuestas al LLM.
+- [x] **Task 2.4:** Crear acción unificada `deep_semantic_search` que combine FTS5 léxico de SQLite con búsqueda vectorial densa y re-ranking.
 
 ### Fase 3: AI Noise Gate y Crítico Antiruido (Blindaje de Datos)
 - [ ] **Task 3.1:** Implementar el **AI Noise Gate** en `python/ozy-brain/agents/memory_agent.py` para clasificar y evaluar la calidad semántica de cada memoria antes de indexar.
