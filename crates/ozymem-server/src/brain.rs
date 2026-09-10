@@ -111,10 +111,36 @@ pub(crate) async fn handle_ozy_brain(
         impact = backend.analyze_impact(first_file, 2);
     }
 
+    let db_path = backend.project_path().map(|p| {
+        PathBuf::from(&p).join(".ozymem").join("memory.db").to_string_lossy().to_string()
+    });
+
+    let mut candidates = Vec::new();
+    for l in &relevant_lessons {
+        candidates.push(json!({
+            "id": format!("lesson:{}", l.id),
+            "content": format!("Lesson in {} [{}]: {}\nSolution: {}", l.file_path, l.kind, l.error_context, l.solution),
+            "file_path": l.file_path,
+            "kind": l.kind,
+            "similarity_score": l.confidence_score,
+        }));
+    }
+    for o in &relevant_observations {
+        candidates.push(json!({
+            "id": format!("observation:{}", o.id),
+            "content": format!("{}: {}", o.title, o.content),
+            "project": o.project,
+            "scope": o.scope,
+            "similarity_score": 0.7,
+        }));
+    }
+
     let payload = json!({
         "project": project,
         "goal": goal,
         "query": tool_call.arguments.get("query").cloned().unwrap_or(Value::Null),
+        "db_path": db_path,
+        "candidates": candidates,
         "max_tokens": max_tokens,
         "graph_summary": summary,
         "files": files,
@@ -248,14 +274,88 @@ pub fn try_call_ozy_brain_persistent(action: &str, payload: &Value, timeout_ms: 
     }
 }
 
+pub fn ensure_ozy_brain_running() {
+    let dummy = json!({});
+    if try_call_ozy_brain_persistent("health", &dummy, 150).is_ok() {
+        return;
+    }
+    if let Some(brain_dir) = resolve_ozy_brain_dir() {
+        for candidate in python_candidates() {
+            if Command::new(&candidate)
+                .args(["-m", "ozy_brain.server"])
+                .current_dir(&brain_dir)
+                .env("PYTHONPATH", &brain_dir)
+                .env("PYTHONIOENCODING", "utf-8")
+                .env("PYTHONUTF8", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .is_ok()
+            {
+                for _ in 0..12 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if try_call_ozy_brain_persistent("health", &dummy, 150).is_ok() {
+                        eprintln!("[ozymem] auto-spawned persistent ozy-brain daemon");
+                        return;
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
+
+pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
+    let goal = payload.get("goal").and_then(Value::as_str).unwrap_or("analyze task");
+    let relevant_lessons = payload.get("relevant_lessons").and_then(Value::as_array);
+    let count = relevant_lessons.map(|l| l.len()).unwrap_or(0);
+
+    let mut plan_items = vec![
+        format!("[Fast-Lane Fallback] Analizado '{}' con motor léxico de SQLite.", goal)
+    ];
+    if let Some(lessons) = relevant_lessons {
+        for l in lessons.iter().take(3) {
+            if let Some(ctx) = l.get("error_context").and_then(Value::as_str) {
+                let sol = l.get("solution").and_then(Value::as_str).unwrap_or("");
+                plan_items.push(format!("Regla: {} -> Solución: {}", ctx, sol));
+            }
+        }
+    }
+    if plan_items.len() == 1 {
+        plan_items.push("No se detectaron riesgos léxicos inmediatos en las reglas del repositorio.".to_string());
+    }
+
+    json!({
+        "action": action,
+        "summary": format!("[Mode: Degraded / Fast-Lane Only] Consulta procesada vía SQLite FTS5 ({} reglas identificadas).", count),
+        "plan": plan_items,
+        "risks": ["Python Power-Lane inalcanzable; operando bajo heurística determinista local."],
+        "recommendations": ["Revisar estado del demonio de Python o levantar con 'python -m ozy_brain.server'."],
+        "memory_updates": [],
+        "confidence": 0.70,
+        "engine": "ozymem-fast-lane-fallback",
+        "brain_version": "0.4.0",
+        "brain_schema_version": "v1",
+        "safe_mode": true
+    })
+}
+
 pub fn call_ozy_brain_worker_smart(action: &str, payload: &Value, timeout_ms: u64) -> anyhow::Result<Value> {
     let mode = std::env::var("OZY_BRAIN_MODE").unwrap_or_else(|_| "auto".to_string());
     if mode != "oneshot" {
+        ensure_ozy_brain_running();
         if let Ok(res) = try_call_ozy_brain_persistent(action, payload, timeout_ms) {
             return Ok(res);
         }
     }
-    call_ozy_brain_worker(action, payload, timeout_ms)
+    match call_ozy_brain_worker(action, payload, timeout_ms) {
+        Ok(res) => Ok(res),
+        Err(err) => {
+            eprintln!("[ozymem] worker failed ({err}), activating fast-lane deterministic fallback");
+            Ok(build_deterministic_fallback(action, payload))
+        }
+    }
 }
 
 pub fn call_ozy_brain_worker(action: &str, payload: &Value, timeout_ms: u64) -> anyhow::Result<Value> {

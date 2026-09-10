@@ -45,6 +45,11 @@ class JSONRPCHandler(socketserver.StreamRequestHandler):
                             "uptime_secs": round(time.time() - START_TIME, 2),
                         },
                     }
+                elif method in ("sync_outbox", "drain_outbox"):
+                    from ozy_brain.outbox_consumer import OutboxConsumer
+                    consumer = OutboxConsumer(db_path=params.get("db_path"), chroma_dir=params.get("chroma_dir"))
+                    stats = consumer.drain(limit=int(params.get("limit", 100)))
+                    res = {"jsonrpc": "2.0", "id": req_id, "result": stats}
                 else:
                     action = method or params.get("action") or "plan"
                     payload = params if isinstance(params, dict) else {}
@@ -71,11 +76,26 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 START_TIME = time.time()
 
 
+def _background_outbox_sweeper(interval_secs: float = 10.0) -> None:
+    from ozy_brain.outbox_consumer import OutboxConsumer
+    while True:
+        try:
+            consumer = OutboxConsumer()
+            consumer.drain(limit=50)
+        except Exception:
+            pass
+        time.sleep(interval_secs)
+
+
 def start_server(host: str = "127.0.0.1", port: int = 9473) -> None:
     server = ThreadedTCPServer((host, port), JSONRPCHandler)
     server_thread = threading.Thread(target=server.serve_forever)
     server_thread.daemon = True
     server_thread.start()
+
+    sweeper_thread = threading.Thread(target=_background_outbox_sweeper, daemon=True)
+    sweeper_thread.start()
+
     print(f"[ozy-brain-server] Persistent worker running on {host}:{port} (PID: {os.getpid()})", flush=True)
 
     try:

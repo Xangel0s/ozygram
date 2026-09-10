@@ -115,7 +115,7 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review"], "default": "plan" },
+                            "action": { "type": "string", "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review", "deep_semantic_search", "audit_changes_with_critic", "get_repository_hotspots", "consolidate_memory", "sync_outbox"], "default": "plan" },
                             "goal": { "type": "string" },
                             "query": { "type": "string" },
                             "project": { "type": "string" },
@@ -124,6 +124,20 @@ pub fn handle_tools_list(
                             "failures": { "type": "array", "items": { "type": "string" } },
                             "changes": { "type": "array", "items": { "type": "string" } }
                         },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "deep_semantic_search",
+                    description: "Hybrid semantic search combining SQLite FTS5 (BM25) with ChromaDB dense vectors via Reciprocal Rank Fusion (RRF) and Neural Re-ranking.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "The natural language query or architectural concept to search for" },
+                            "limit": { "type": "integer", "default": 5, "description": "Maximum number of high-confidence results to return" },
+                            "project": { "type": "string", "description": "Optional project scope" }
+                        },
+                        "required": ["query"],
                         "additionalProperties": false
                     }),
                 },

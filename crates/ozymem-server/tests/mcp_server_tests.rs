@@ -1307,6 +1307,49 @@ use std::sync::{Arc, Mutex};
         assert!(hotspots_res["structured_plan"].get("hotspots").is_some());
     }
 
+    #[test]
+    fn test_deterministic_fallback_schema_valid() {
+        let payload = json!({
+            "goal": "Verify database integrity",
+            "relevant_lessons": [
+                {
+                    "error_context": "Database locked",
+                    "solution": "Use PRAGMA busy_timeout = 5000"
+                }
+            ]
+        });
+        let fallback = build_deterministic_fallback("deep_semantic_search", &payload);
+        assert_eq!(fallback["action"], "deep_semantic_search");
+        assert!(fallback["summary"].as_str().unwrap().contains("Fast-Lane Only"));
+        let validated = validate_ozy_brain_response_schema(&fallback).unwrap();
+        assert_eq!(validated.action, "deep_semantic_search");
+        assert_eq!(validated.confidence, 0.70);
+    }
+
+    #[test]
+    fn test_deep_semantic_search_hybrid_worker() {
+        if resolve_ozy_brain_dir().is_none() {
+            eprintln!("Skipping test: ozy-brain worker not resolved");
+            return;
+        }
+        let search_payload = json!({
+            "query": "authentication token validation",
+            "limit": 3,
+            "candidates": [
+                {
+                    "id": "cand_1",
+                    "content": "Use chrono for ISO-8601 auth tokens",
+                    "similarity_score": 0.8
+                }
+            ]
+        });
+        let result = call_ozy_brain_worker("deep_semantic_search", &search_payload, 25_000).unwrap();
+        assert_eq!(result["action"], "deep_semantic_search");
+        assert!(result["plan"].as_array().unwrap().len() >= 1);
+        let validated = validate_ozy_brain_response_schema(&result).unwrap();
+        assert_eq!(validated.action, "deep_semantic_search");
+    }
+
     #[tokio::test]
     async fn test_ozy_code_doctor_detects_duplicate_blocks() {
         let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));

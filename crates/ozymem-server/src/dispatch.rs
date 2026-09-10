@@ -244,6 +244,16 @@ pub async fn handle_request(
                         is_error: None,
                     }
                 }
+                "deep_semantic_search" | "ozy_deep_search" => {
+                    let report = handle_ozy_brain(backend, &tool_call, "deep_semantic_search").await?;
+                    ToolCallResult {
+                        content: vec![ContentBlock {
+                            kind: "text",
+                            text: report,
+                        }],
+                        is_error: None,
+                    }
+                }
                 _ => {
                     if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
                         return Ok(Some(res));
