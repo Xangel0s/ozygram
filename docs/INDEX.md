@@ -8,6 +8,7 @@ Bienvenido a la documentación oficial y completa de **Ozygram** (Dual-Tier Engi
 
 ### 1. [Arquitectura Dual-Tier (`docs/architecture.md`)](architecture.md)
 - Desacoplamiento en dos carriles: **Carril Rápido (Rust)** y **Carril de Potencia (Python)**.
+- Desglose de crates en el monorepo (`crates/`, `python/`).
 - Autoridad transaccional única con SQLite local.
 - Patrón Transaccional Outbox (`memory_outbox`) con triggers nativos y sincronización asíncrona.
 - Resiliencia: Auto-spawn de demonios en segundo plano y Circuit Breaker de fallback determinista.
@@ -43,6 +44,9 @@ Bienvenido a la documentación oficial y completa de **Ozygram** (Dual-Tier Engi
 - Prefill predictivo para maximizar la tasa de acierto de prompt cache (>90%).
 - Sandbox de validación previa test-time (`ozy_verify_diff`).
 - Sincronización descentralizada P2P con Git Notes (`refs/notes/ozymem`).
+
+### 7. [Historial de Versiones y Novedades (`docs/changelog.md`)](changelog.md)
+- Registro cronológico detallado de cambios y mejoras desde la v0.2.0 hasta la v0.4.0.
 
 ---
 

@@ -38,7 +38,23 @@ Ozygram implementa una **Arquitectura Dual-Tier Asimétrica** diseñada para max
 
 ---
 
-## 2. El Carril Rápido (Fast Lane — Rust)
+## 2. Estructura del Monorepo
+
+```text
+ozygram/
+├── crates/
+│   ├── ozymem-core/       # Motor persistente (SQLite), Outbox triggers, grafo Petgraph, Engram store
+│   ├── ozymem-parser/     # Parsers AST Tree-Sitter nativos multi-lenguaje (Rust, Python, TS/JS, Go, SQL)
+│   ├── ozymem-cli/        # CLI standalone con subcomandos (scan, dashboard, projects, etc.)
+│   └── ozymem-server/     # Servidor MCP stdio modular de alta concurrencia (<5ms)
+├── python/
+│   └── ozy-brain/         # Motor cognitivo: Supervisor, RiskCritic, DataEngine (DuckDB), OutboxConsumer
+└── docs/                  # Documentación técnica modular por secciones
+```
+
+---
+
+## 3. El Carril Rápido (Fast Lane — Rust)
 
 El carril rápido está compuesto por los crates `ozymem-core`, `ozymem-parser`, `ozymem-server` y `ozymem-cli`:
 
@@ -53,7 +69,7 @@ El carril rápido está compuesto por los crates `ozymem-core`, `ozymem-parser`,
 
 ---
 
-## 3. Patrón Transaccional Outbox (`memory_outbox`)
+## 4. Patrón Transaccional Outbox (`memory_outbox`)
 
 Para evitar "vectores fantasma" y desfases entre la base relacional y la base de datos vectorial, Ozygram implementa el patrón **Transactional Outbox** gobernado por triggers nativos en SQLite:
 
