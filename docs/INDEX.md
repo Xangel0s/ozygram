@@ -1,64 +1,65 @@
-# Documentación de Ozygram / Ozymem
+# Documentación Oficial de Ozygram
 
-Bienvenido a la documentación oficial y detallada de **Ozygram** (v0.2.0), el sistema de grafo de dependencias de código, memoria contextual persistente y razonamiento híbrido para desarrollo asistido por IA mediante el Model Context Protocol (MCP).
-
----
-
-## 📚 Índice de Secciones
-
-1. [**Arquitectura Global (`docs/overview.md`)**](overview.md)
-   - Componentes del monorepo (`ozymem-core`, `ozymem-parser`, `ozymem-cli`, `ozymem-server`, `ozy-brain`).
-   - Esquemas de almacenamiento SQLite (por proyecto y registro global).
-   - Motor de embeddings semánticos y sincronización en tiempo real.
-
-2. [**Organización Modular del Servidor (`docs/architecture_modular.md`)**](architecture_modular.md)
-   - Descomposición modular de `ozymem-server` y `ozymem-core`.
-   - Router central ligero y submódulos especializados (`schemas`, `graph`, `memory`, `git`, `unified`, `prompts`, `resources`, `verifier`, `brain`).
-
-3. [**Sistema Engram, Prefill Especulativo y Sandbox (`docs/engram_system.md`)**](engram_system.md)
-   - Almacenamiento determinista $O(1)$ con `rkyv` y `memmap2`.
-   - Prefill predictivo y speculative decoding en `get_file_context`.
-   - Sandbox de validación test-time (`ozy_verify_diff`) con `reflector.py`.
-   - Sincronización descentralizada P2P con Git Notes (`refs/notes/ozymem`).
-
-4. [**Referencia de Herramientas MCP (`docs/mcp_tools.md`)**](mcp_tools.md)
-   - Guía exhaustiva de los 30+ endpoints MCP.
-   - Herramientas de memoria (`lookup_engram`, `record_lesson`, `search_lessons`, `similar_lessons`).
-   - Herramientas de grafo e impacto (`file_context`, `analyze_impact`, `graph_neighbors`, `graph_summary`).
-   - Herramientas de validación y sandbox (`ozy_verify_diff`, `ozy_doctor`, `ozy_code_doctor`).
-   - Herramientas Git colaborativas (`ozy_export_memory_notes`, `ozy_import_memory_notes`, `learn_from_changes`).
-   - Motor de razonamiento (`ozy_brain`).
-
-5. [**Novedades de Ozygram v0.2.0 (`docs/features_v02.md`)**](features_v02.md)
-   - Resolución de rutas en cascada (rutas relativas, normalizadas y coincidencia de sufijo).
-   - Fallback automático a símbolos AST cuando no existen memorias explícitas.
-   - Clasificación inteligente de duplicados (`[High-Priority Refactor Candidates]` vs `[Structural Boilerplate]`).
-   - Diagnósticos estáticos y linter de sintaxis AST mediante Tree-Sitter.
-   - Soporte de subdirectorios / subpath para monorepos (`subpath`).
-
-6. [**Novedades de Ozygram v0.3.0 (`docs/features_v03.md`)**](features_v03.md)
-   - Motor analítico de telemetría y Git Churn embebido (`DuckDB` + `Polars`).
-   - Sistema multi-agente (`Supervisor` y `Adversarial Risk Critic`).
-   - Fusión y decaimiento exponencial temporal de memoria ($S = C \cdot e^{-\lambda \Delta t}$).
-   - Integración nativa con `OpenRouter` y modelos gratuitos (`nemotron-reasoning`, `nemotron-120b`, `north-code`).
-   - Fallback heurístico offline garantizado ($0 costo).
+Bienvenido a la documentación oficial y completa de **Ozygram** (Dual-Tier Engine v0.4.0), el sistema operativo cognitivo, memoria contextual persistente y grafo de código para agentes y asistentes de desarrollo asistidos por IA.
 
 ---
 
-## 🚀 Instalación y Uso Rápido
+## 📚 Índice Modular de Secciones
 
-### En Windows (PowerShell)
+### 1. [Arquitectura Dual-Tier (`docs/architecture.md`)](architecture.md)
+- Desacoplamiento en dos carriles: **Carril Rápido (Rust)** y **Carril de Potencia (Python)**.
+- Autoridad transaccional única con SQLite local.
+- Patrón Transaccional Outbox (`memory_outbox`) con triggers nativos y sincronización asíncrona.
+- Resiliencia: Auto-spawn de demonios en segundo plano y Circuit Breaker de fallback determinista.
+
+### 2. [Búsqueda Semántica Híbrida y Fusión RRF (`docs/semantic-search.md`)](semantic-search.md)
+- Fusión de búsqueda léxica dispersa (SQLite FTS5 / BM25) y búsqueda semántica densa.
+- Motor local `FastEmbed` con ONNX Runtime en C++ (`BAAI/bge-m3` / `bge-base-en-v1.5`).
+- Almacenamiento vectorial en colecciones locales de ChromaDB.
+- Algoritmo matemático **Reciprocal Rank Fusion (RRF)**: fórmula, ranking y ventajas.
+
+### 3. [Supervisión Cognitiva y Validación Determinista (`docs/supervision-and-validation.md`)](supervision-and-validation.md)
+- Roles de `SupervisorAgent` y el crítico adversarial `RiskCriticAgent`.
+- Validación determinista sin LLM ($0 costo, <5 ms):
+  - Telemetría de Git Churn y detección de Hotspots con `DuckDB` + `Polars`.
+  - Guardia de seguridad anti-destrucción DDL/DML (`DROP TABLE`, `DELETE FROM`, etc.).
+  - Control de radio de explosión (*Blast Radius* > 8 archivos).
+  - Poda matemática de memoria por decaimiento temporal exponencial ($S = C \cdot e^{-\lambda \Delta t}$).
+- Supervisión semántica opcional con modelos gratuitos: Google AI Studio (`Gemini 2.0 Flash`), Ollama local (`qwen2.5-coder`), y OpenRouter.
+- Presupuesto estricto de tokens (*Zero Token Bloat*).
+
+### 4. [Herramientas de Alto Rendimiento ("The Dream Team") (`docs/dream-team-tools.md`)](dream-team-tools.md)
+- Integración de `tgrep` (Microsoft): Búsqueda trigram de expresiones regulares en milisegundos.
+- Integración de `rtk` (Rust Token Killer): Compresión agresiva de payloads, limpieza ANSI y ahorro de tokens.
+- Integración de `fastembed`: Inferencia vectorial local sin consumo de cuotas de API.
+
+### 5. [Integración y Referencia MCP (`docs/mcp-integration.md`)](mcp-integration.md)
+- Guía de configuración para Antigravity IDE, Claude Desktop, Cursor y VS Code.
+- Catálogo completo de herramientas MCP: memoria, grafo, cerebro cognitivo, diagnósticos y salud de código.
+- Recursos MCP (`ozymem://summary`, `recent-lessons`, etc.) y suscripciones dinámicas.
+
+### 6. [Sistema Engram y Prefill Especulativo (`docs/engram_system.md`)](engram_system.md)
+- Tabla determinista de firmas y contratos $O(1)$ con `rkyv` y `memmap2`.
+- Prefill predictivo para maximizar la tasa de acierto de prompt cache (>90%).
+- Sandbox de validación previa test-time (`ozy_verify_diff`).
+- Sincronización descentralizada P2P con Git Notes (`refs/notes/ozymem`).
+
+---
+
+## ⚡ Guía Rápida de Instalación
+
+### Windows (PowerShell)
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-### En Linux / macOS (Bash)
+### Linux / macOS (Bash)
 ```bash
 chmod +x ./install.sh
 ./install.sh
 ```
 
-### Configuración MCP (`claude_desktop_config.json` o configuración de IDE)
+### Configuración MCP Básica
 ```json
 {
   "mcpServers": {
