@@ -13,10 +13,13 @@ except ImportError:
     HAS_CHROMADB = False
 
 try:
-    from fastembed import TextEmbedding
-    HAS_FASTEMBED = True
-except ImportError:
+    import importlib
+    _fastembed_mod = importlib.import_module("fastembed")
+    TextEmbedding = getattr(_fastembed_mod, "TextEmbedding", None)
+    HAS_FASTEMBED = TextEmbedding is not None
+except Exception:
     HAS_FASTEMBED = False
+    TextEmbedding = None
 
 
 class VectorMemoryStore:
