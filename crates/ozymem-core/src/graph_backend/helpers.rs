@@ -223,7 +223,7 @@ pub fn is_noise_dir(path: &Path) -> bool {
 /// Load ignore patterns from `.ozymemignore` and `.gitignore` in the project root.
 pub fn load_ignore_patterns(project_root: &Path) -> Vec<String> {
     let mut patterns = Vec::new();
-    for filename in &[".ozymemignore", ".gitignore"] {
+    for filename in &[".ozymemignore", ".gitignore", ".ozyignore"] {
         let path = project_root.join(filename);
         if let Ok(content) = std::fs::read_to_string(&path) {
             for line in content.lines() {

@@ -536,6 +536,7 @@ impl ProjectRegistry {
     pub fn discover_project(start_path: &Path) -> Option<(String, PathBuf)> {
         let markers = [
             ".git",
+            ".ozy.toml",
             "Cargo.toml",
             "package.json",
             "go.mod",

@@ -61,10 +61,10 @@ Ozygram se estructura en **Dos Carriles Cognitivos** complementarios:
 - [x] **Task 3.4:** Implementar factor de decaimiento temporal (*Memory Decay*) para rebajar la relevancia de lecciones obsoletas con más de 90 días sin confirmación.
 
 ### Fase 4: Orquestación Multi-Agente y Validación E2E
-- [ ] **Task 4.1:** Conectar el `SupervisorAgent` en `brain.py` para coordinar el `RiskCritic`, el `MemoryConsolidationAgent` y el motor `DataEngine` (DuckDB + Polars).
-- [ ] **Task 4.2:** Formatear salidas para el agente LLM con resúmenes ejecutivos "Token-Budget Aware" (< 1 KB) para no saturar la ventana de contexto.
-- [ ] **Task 4.3:** Incorporar soporte para manifiesto `.ozy.toml` en repositorios para configuración instantánea sin fricción.
-- [ ] **Task 4.4:** Ejecutar suites de pruebas cruzadas (`cargo test --all`, `python -m unittest discover`) y validar latencias (< 100 ms en Fast Lane y < 2.5 s en Power Lane).
+- [x] **Task 4.1:** Conectar el `SupervisorAgent` en `brain.py` para coordinar el `RiskCritic`, el `MemoryConsolidationAgent` y el motor `DataEngine` (DuckDB + Polars).
+- [x] **Task 4.2:** Formatear salidas para el agente LLM con resúmenes ejecutivos "Token-Budget Aware" (< 1 KB) para no saturar la ventana de contexto.
+- [x] **Task 4.3:** Incorporar soporte para manifiesto `.ozy.toml` en repositorios para configuración instantánea sin fricción.
+- [x] **Task 4.4:** Ejecutar suites de pruebas cruzadas (`cargo test --all`, `python -m unittest discover`) y validar latencias (< 100 ms en Fast Lane y < 2.5 s en Power Lane).
 
 ---
 
