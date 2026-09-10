@@ -12,6 +12,12 @@ try:
 except ImportError:
     HAS_CHROMADB = False
 
+try:
+    from fastembed import TextEmbedding
+    HAS_FASTEMBED = True
+except ImportError:
+    HAS_FASTEMBED = False
+
 
 class VectorMemoryStore:
     """Persistent ChromaDB vector store for Ozy-Brain.
@@ -38,6 +44,13 @@ class VectorMemoryStore:
             except Exception:
                 self.client = None
                 self.collection = None
+
+        self._embedder = None
+        if HAS_FASTEMBED:
+            try:
+                self._embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+            except Exception:
+                self._embedder = None
 
     def is_available(self) -> bool:
         return self.client is not None and self.collection is not None
@@ -74,8 +87,17 @@ class VectorMemoryStore:
                 metadatas=[clean_meta] if clean_meta else None,
             )
             return True
-        except Exception as e:
-            eprint = getattr(os, "write", None)
+        except Exception:
+            return False
+
+    def delete_item(self, entity_id: str) -> bool:
+        """Deletes a document from the vector collection by ID."""
+        if not self.is_available():
+            return False
+        try:
+            self.collection.delete(ids=[str(entity_id)])
+            return True
+        except Exception:
             return False
 
     def search_similar(
@@ -170,3 +192,44 @@ class VectorMemoryStore:
 
         scored.sort(key=lambda x: x["rerank_score"], reverse=True)
         return scored[:top_k]
+
+
+def reciprocal_rank_fusion(
+    bm25_items: list[dict[str, Any]],
+    vector_items: list[dict[str, Any]],
+    k: int = 60,
+    top_k: int = 10,
+) -> list[dict[str, Any]]:
+    """Merges lexical (BM25/FTS5) and dense vector rankings using Reciprocal Rank Fusion (RRF).
+
+    Formula: RRF_score(d) = sum(1 / (k + rank(d)))
+    """
+    scores: dict[str, float] = {}
+    items_by_key: dict[str, dict[str, Any]] = {}
+
+    def get_key(item: dict[str, Any]) -> str:
+        if "id" in item and item["id"]:
+            return str(item["id"])
+        if "file_path" in item and "symbol_name" in item:
+            return f"{item['file_path']}::{item['symbol_name']}"
+        return str(hash(item.get("content", "")))
+
+    for rank, item in enumerate(bm25_items, start=1):
+        key = get_key(item)
+        items_by_key[key] = item
+        scores[key] = scores.get(key, 0.0) + (1.0 / (k + rank))
+
+    for rank, item in enumerate(vector_items, start=1):
+        key = get_key(item)
+        if key not in items_by_key:
+            items_by_key[key] = item
+        scores[key] = scores.get(key, 0.0) + (1.0 / (k + rank))
+
+    sorted_keys = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+    fused: list[dict[str, Any]] = []
+    for key in sorted_keys[:top_k]:
+        merged_item = dict(items_by_key[key])
+        merged_item["rrf_score"] = round(scores[key], 5)
+        fused.append(merged_item)
+
+    return fused
