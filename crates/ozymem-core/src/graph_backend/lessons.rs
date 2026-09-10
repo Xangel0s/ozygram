@@ -3,7 +3,7 @@ use anyhow::Result;
 use rusqlite::params;
 use std::path::Path;
 use crate::graph_backend::helpers::{detect_language, extract_prohibited_terms, now_ts, normalize_scope, normalize_topic_key, normalized_hash, default_project_name};
-use crate::graph_backend::types::{DriftAlert, GraphBackend, LessonEntry, ObservationEntry, PruneReport, PrunedLessonInfo};
+use crate::graph_backend::types::{DriftAlert, GraphBackend, LessonEntry, ObservationEntry, OutboxEvent, PruneReport, PrunedLessonInfo};
 
 impl GraphBackend {
     pub fn memory_session_start(&self, id: &str, project: &str, directory: &str) -> Result<()> {
@@ -616,5 +616,54 @@ impl GraphBackend {
         Ok(())
     }
 
+    pub fn fetch_pending_outbox(&self, limit: usize) -> Result<Vec<OutboxEvent>> {
+        let inner = self.inner.lock().unwrap();
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT id, entity_type, entity_id, operation, payload, created_at, processed_at
+             FROM memory_outbox
+             WHERE processed_at IS NULL
+             ORDER BY id ASC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(OutboxEvent {
+                id: row.get(0)?,
+                entity_type: row.get(1)?,
+                entity_id: row.get(2)?,
+                operation: row.get(3)?,
+                payload: row.get(4)?,
+                created_at: row.get(5)?,
+                processed_at: row.get(6)?,
+            })
+        })?;
+        let mut events = Vec::new();
+        for r in rows {
+            events.push(r?);
+        }
+        Ok(events)
+    }
 
-}
+    pub fn mark_outbox_processed(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let inner = self.inner.lock().unwrap();
+        let id_list = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+        let query = format!("UPDATE memory_outbox SET processed_at = datetime('now') WHERE id IN ({})", id_list);
+        inner.sqlite.execute(&query, [])?;
+        Ok(())
+    }
+
+    pub fn purge_processed_outbox(&self, older_than_days: u32) -> Result<usize> {
+        let inner = self.inner.lock().unwrap();
+        let affected = if older_than_days == 0 {
+            inner.sqlite.execute("DELETE FROM memory_outbox WHERE processed_at IS NOT NULL", [])?
+        } else {
+            inner.sqlite.execute(
+                "DELETE FROM memory_outbox WHERE processed_at IS NOT NULL AND datetime(processed_at) <= datetime('now', '-' || ?1 || ' days')",
+                params![older_than_days],
+            )?
+        };
+        Ok(affected)
+    }
+}

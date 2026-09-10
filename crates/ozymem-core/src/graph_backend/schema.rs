@@ -213,6 +213,60 @@ impl GraphBackend {
             CREATE INDEX IF NOT EXISTS idx_brain_audit_req_hash ON ozy_brain_audit(request_hash);
             CREATE INDEX IF NOT EXISTS idx_brain_audit_proj_date ON ozy_brain_audit(project_path, created_at);
 
+            CREATE TABLE IF NOT EXISTS memory_outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                processed_at TEXT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_outbox_unprocessed ON memory_outbox(processed_at, id);
+            CREATE INDEX IF NOT EXISTS idx_outbox_entity ON memory_outbox(entity_type, entity_id);
+
+            CREATE TRIGGER IF NOT EXISTS lessons_outbox_ai AFTER INSERT ON lessons BEGIN
+                INSERT INTO memory_outbox (entity_type, entity_id, operation, payload, created_at)
+                VALUES ('lesson', CAST(new.id AS TEXT), 'UPSERT',
+                    json_object('id', new.id, 'file_path', new.file_path, 'symbol_name', new.symbol_name,
+                                'error_context', new.error_context, 'solution', new.solution, 'kind', new.kind,
+                                'confidence_score', new.confidence_score, 'tenant_id', new.tenant_id, 'workspace_root', new.workspace_root),
+                    datetime('now'));
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS lessons_outbox_ad AFTER DELETE ON lessons BEGIN
+                INSERT INTO memory_outbox (entity_type, entity_id, operation, payload, created_at)
+                VALUES ('lesson', CAST(old.id AS TEXT), 'DELETE',
+                    json_object('id', old.id, 'file_path', old.file_path),
+                    datetime('now'));
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS observations_outbox_ai AFTER INSERT ON observations BEGIN
+                INSERT INTO memory_outbox (entity_type, entity_id, operation, payload, created_at)
+                VALUES ('observation', CAST(new.id AS TEXT), 'UPSERT',
+                    json_object('id', new.id, 'title', new.title, 'content', new.content, 'type', new.type,
+                                'project', new.project, 'scope', new.scope, 'topic_key', new.topic_key,
+                                'tenant_id', new.tenant_id, 'workspace_root', new.workspace_root),
+                    datetime('now'));
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS observations_outbox_au AFTER UPDATE ON observations BEGIN
+                INSERT INTO memory_outbox (entity_type, entity_id, operation, payload, created_at)
+                VALUES ('observation', CAST(new.id AS TEXT),
+                    CASE WHEN new.deleted_at IS NOT NULL THEN 'DELETE' ELSE 'UPSERT' END,
+                    json_object('id', new.id, 'title', new.title, 'content', new.content, 'type', new.type,
+                                'project', new.project, 'scope', new.scope, 'topic_key', new.topic_key,
+                                'deleted_at', new.deleted_at, 'tenant_id', new.tenant_id, 'workspace_root', new.workspace_root),
+                    datetime('now'));
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS observations_outbox_ad AFTER DELETE ON observations BEGIN
+                INSERT INTO memory_outbox (entity_type, entity_id, operation, payload, created_at)
+                VALUES ('observation', CAST(old.id AS TEXT), 'DELETE',
+                    json_object('id', old.id, 'title', old.title),
+                    datetime('now'));
+            END;
+
             INSERT OR IGNORE INTO tenants (id, name) VALUES ('local', 'Local Tenant');"
         )?;
 

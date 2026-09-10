@@ -240,3 +240,13 @@ pub struct SimilarLesson {
     pub score: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutboxEvent {
+    pub id: i64,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub operation: String,
+    pub payload: String,
+    pub created_at: String,
+    pub processed_at: Option<String>,
+}
