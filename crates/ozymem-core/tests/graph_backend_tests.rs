@@ -715,11 +715,10 @@ async fn test_edge_debounce_500ms() {
     backend.full_scan(&root, None).unwrap();
     assert_eq!(backend.get_graph_summary().await.unwrap().file_count, 1);
 
-    // Add a new file
-    std::fs::write(dir.path().join("b.rs"), "fn b() {}").unwrap();
-
     // reload_if_stale #1: triggers scan (no recent check, sets debounce timer)
     backend.reload_if_stale();
+    // Add a new file after the first reload so #2 is the debounce-gated call.
+    std::fs::write(dir.path().join("b.rs"), "fn b() {}").unwrap();
     // reload_if_stale #2: within 500ms debounce — skips
     backend.reload_if_stale();
 
