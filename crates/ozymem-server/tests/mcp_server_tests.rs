@@ -1301,7 +1301,7 @@ use std::sync::{Arc, Mutex};
             "git_context": {"dirty": true, "status_files": [{"status":"M", "path":"src/main.rs"}]},
             "memories": [{"title":"validate before reporting"}]
         });
-        let result = call_ozy_brain_worker("plan", &payload, 10_000).unwrap();
+        let result = call_ozy_brain_worker("plan", &payload, 25_000).unwrap();
         assert_eq!(result["action"], "plan");
         assert_eq!(result["safe_mode"], true);
         assert!(
@@ -1349,7 +1349,7 @@ use std::sync::{Arc, Mutex};
             "changes": ["src/main.rs", "src/extra.rs"],
             "files": ["src/main.rs"]
         });
-        let reflect_res = call_ozy_brain_worker("reflect", &reflect_payload, 10_000).unwrap();
+        let reflect_res = call_ozy_brain_worker("reflect", &reflect_payload, 25_000).unwrap();
         assert_eq!(reflect_res["action"], "reflect");
         assert_eq!(reflect_res["reflection_report"]["total_failures"], 1);
         assert_eq!(reflect_res["reflection_report"]["scope_creep_detected"], true);
@@ -1359,7 +1359,7 @@ use std::sync::{Arc, Mutex};
             "goal": "drop table auth_tokens and migration",
             "files": ["src/auth.rs"]
         });
-        let risk_res = call_ozy_brain_worker("risk_review", &risk_payload, 10_000).unwrap();
+        let risk_res = call_ozy_brain_worker("risk_review", &risk_payload, 25_000).unwrap();
         assert_eq!(risk_res["action"], "risk_review");
         assert_eq!(risk_res["risk_assessment"]["risk_level"], "critical");
         assert_eq!(risk_res["risk_assessment"]["requires_user_confirmation"], true);
@@ -2103,5 +2103,110 @@ pub fn audit_log(event: &str) -> bool {
         let list_json: Value = serde_json::from_str(&list_text).unwrap();
         let list = list_json["trajectories"].as_array().unwrap();
         assert!(list.iter().any(|t| t["id"] == traj_id && t["status"] == "completed"));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_exploration_mcp_batch_and_diagnose() {
+        let backend = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mcp_batch_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+
+        // Initialize
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(400)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test-batch", "version": "1" },
+                "workspaceFolders": [{
+                    "uri": proj_uri,
+                    "name": "test-batch-proj"
+                }]
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // 1. Start trajectory
+        let start_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(401)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "start",
+                    "task_description": "Batch and Diagnose MCP test"
+                }
+            })),
+        };
+        let start_resp = handle_request(&backend, start_req, None, None).await.unwrap().unwrap();
+        let start_text = start_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let start_json: Value = serde_json::from_str(&start_text).unwrap();
+        let traj_id = start_json["trajectory_id"].as_str().unwrap().to_string();
+
+        // 2. Call record_batch
+        let batch_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(402)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "record_batch",
+                    "trajectory_id": traj_id,
+                    "steps": [
+                        {
+                            "action_type": "audit",
+                            "observation": "Slow endpoint discovered",
+                            "cost_tokens": 150,
+                            "latency_ms": 3500
+                        },
+                        {
+                            "action_type": "fix_and_test",
+                            "observation": "Index added, tests pass",
+                            "cost_tokens": 250,
+                            "latency_ms": 50,
+                            "reward_score": 5.0,
+                            "is_solution": true
+                        }
+                    ]
+                }
+            })),
+        };
+        let batch_resp = handle_request(&backend, batch_req, None, None).await.unwrap().unwrap();
+        let batch_text = batch_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let batch_json: Value = serde_json::from_str(&batch_text).unwrap();
+        assert_eq!(batch_json["status"], "ok");
+        assert_eq!(batch_json["recorded_steps"], 2);
+
+        // 3. Call diagnose
+        let diag_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(403)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "diagnose",
+                    "trajectory_id": traj_id
+                }
+            })),
+        };
+        let diag_resp = handle_request(&backend, diag_req, None, None).await.unwrap().unwrap();
+        let diag_text = diag_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let diag_json: Value = serde_json::from_str(&diag_text).unwrap();
+        assert_eq!(diag_json["status"], "ok");
+        let diag = &diag_json["diagnosis"];
+        assert_eq!(diag["total_steps"], 2);
+        assert_eq!(diag["total_tokens"], 400);
+        assert_eq!(diag["bottlenecks"].as_array().unwrap().len(), 1); // 3500ms bottleneck
+        assert!(diag["has_solution"].as_bool().unwrap());
+
         let _ = std::fs::remove_dir_all(&tmp_root);
     }

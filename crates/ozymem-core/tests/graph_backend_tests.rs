@@ -2005,3 +2005,216 @@ fn test_exploration_cascade_delete() {
     let tree = backend.get_trajectory_tree(&traj_id).unwrap();
     assert!(tree.is_empty());
 }
+
+#[test]
+fn test_exploration_auto_parenting_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Auto-parenting task", None).unwrap();
+
+    // Node 1: No parent specified -> becomes root (depth 0)
+    let n1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "step_1".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "step 1 ok".to_string(),
+        cost_tokens: Some(100),
+        latency_ms: Some(50),
+        reward_score: Some(1.0),
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+    assert_eq!(n1.depth, 0);
+    assert_eq!(n1.parent_id, None);
+
+    // Node 2: No parent specified -> automatically links to n1 (depth 1)
+    let n2 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "step_2".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "step 2 ok".to_string(),
+        cost_tokens: Some(150),
+        latency_ms: Some(80),
+        reward_score: Some(2.0),
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+    assert_eq!(n2.depth, 1);
+    assert_eq!(n2.parent_id, Some(n1.id.clone()));
+
+    // Node 3: No parent specified -> automatically links to n2 (depth 2)
+    let n3 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "step_3".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "step 3 ok".to_string(),
+        cost_tokens: Some(200),
+        latency_ms: Some(110),
+        reward_score: Some(3.0),
+        is_solution: Some(true),
+        is_pruned: None,
+    }).unwrap();
+    assert_eq!(n3.depth, 2);
+    assert_eq!(n3.parent_id, Some(n2.id.clone()));
+
+    // Verify tree hierarchy
+    let tree = backend.get_trajectory_tree(&traj_id).unwrap();
+    assert_eq!(tree.len(), 1); // 1 root
+    assert_eq!(tree[0].children.len(), 1); // child n2
+    assert_eq!(tree[0].children[0].children.len(), 1); // child n3
+}
+
+#[test]
+fn test_exploration_record_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Batch task", None).unwrap();
+
+    let steps = vec![
+        ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "batch_step_1".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "phase 1 done".to_string(),
+            cost_tokens: Some(50),
+            latency_ms: Some(20),
+            reward_score: Some(1.0),
+            is_solution: None,
+            is_pruned: None,
+        },
+        ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "batch_step_2".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "phase 2 done".to_string(),
+            cost_tokens: Some(120),
+            latency_ms: Some(40),
+            reward_score: Some(2.0),
+            is_solution: None,
+            is_pruned: None,
+        },
+        ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "batch_step_3".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "phase 3 validated".to_string(),
+            cost_tokens: Some(80),
+            latency_ms: Some(30),
+            reward_score: Some(5.0),
+            is_solution: Some(true),
+            is_pruned: None,
+        },
+    ];
+
+    let nodes = backend.record_exploration_batch(ozymem_core::graph_backend::RecordBatchParams {
+        trajectory_id: traj_id.clone(),
+        steps,
+    }).unwrap();
+
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(nodes[0].depth, 0);
+    assert_eq!(nodes[1].depth, 1);
+    assert_eq!(nodes[1].parent_id, Some(nodes[0].id.clone()));
+    assert_eq!(nodes[2].depth, 2);
+    assert_eq!(nodes[2].parent_id, Some(nodes[1].id.clone()));
+}
+
+#[test]
+fn test_exploration_objective_reward_grounding() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Hallucination test", None).unwrap();
+
+    // Agent optimistically claims reward 1.0, but observation says command failed with exit code: 1
+    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id,
+        parent_id: None,
+        action_type: "run_test".to_string(),
+        action_payload: "{\"test\": \"integration\"}".to_string(),
+        observation: "Error: command failed with exit code: 1 (TypeError: undefined is not a function)".to_string(),
+        cost_tokens: Some(300),
+        latency_ms: Some(150),
+        reward_score: Some(1.0),
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+
+    // Objective override should have clamped the reward to -1.0
+    assert_eq!(node.reward_score, -1.0);
+    assert!(node.action_payload.contains("objective_reward_override"));
+    assert!(node.action_payload.contains("\"original_reward\":1.0"));
+}
+
+#[test]
+fn test_exploration_diagnose_trajectory() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Diagnose task", None).unwrap();
+
+    // Node 1: Root
+    let n1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "init".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "init ok".to_string(),
+        cost_tokens: Some(100),
+        latency_ms: Some(50),
+        reward_score: Some(0.0),
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+
+    // Node 2: Slow bottleneck node (latency 4500ms > 3000ms) and unpruned negative reward
+    backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(n1.id.clone()),
+        action_type: "slow_query".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "timed out waiting for lock".to_string(),
+        cost_tokens: Some(500),
+        latency_ms: Some(4500),
+        reward_score: Some(-2.0),
+        is_solution: None,
+        is_pruned: Some(false),
+    }).unwrap();
+
+    // Node 3: Solution node
+    backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(n1.id.clone()),
+        action_type: "fix_index".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "index created, 10ms query".to_string(),
+        cost_tokens: Some(200),
+        latency_ms: Some(100),
+        reward_score: Some(5.0),
+        is_solution: Some(true),
+        is_pruned: None,
+    }).unwrap();
+
+    let diag = backend.diagnose_trajectory(&traj_id).unwrap();
+    assert_eq!(diag.total_steps, 3);
+    assert_eq!(diag.total_tokens, 800);
+    assert_eq!(diag.total_latency_ms, 4650);
+    assert!(diag.has_solution);
+    assert_eq!(diag.bottlenecks.len(), 1); // 4500ms bottleneck
+    assert!(diag.bottlenecks[0].contains("4500 ms"));
+    assert_eq!(diag.pruning_opportunities.len(), 1); // -2.0 unpruned
+    assert!(diag.pruning_opportunities[0].contains("reward -2.00 no podado"));
+    assert!(diag.token_efficiency_percent > 0.0);
+}

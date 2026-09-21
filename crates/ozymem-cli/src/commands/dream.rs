@@ -21,6 +21,17 @@ pub enum DreamSubcommand {
         #[arg(long)]
         json: bool,
     },
+    /// Diagnose a trajectory: detect bottlenecks, pruning opportunities, and token efficiency
+    Diagnose {
+        /// Trajectory ID to diagnose
+        trajectory_id: String,
+        /// Optional path to project or database
+        #[arg(long)]
+        path: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
@@ -103,6 +114,50 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
 
             Ok(())
         }
+
+        DreamSubcommand::Diagnose { trajectory_id, path, json } => {
+            let target_path = path.as_deref().unwrap_or(".");
+            let backend = GraphBackend::open_for_project(Path::new(target_path))
+                .context("No se pudo inicializar GraphBackend para diagnóstico")?;
+
+            let diag = backend.diagnose_trajectory(trajectory_id)?;
+
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&diag)?);
+            } else {
+                println!("============================================================");
+                println!("  OZYMEM DREAM-RSI: TRAJECTORY DIAGNOSIS");
+                println!("============================================================");
+                println!("  Trajectory ID:     {}", diag.trajectory_id);
+                println!("  Total Steps:       {}", diag.total_steps);
+                println!("  Max Depth:         {}", diag.max_depth);
+                println!("  Total Tokens:      {}", diag.total_tokens);
+                println!("  Total Latency:     {} ms", diag.total_latency_ms);
+                println!("  Solution Reached:  {}", if diag.has_solution { "YES" } else { "NO" });
+                println!("  Token Efficiency:  {:.1}%", diag.token_efficiency_percent);
+                println!("  Suggested UCB1 c:  {:.4}", diag.suggested_ucb1_c);
+                println!("------------------------------------------------------------");
+                if diag.bottlenecks.is_empty() {
+                    println!("  Bottlenecks (>3s / >2k tokens): None detected (Fast & Lean)");
+                } else {
+                    println!("  Bottlenecks Detected ({}):", diag.bottlenecks.len());
+                    for b in &diag.bottlenecks {
+                        println!("    • {}", b);
+                    }
+                }
+                if diag.pruning_opportunities.is_empty() {
+                    println!("  Pruning Opportunities: None (Clean exploration)");
+                } else {
+                    println!("  Pruning Opportunities ({}):", diag.pruning_opportunities.len());
+                    for p in &diag.pruning_opportunities {
+                        println!("    • {}", p);
+                    }
+                }
+                println!("============================================================");
+            }
+
+            Ok(())
+        }
     }
 }
 
@@ -113,6 +168,17 @@ mod tests {
     #[test]
     fn test_dream_subcommand_status() {
         let cmd = DreamSubcommand::Status { json: true };
+        assert!(run_dream_command(&cmd).is_ok());
+    }
+
+    #[test]
+    fn test_dream_subcommand_diagnose_not_found() {
+        let cmd = DreamSubcommand::Diagnose {
+            trajectory_id: "non_existent_traj_123".to_string(),
+            path: None,
+            json: true,
+        };
+        // Diagnosing empty trajectory returns 0 steps cleanly
         assert!(run_dream_command(&cmd).is_ok());
     }
 }

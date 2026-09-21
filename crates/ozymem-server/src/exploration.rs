@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ozymem_core::graph_backend::{GraphBackend, RecordNodeParams};
+use ozymem_core::graph_backend::{GraphBackend, RecordBatchParams, RecordNodeParams};
 use ozymem_core::mcp_common::{ContentBlock, ToolCallParams, ToolCallResult};
 use serde_json::{json, Value};
 
@@ -124,6 +124,77 @@ pub fn handle_exploration(
             })
         }
 
+        "record_batch" => {
+            let trajectory_id = args
+                .get("trajectory_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("Falta el parámetro 'trajectory_id' para registrar el lote"))?
+                .to_string();
+
+            let steps_arr = args
+                .get("steps")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("Falta el array 'steps' para record_batch"))?;
+
+            let mut batch_steps = Vec::new();
+            for s in steps_arr {
+                let action_type = s.get("action_type").and_then(Value::as_str).unwrap_or("tool_call").to_string();
+                let action_payload = s.get("action_payload")
+                    .map(|v| if v.is_string() { v.as_str().unwrap().to_string() } else { v.to_string() })
+                    .unwrap_or_else(|| "{}".to_string());
+                let observation = s.get("observation")
+                    .map(|v| if v.is_string() { v.as_str().unwrap().to_string() } else { v.to_string() })
+                    .unwrap_or_else(|| "{}".to_string());
+                let parent_id = s.get("parent_id").and_then(Value::as_str).map(str::to_string);
+                let cost_tokens = s.get("cost_tokens").and_then(Value::as_i64);
+                let latency_ms = s.get("latency_ms").and_then(Value::as_i64);
+                let is_solution = s.get("is_solution").and_then(Value::as_bool);
+                let is_pruned = s.get("is_pruned").and_then(Value::as_bool);
+                let reward_score = s.get("reward_score").and_then(Value::as_f64).or_else(|| {
+                    if is_solution == Some(true) {
+                        Some(10.0)
+                    } else if is_pruned == Some(true) {
+                        Some(-5.0)
+                    } else {
+                        None
+                    }
+                });
+
+                batch_steps.push(RecordNodeParams {
+                    trajectory_id: trajectory_id.clone(),
+                    parent_id,
+                    action_type,
+                    action_payload,
+                    observation,
+                    cost_tokens,
+                    latency_ms,
+                    reward_score,
+                    is_solution,
+                    is_pruned,
+                });
+            }
+
+            let nodes = backend.record_exploration_batch(RecordBatchParams {
+                trajectory_id,
+                steps: batch_steps,
+            })?;
+
+            let res = json!({
+                "status": "ok",
+                "recorded_steps": nodes.len(),
+                "nodes": nodes,
+                "message": format!("Lote de {} pasos registrado y propagado exitosamente", nodes.len())
+            });
+
+            Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: serde_json::to_string_pretty(&res)?,
+                }],
+                is_error: None,
+            })
+        }
+
         "complete" => {
             let trajectory_id = args
                 .get("trajectory_id")
@@ -165,6 +236,36 @@ pub fn handle_exploration(
                 "status": "ok",
                 "trajectory_id": trajectory_id,
                 "tree": tree
+            });
+
+            Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: serde_json::to_string_pretty(&res)?,
+                }],
+                is_error: None,
+            })
+        }
+
+        "diagnose" => {
+            let trajectory_id = args
+                .get("trajectory_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("Falta 'trajectory_id' para diagnosticar la trayectoria"))?;
+
+            let diag = backend.diagnose_trajectory(trajectory_id)?;
+
+            let res = json!({
+                "status": "ok",
+                "diagnosis": diag,
+                "message": format!(
+                    "Diagnóstico para '{}': {} pasos, {} tokens, eficiencia: {:.1}%, cuellos de botella: {}",
+                    trajectory_id,
+                    diag.total_steps,
+                    diag.total_tokens,
+                    diag.token_efficiency_percent,
+                    diag.bottlenecks.len()
+                )
             });
 
             Ok(ToolCallResult {

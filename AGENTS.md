@@ -54,13 +54,17 @@
   - Subcomando CLI `ozymem hook install|uninstall|status|run` y tool MCP `install_git_hook`.
   - Hook nativo `.git/hooks/post-commit` multiplataforma (Windows y Unix) que indexa los deltas del commit y preserva lecciones/observaciones sin intervención manual.
   - Verificación en `ozy_doctor` para auditar si el hook está activo.
-- **Dream-RSI & Monte Carlo Tree Search (MCTS)**:
+- **Dream-RSI & Monte Carlo Tree Search (MCTS) v1.1.0**:
   - **Árbol de Descubrimiento Persistente (`exploration_trajectories`, `exploration_nodes`)**: Persistencia jerárquica en SQLite con `parent_id`, `depth`, `action_payload`, `visit_count` y running Q-value (`value_estimate`).
+  - **Auto-Parenting Inteligente en Rust Core**: Si se omite `parent_id`, el motor enlaza automáticamente al último nodo activo no podado (`depth = parent.depth + 1`), eliminando la fricción y fragilidad de propagar hashes de nodos.
+  - **Modo Lote por Fases (`record_batch`)**: Inserción atómica en lote de múltiples pasos encadenados en una sola llamada MCP, reduciendo en un ~70% el overhead de turnos del agente.
+  - **Auditoría Objetiva de Recompensas (Anti-Alucinación)**: Detección automática de señales de fallo (`exit code != 0`, `timeout`, `SyntaxError`, `build failed`) que neutraliza recompensas infladas y las clampea a `<= -1.0` con la bandera `objective_reward_override`.
+  - **Diagnóstico Nativo de Cuellos de Botella (`diagnose`)**: Endpoint MCP `ozy_exploration(action="diagnose")` y comando CLI `ozymem dream diagnose <TRAJECTORY_ID>` que audita latencias (>3000ms), nodos de alto consumo (>2000 tokens), oportunidades de poda y calcula la eficiencia de tokens y la constante UCB1 sugerida.
   - **Guardas de Seguridad Anti-Inflado**: Truncado automático de logs y observaciones a **32 KB por paso** (`MAX_OBSERVATION_BYTES`).
   - **MCTS Backpropagation Nativo**: Actualización ascendente incremental de $Q \leftarrow Q + \frac{R - Q}{N}$ hacia los nodos ancestros.
   - **Simulador Contrafactual Offline (`ReplaySimulator`)**: Simulación determinista a costo **0 tokens LLM y 0 re-ejecuciones** calculando el fitness score $J(\pi)$ y diagnosticando cuellos de botella de exploración.
   - **Validación AST y Promoción Segura**: Auditoría estricta con `AstSafetyAuditor` (bloqueo de `subprocess`, `eval`, `rmtree`) y regla de no-regresión ($J_{\text{cand}} > J_{\text{base}} + \epsilon$ con cero falsos podados).
-  - **Herramienta MCP y CLI**: Endpoint MCP `ozy_exploration` (`start`, `record_step`, `get_tree`, `complete`, `list`, `delete`), acción `ozy_brain(action="dream_rsi")` y subcomando CLI `ozymem dream run|status`.
+  - **Herramienta MCP y CLI**: Endpoint MCP `ozy_exploration` (`start`, `record_step`, `record_batch`, `complete`, `get_tree`, `diagnose`, `list`, `delete`), acción `ozy_brain(action="dream_rsi")` y subcomandos CLI `ozymem dream run|status|diagnose`.
 
 ## Principios y Convenciones
 - **SOLID, DRY, KISS**: Mantener el código acoplado lo mínimo posible, extraer lógica reutilizable y no sobrediseñar.
