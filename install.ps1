@@ -32,8 +32,18 @@ if (-not (Test-Path $ServerRelease) -or -not (Test-Path $CliRelease)) {
 }
 
 Write-Host "[3/4] Installing executables and Ozy Brain worker..." -ForegroundColor Yellow
-Copy-Item -Path $ServerRelease -Destination (Join-Path $BinDir "ozymem-server.exe") -Force
-Copy-Item -Path $CliRelease    -Destination (Join-Path $BinDir "ozymem.exe") -Force
+$DestServer = Join-Path $BinDir "ozymem-server.exe"
+$DestCli    = Join-Path $BinDir "ozymem.exe"
+
+if (Test-Path $DestServer) {
+    Move-Item -Force $DestServer "$DestServer.old" -ErrorAction SilentlyContinue
+}
+if (Test-Path $DestCli) {
+    Move-Item -Force $DestCli "$DestCli.old" -ErrorAction SilentlyContinue
+}
+
+Copy-Item -Path $ServerRelease -Destination $DestServer -Force
+Copy-Item -Path $CliRelease    -Destination $DestCli -Force
 
 if (Test-Path (Join-Path $PSScriptRoot "python\ozy-brain")) {
     Copy-Item -Path (Join-Path $PSScriptRoot "python\ozy-brain") -Destination (Split-Path $PyDir) -Recurse -Force
