@@ -589,8 +589,13 @@ impl GraphBackend {
             .as_secs()
             .to_string();
 
-        let text = format!("{} {}", error_context, solution);
-        let (embedding_bytes, _model) = self.embed_text(&[&text]);
+        let (embedding_bytes, _model) = if self.embedder_ready() {
+            let text = format!("{} {}", error_context, solution);
+            self.embed_text(&[&text])
+        } else {
+            self.start_background_embedder_download();
+            (None, "")
+        };
         let has_embedding = embedding_bytes.is_some();
 
         {

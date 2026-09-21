@@ -1860,3 +1860,36 @@ pub fn audit_log(event: &str) -> bool {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_doctor_reports_embedding_status() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_doc_emb_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let gb = GraphBackend::open_for_project(&tmp_root).unwrap();
+        *backend.lock().unwrap() = Some(gb);
+
+        let request = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(200)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "format": "json"
+                }
+            })),
+        };
+
+        let response = handle_request(&backend, request, None, None).await.unwrap().unwrap();
+        assert!(response.error.is_none());
+        let text = response.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let payload: Value = serde_json::from_str(&text).unwrap();
+        let checks = payload["checks"].as_array().unwrap();
+        let has_emb_check = checks.iter().any(|c| c["name"] == "embedding_model");
+        assert!(has_emb_check, "ozy_doctor must report embedding_model check");
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

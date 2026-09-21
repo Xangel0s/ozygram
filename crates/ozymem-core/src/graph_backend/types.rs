@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, Mutex,
     atomic::AtomicBool,
 };
 use std::time::Instant;
@@ -208,13 +208,23 @@ pub struct UnifiedSearchResult {
     pub score: f32,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum EmbeddingModelStatus {
+    Ready,
+    Downloading,
+    NotDownloaded,
+    CorruptedOrDeleted,
+    Failed(String),
+}
+
 pub struct GraphBackend {
     pub(crate) inner: Mutex<Inner>,
     pub(crate) tenant_id: String,
     pub scan_progress: Arc<Mutex<ScanProgress>>,
     pub scanning: AtomicBool,
     pub(crate) last_check: Mutex<Instant>,
-    pub(crate) embedder: OnceLock<Option<Mutex<TextEmbedding>>>,
+    pub(crate) embedder: Arc<Mutex<Option<Mutex<TextEmbedding>>>>,
+    pub(crate) embedding_status: Arc<Mutex<EmbeddingModelStatus>>,
     pub engram_store: crate::engram_store::IncrementalEngramStore,
 }
 

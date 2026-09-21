@@ -3,7 +3,7 @@ use petgraph::graph::DiGraph;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock, atomic::AtomicBool};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 use std::time::Instant;
 use crate::graph_backend::helpers::{resolve_project_db_path, strip_unc_prefix};
 use crate::graph_backend::types::{GraphBackend, Inner, ScanProgress, OZYMEM_DIR, MEMORY_DB};
@@ -50,7 +50,8 @@ impl GraphBackend {
                 current_file: String::new(),
             })),
             last_check: Mutex::new(Instant::now()),
-            embedder: OnceLock::new(),
+            embedder: Arc::new(Mutex::new(None)),
+            embedding_status: Arc::new(Mutex::new(Self::check_model_files_status())),
             engram_store,
         };
         backend.init_schema()?;

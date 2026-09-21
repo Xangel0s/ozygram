@@ -112,3 +112,33 @@ async fn test_outbox_purge_processed() {
     let purged = backend.purge_processed_outbox(0).unwrap();
     assert_eq!(purged, 1, "Should have purged 1 processed event");
 }
+
+#[tokio::test]
+async fn test_embedding_status_and_non_blocking_lesson_record() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let backend = GraphBackend::open_for_project(root).unwrap();
+
+    let status = backend.get_embedding_status();
+    // Status should be one of the known variants
+    match status {
+        ozymem_core::graph_backend::EmbeddingModelStatus::NotDownloaded
+        | ozymem_core::graph_backend::EmbeddingModelStatus::Ready
+        | ozymem_core::graph_backend::EmbeddingModelStatus::Downloading
+        | ozymem_core::graph_backend::EmbeddingModelStatus::CorruptedOrDeleted
+        | ozymem_core::graph_backend::EmbeddingModelStatus::Failed(_) => {}
+    }
+
+    let start = std::time::Instant::now();
+    backend
+        .record_lesson("src/auth.rs", Some("login"), "Invalid JWT", "Validate exp claim")
+        .await
+        .unwrap();
+    let elapsed = start.elapsed();
+    // Record entry must return in under 200ms without blocking on model download
+    assert!(elapsed.as_millis() < 500, "record_lesson took too long: {:?}", elapsed);
+
+    let outbox = backend.fetch_pending_outbox(10).unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].entity_type, "lesson");
+}

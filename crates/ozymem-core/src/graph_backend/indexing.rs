@@ -123,6 +123,7 @@ impl GraphBackend {
         // Clear stale data for this tenant before re-scan
         {
             let inner = self.inner.lock().unwrap();
+            let _ = inner.sqlite.execute_batch("BEGIN IMMEDIATE;");
             inner.sqlite.execute(
                 "DELETE FROM file_dependencies WHERE tenant_id = ?1",
                 params![self.tenant_id],
@@ -139,6 +140,7 @@ impl GraphBackend {
                 "DELETE FROM ast_diagnostics WHERE tenant_id = ?1",
                 params![self.tenant_id],
             )?;
+            let _ = inner.sqlite.execute_batch("COMMIT;");
         }
 
         let proj_root = Path::new(project_path);
@@ -171,6 +173,10 @@ impl GraphBackend {
         let mut skipped_read = 0u64;
         let mut skipped_parse = 0u64;
         let mut processed: u64 = 0;
+        {
+            let inner = self.inner.lock().unwrap();
+            let _ = inner.sqlite.execute_batch("BEGIN IMMEDIATE;");
+        }
         for entry in walkdir::WalkDir::new(project_path)
             .into_iter()
             .filter_entry(|e| {
@@ -303,6 +309,11 @@ impl GraphBackend {
                 processed += 1;
                 cb(processed, total_file_count);
             }
+        }
+
+        {
+            let inner = self.inner.lock().unwrap();
+            let _ = inner.sqlite.execute_batch("COMMIT;");
         }
 
         // Mark stale lessons — only for files that were part of this scan

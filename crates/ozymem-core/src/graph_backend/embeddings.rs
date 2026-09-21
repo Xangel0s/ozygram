@@ -1,54 +1,115 @@
-use crate::graph_backend::types::LessonEntry;
+use crate::graph_backend::types::{EmbeddingModelStatus, GraphBackend, LessonEntry, SimilarLesson};
 use anyhow::Result;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use rusqlite::params;
+use std::path::PathBuf;
 use std::sync::Mutex;
-use crate::graph_backend::types::{GraphBackend, SimilarLesson};
 
 impl GraphBackend {
-    /// Get or lazily initialize the text embedder.
-    pub(crate) fn get_embedder(&self) -> Option<&Mutex<TextEmbedding>> {
-        self.embedder.get_or_init(|| {
-            eprintln!("[ozymem] initializing text embedder (all-MiniLM-L6-v2)...");
-            match TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2).with_show_download_progress(true)) {
+    /// Directorio de caché predeterminado para los modelos de embeddings locales
+    pub fn default_model_cache_dir() -> PathBuf {
+        let home = std::env::var_os("OZYMEM_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("."));
+        home.join(".ozymem").join("models").join("fastembed")
+    }
+
+    /// Comprueba el estado de los archivos físicos del modelo en disco.
+    pub fn check_model_files_status() -> EmbeddingModelStatus {
+        let cache_dir = Self::default_model_cache_dir();
+        if !cache_dir.exists() {
+            return EmbeddingModelStatus::NotDownloaded;
+        }
+        // fastembed descarga bajo models--Qdrant--all-MiniLM-L6-v2-onnx
+        let model_dir = cache_dir.join("models--Qdrant--all-MiniLM-L6-v2-onnx");
+        if !model_dir.exists() {
+            return EmbeddingModelStatus::NotDownloaded;
+        }
+        // Buscar model.onnx recursivamente dentro del directorio de snapshots
+        let has_valid_onnx = walkdir::WalkDir::new(&model_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                if e.file_name() == "model.onnx" {
+                    if let Ok(meta) = e.metadata() {
+                        return meta.len() > 1_000_000;
+                    }
+                }
+                false
+            });
+
+        if has_valid_onnx {
+            EmbeddingModelStatus::Ready
+        } else {
+            EmbeddingModelStatus::CorruptedOrDeleted
+        }
+    }
+
+    /// Obtiene el estado actual del modelo de embeddings
+    pub fn get_embedding_status(&self) -> EmbeddingModelStatus {
+        self.embedding_status.lock().unwrap().clone()
+    }
+
+    /// Comprueba si el embedder está inicializado y listo para inferencia
+    pub fn embedder_ready(&self) -> bool {
+        matches!(*self.embedding_status.lock().unwrap(), EmbeddingModelStatus::Ready)
+    }
+
+    /// Inicia la descarga o carga en segundo plano del modelo ONNX sin bloquear Tokio RPC.
+    pub fn start_background_embedder_download(&self) {
+        let current = self.get_embedding_status();
+        if current == EmbeddingModelStatus::Ready || current == EmbeddingModelStatus::Downloading {
+            return;
+        }
+
+        *self.embedding_status.lock().unwrap() = EmbeddingModelStatus::Downloading;
+        let status_arc = self.embedding_status.clone();
+        let embedder_arc = self.embedder.clone();
+        let cache_dir = Self::default_model_cache_dir();
+
+        std::thread::spawn(move || {
+            eprintln!("[ozymem] Iniciando descarga/carga de embedding model en segundo plano (all-MiniLM-L6-v2)...");
+            std::fs::create_dir_all(&cache_dir).ok();
+            let opts = InitOptions::new(EmbeddingModel::AllMiniLML6V2)
+                .with_show_download_progress(false);
+            match TextEmbedding::try_new(opts) {
                 Ok(m) => {
-                    eprintln!("[ozymem] embedder ready");
-                    Some(Mutex::new(m))
+                    eprintln!("[ozymem] Embedding model descargado y listo.");
+                    let mut guard = embedder_arc.lock().unwrap();
+                    *guard = Some(Mutex::new(m));
+                    *status_arc.lock().unwrap() = EmbeddingModelStatus::Ready;
                 }
                 Err(e) => {
-                    eprintln!("[ozymem] embedder init failed: {e}");
-                    eprintln!("[ozymem] embeddings DISABLED — first use requires downloading ~20MB model from HuggingFace.");
-                    eprintln!("[ozymem] Ensure internet connectivity on first run. Model is cached locally afterwards.");
-                    None
+                    eprintln!("[ozymem] Fallo en descarga/carga de embedding model: {e}");
+                    *status_arc.lock().unwrap() = EmbeddingModelStatus::Failed(e.to_string());
                 }
             }
-        }).as_ref()
+        });
     }
 
-    /// Pre-initialize the text embedder at startup.
-    /// Call this in a spawn_blocking after server initialize to avoid blocking the tokio runtime.
-    /// Safe to call multiple times (OnceLock ensures single initialization).
+    /// Pre-inicializa el text embedder en background.
     pub fn init_embedder(&self) {
-        self.get_embedder();
-    }
-
-    /// Check if the embedder is initialized and ready.
-    pub fn embedder_ready(&self) -> bool {
-        self.embedder.get().map(|v| v.is_some()).unwrap_or(false)
+        self.start_background_embedder_download();
     }
 
     /// Generate embedding bytes for text (outside lock).
     /// Returns (raw f32 LE bytes, model_name) or (None, "") if embedder unavailable.
     pub(crate) fn embed_text(&self, texts: &[&str]) -> (Option<Vec<u8>>, &'static str) {
-        let embedder = match self.get_embedder() {
+        if !self.embedder_ready() {
+            return (None, "");
+        }
+        let guard = self.embedder.lock().unwrap();
+        let embedder_mutex = match guard.as_ref() {
             Some(m) => m,
             None => return (None, ""),
         };
-        let guard = match embedder.lock() {
+        let m = match embedder_mutex.lock() {
             Ok(g) => g,
             Err(_) => return (None, ""),
         };
-        match guard.embed(texts.to_vec(), Some(1)) {
+        match m.embed(texts.to_vec(), Some(1)) {
             Ok(mut embeddings) => {
                 if let Some(vec) = embeddings.pop() {
                     let bytes: Vec<u8> = vec.iter().flat_map(|f| f.to_le_bytes()).collect();

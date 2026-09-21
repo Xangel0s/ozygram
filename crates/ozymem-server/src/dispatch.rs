@@ -129,6 +129,17 @@ pub async fn handle_request(
                 n.log("info", format!("[ozymem] Ready (project DB at {})", project_path.display()));
             }
 
+            let gb_warm = backend.clone();
+            tokio::task::spawn_blocking(move || {
+                let guard = gb_warm.lock().unwrap();
+                if let Some(ref gb) = *guard {
+                    let status = gb.get_embedding_status();
+                    if status != ozymem_core::graph_backend::EmbeddingModelStatus::Ready {
+                        gb.start_background_embedder_download();
+                    }
+                }
+            });
+
             let backend_clone = backend.clone();
             let notifier_clone = notifier.cloned();
             let project_path_scan = project_path.to_string_lossy().to_string();

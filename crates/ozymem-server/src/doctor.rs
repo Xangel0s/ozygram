@@ -35,6 +35,32 @@ pub(crate) async fn handle_ozy_doctor(
         "severity": if ast_diags_count == 0 { "ok" } else { "warning" },
         "detail": format!("{} static AST/syntax warning(s) detected during index scan", ast_diags_count)
     }));
+
+    let emb_status = backend
+        .map(|b| b.get_embedding_status())
+        .unwrap_or_else(ozymem_core::graph_backend::GraphBackend::check_model_files_status);
+    let (emb_sev, emb_desc) = match &emb_status {
+        ozymem_core::graph_backend::EmbeddingModelStatus::Ready => {
+            ("ok", "Embedding model loaded and ready in local cache")
+        }
+        ozymem_core::graph_backend::EmbeddingModelStatus::Downloading => {
+            ("warning", "Embedding model downloading in background")
+        }
+        ozymem_core::graph_backend::EmbeddingModelStatus::NotDownloaded => (
+            "warning",
+            "Embedding model not downloaded. Background download available; BM25 lexical search active",
+        ),
+        ozymem_core::graph_backend::EmbeddingModelStatus::CorruptedOrDeleted => (
+            "critical",
+            "Embedding model files missing or corrupted. Automatic re-download available",
+        ),
+        ozymem_core::graph_backend::EmbeddingModelStatus::Failed(msg) => ("critical", msg.as_str()),
+    };
+    checks.push(serde_json::json!({
+        "name": "embedding_model",
+        "severity": emb_sev,
+        "detail": format!("Status: {:?} - {}", emb_status, emb_desc)
+    }));
     let mut projects_json = Vec::new();
     if include_projects {
         match ozymem_core::registry::ProjectRegistry::open().and_then(|r| r.list_projects()) {
