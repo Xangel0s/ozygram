@@ -1821,3 +1821,187 @@ fn test_passive_capture_sanitizes_noise_and_tables() {
     assert_eq!(saved[0].content, "Normalizar siempre fechas a formato YYYY/MM/DD en backend");
     assert_eq!(saved[1].content, "Documentar dependencias en plan maestro y validar con tests");
 }
+
+#[test]
+fn test_exploration_trajectory_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(
+        &dir.path().to_string_lossy(),
+        "Fix authentication token expiry race condition",
+        Some("v1.0.0"),
+    ).unwrap();
+
+    assert!(traj_id.starts_with("traj_"));
+
+    let root_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "ast_query".to_string(),
+        action_payload: "{\"symbol\": \"verify_token\"}".to_string(),
+        observation: "Found function in auth.py:120".to_string(),
+        cost_tokens: Some(150),
+        latency_ms: Some(12),
+        reward_score: Some(1.0),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    assert_eq!(root_node.depth, 0);
+
+    let child_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root_node.id.clone()),
+        action_type: "edit_code".to_string(),
+        action_payload: "{\"file\": \"auth.py\", \"diff\": \"+ lock.acquire()\"}".to_string(),
+        observation: "Diff applied cleanly. Tests passing.".to_string(),
+        cost_tokens: Some(320),
+        latency_ms: Some(45),
+        reward_score: Some(10.0),
+        is_solution: Some(true),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    assert_eq!(child_node.depth, 1);
+    assert_eq!(child_node.parent_id, Some(root_node.id));
+
+    backend.complete_trajectory(&traj_id, "completed", Some(10.0)).unwrap();
+
+    let list = backend.list_trajectories(Some(&dir.path().to_string_lossy()), 10).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, traj_id);
+    assert_eq!(list[0].status, "completed");
+    assert_eq!(list[0].total_steps, 2);
+    assert_eq!(list[0].cumulative_reward, 21.0); // 1.0 + 10.0 + 10.0
+}
+
+#[test]
+fn test_exploration_tree_mcts_backprop_and_uct() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(
+        &dir.path().to_string_lossy(),
+        "Refactor API caching layer",
+        Some("v1.0.0"),
+    ).unwrap();
+
+    // 1. Root node
+    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "root".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "Initial state".to_string(),
+        cost_tokens: Some(0),
+        latency_ms: Some(0),
+        reward_score: Some(0.0),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    // 2. Child branch 1: successful
+    let child1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "redis_cache".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "Speedup 5x".to_string(),
+        cost_tokens: Some(100),
+        latency_ms: Some(20),
+        reward_score: Some(8.0),
+        is_solution: Some(true),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    // 3. Child branch 2: failed / pruned
+    let _child2 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "in_memory_map".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "Memory leak detected".to_string(),
+        cost_tokens: Some(120),
+        latency_ms: Some(15),
+        reward_score: Some(-5.0),
+        is_solution: Some(false),
+        is_pruned: Some(true),
+    }).unwrap();
+
+    // Retrieve tree
+    let tree = backend.get_trajectory_tree(&traj_id).unwrap();
+    assert_eq!(tree.len(), 1, "Should have 1 root");
+    let root_node = &tree[0];
+    assert_eq!(root_node.children.len(), 2, "Root should have 2 children");
+
+    // MCTS backpropagation check: Root node visit count must have accumulated both child visits
+    assert_eq!(root_node.node.visit_count, 3); // 1 initial + 2 backprop increments
+
+    // UCT score for Child 1 (reward 8.0) must be higher than Child 2 (reward -5.0)
+    let c1 = root_node.children.iter().find(|c| c.node.id == child1.id).unwrap();
+    assert!(c1.uct_score > 5.0, "UCT score should be high for positive reward");
+}
+
+#[test]
+fn test_exploration_observation_truncation_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(
+        &dir.path().to_string_lossy(),
+        "Test huge logs guard",
+        None,
+    ).unwrap();
+
+    // Create a huge log string of 64 KB
+    let huge_observation = "A".repeat(64 * 1024);
+
+    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id,
+        parent_id: None,
+        action_type: "run_build".to_string(),
+        action_payload: "cargo build --all".to_string(),
+        observation: huge_observation,
+        cost_tokens: None,
+        latency_ms: None,
+        reward_score: None,
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+
+    // Verification: Observation must be truncated to MAX_OBSERVATION_BYTES + notice
+    assert!(node.observation.contains("[truncated to 32KB by Ozymem Dream-RSI guard]"));
+    assert!(node.observation.len() <= 33 * 1024);
+}
+
+#[test]
+fn test_exploration_cascade_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Task to delete", None).unwrap();
+    backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "dummy".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "ok".to_string(),
+        cost_tokens: None,
+        latency_ms: None,
+        reward_score: None,
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+
+    // Delete
+    backend.delete_trajectory(&traj_id).unwrap();
+
+    // Verify tree is empty
+    let tree = backend.get_trajectory_tree(&traj_id).unwrap();
+    assert!(tree.is_empty());
+}

@@ -268,6 +268,41 @@ impl GraphBackend {
                     datetime('now'));
             END;
 
+            CREATE TABLE IF NOT EXISTS exploration_trajectories (
+                id TEXT PRIMARY KEY,
+                project_path TEXT NOT NULL,
+                task_description TEXT NOT NULL,
+                policy_version TEXT NOT NULL DEFAULT 'v1.0.0',
+                status TEXT NOT NULL CHECK(status IN ('in_progress', 'completed', 'failed', 'abandoned')) DEFAULT 'in_progress',
+                total_steps INTEGER NOT NULL DEFAULT 0,
+                cumulative_reward REAL NOT NULL DEFAULT 0.0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_traj_proj ON exploration_trajectories(project_path, status);
+
+            CREATE TABLE IF NOT EXISTS exploration_nodes (
+                id TEXT PRIMARY KEY,
+                trajectory_id TEXT NOT NULL,
+                parent_id TEXT NULL,
+                depth INTEGER NOT NULL DEFAULT 0,
+                action_type TEXT NOT NULL,
+                action_payload TEXT NOT NULL,
+                observation TEXT NOT NULL,
+                cost_tokens INTEGER NOT NULL DEFAULT 0,
+                latency_ms INTEGER NOT NULL DEFAULT 0,
+                reward_score REAL NOT NULL DEFAULT 0.0,
+                visit_count INTEGER NOT NULL DEFAULT 1,
+                value_estimate REAL NOT NULL DEFAULT 0.0,
+                is_solution BOOLEAN NOT NULL DEFAULT 0,
+                is_pruned BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(trajectory_id) REFERENCES exploration_trajectories(id) ON DELETE CASCADE,
+                FOREIGN KEY(parent_id) REFERENCES exploration_nodes(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_nodes_traj_depth ON exploration_nodes(trajectory_id, depth);
+            CREATE INDEX IF NOT EXISTS idx_nodes_parent ON exploration_nodes(parent_id);
+
             INSERT OR IGNORE INTO tenants (id, name) VALUES ('local', 'Local Tenant');"
         )?;
 

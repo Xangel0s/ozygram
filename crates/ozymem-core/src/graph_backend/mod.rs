@@ -8,7 +8,9 @@ pub mod git_notes;
 pub mod embeddings;
 pub mod mcp_impl;
 pub mod sqlite_backend;
+pub mod exploration;
 
 pub use types::*;
 pub use helpers::*;
 pub use sqlite_backend::SqliteBackend;
+pub use exploration::*;
