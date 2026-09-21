@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod vector;
 pub mod dashboard;
 pub mod hook;
+pub mod dream;
 
 pub use scan::*;
 pub use query::*;
@@ -13,3 +14,4 @@ pub use doctor::*;
 pub use vector::*;
 pub use dashboard::*;
 pub use hook::*;
+pub use dream::*;

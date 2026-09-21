@@ -113,6 +113,37 @@ def _upsert_vector_memory_handler(payload: dict[str, Any]) -> BrainResponse:
     )
 
 
+def _dream_rsi_handler(payload: dict[str, Any]) -> BrainResponse:
+    from ozy_brain.dream.optimizer import DreamRsiOptimizer
+    from ozy_brain.dream.policy import MctsExplorationPolicy
+
+    db_path = payload.get("db_path")
+    trajectories = payload.get("trajectories") or []
+    candidate_cfg = payload.get("candidate_policy")
+
+    candidate = None
+    if isinstance(candidate_cfg, dict):
+        candidate = MctsExplorationPolicy(
+            version=candidate_cfg.get("version", "v1.1.0"),
+            exploration_constant=float(candidate_cfg.get("exploration_constant", 1.4142)),
+            prune_threshold=float(candidate_cfg.get("prune_threshold", -3.0)),
+        )
+
+    optimizer = DreamRsiOptimizer(db_path=db_path)
+    res = optimizer.run_optimization_round(trajectories=trajectories, candidate_policy=candidate)
+
+    return BrainResponse(
+        action="dream_rsi",
+        summary=res.get("message", "Dream-RSI optimization cycle complete."),
+        plan=[f"Promoted: {res.get('promoted', False)}", f"Score: {res.get('active_score', 0.0)} -> {res.get('candidate_score', 0.0)}"],
+        risks=[f"Pruning errors: {res.get('total_pruning_errors', 0)}"],
+        recommendations=res.get("bottlenecks", []),
+        memory_updates=[f"Active policy: {res.get('active_version', 'v1.0.0')}"],
+        confidence=0.90 if res.get("promoted") else 0.70,
+        structured_plan=res,
+    )
+
+
 ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "plan": plan,
     "reflect": reflect,
@@ -132,6 +163,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "deep_semantic_search": _deep_semantic_search_handler,
     "upsert_vector_memory": _upsert_vector_memory_handler,
     "sync_outbox": _sync_outbox_handler,
+    "dream_rsi": _dream_rsi_handler,
 }
 
 

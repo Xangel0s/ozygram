@@ -54,6 +54,13 @@
   - Subcomando CLI `ozymem hook install|uninstall|status|run` y tool MCP `install_git_hook`.
   - Hook nativo `.git/hooks/post-commit` multiplataforma (Windows y Unix) que indexa los deltas del commit y preserva lecciones/observaciones sin intervención manual.
   - Verificación en `ozy_doctor` para auditar si el hook está activo.
+- **Dream-RSI & Monte Carlo Tree Search (MCTS)**:
+  - **Árbol de Descubrimiento Persistente (`exploration_trajectories`, `exploration_nodes`)**: Persistencia jerárquica en SQLite con `parent_id`, `depth`, `action_payload`, `visit_count` y running Q-value (`value_estimate`).
+  - **Guardas de Seguridad Anti-Inflado**: Truncado automático de logs y observaciones a **32 KB por paso** (`MAX_OBSERVATION_BYTES`).
+  - **MCTS Backpropagation Nativo**: Actualización ascendente incremental de $Q \leftarrow Q + \frac{R - Q}{N}$ hacia los nodos ancestros.
+  - **Simulador Contrafactual Offline (`ReplaySimulator`)**: Simulación determinista a costo **0 tokens LLM y 0 re-ejecuciones** calculando el fitness score $J(\pi)$ y diagnosticando cuellos de botella de exploración.
+  - **Validación AST y Promoción Segura**: Auditoría estricta con `AstSafetyAuditor` (bloqueo de `subprocess`, `eval`, `rmtree`) y regla de no-regresión ($J_{\text{cand}} > J_{\text{base}} + \epsilon$ con cero falsos podados).
+  - **Herramienta MCP y CLI**: Endpoint MCP `ozy_exploration` (`start`, `record_step`, `get_tree`, `complete`, `list`, `delete`), acción `ozy_brain(action="dream_rsi")` y subcomando CLI `ozymem dream run|status`.
 
 ## Principios y Convenciones
 - **SOLID, DRY, KISS**: Mantener el código acoplado lo mínimo posible, extraer lógica reutilizable y no sobrediseñar.

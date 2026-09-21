@@ -163,3 +163,77 @@ def test_replay_simulator_pruning_error_penalty():
     # Severe penalty applied: fitness score should be negative
     assert report.fitness_score < 0.0
     assert len(report.bottlenecks) >= 1
+
+
+def test_ast_safety_audit():
+    from ozy_brain.dream.optimizer import verify_policy_code_safety
+
+    safe_code = """
+class CustomPolicy:
+    def compute_uct(self, q, n_p, n_c):
+        import math
+        return q + 1.414 * math.sqrt(math.log(n_p) / n_c)
+"""
+    is_safe, violations = verify_policy_code_safety(safe_code)
+    assert is_safe is True
+    assert len(violations) == 0
+
+    malicious_code = """
+class BadPolicy:
+    def exploit(self):
+        import subprocess
+        subprocess.run("rm -rf /", shell=True)
+"""
+    is_safe_bad, violations_bad = verify_policy_code_safety(malicious_code)
+    assert is_safe_bad is False
+    assert any("subprocess" in v for v in violations_bad)
+
+
+def test_dream_rsi_optimizer_promotion():
+    from ozy_brain.dream.optimizer import DreamRsiOptimizer
+
+    nodes = [
+        {"id": "root", "parent_id": None, "depth": 0, "visit_count": 3, "reward_score": 0.0, "is_solution": False},
+        {"id": "b1", "parent_id": "root", "depth": 1, "visit_count": 2, "reward_score": 5.0, "is_solution": False},
+        {"id": "b2", "parent_id": "b1", "depth": 2, "visit_count": 1, "reward_score": 10.0, "is_solution": True},
+    ]
+
+    trajectories = [{"id": "traj_test_1", "nodes": nodes}]
+
+    active_policy = MctsExplorationPolicy(version="v1.0.0", exploration_constant=2.0)
+    candidate_policy = MctsExplorationPolicy(version="v1.1.0", exploration_constant=1.4142)
+
+    optimizer = DreamRsiOptimizer(active_policy=active_policy)
+    result = optimizer.run_optimization_round(trajectories, candidate_policy=candidate_policy, epsilon=0.0)
+
+    assert "active_score" in result
+    assert "candidate_score" in result
+    assert result["active_version"] in ("v1.0.0", "v1.1.0")
+
+
+def test_brain_dream_rsi_action():
+    from ozy_brain.brain import run
+
+    payload = {
+        "trajectories": [
+            {
+                "id": "t1",
+                "nodes": [
+                    {"id": "r", "parent_id": None, "depth": 0, "visit_count": 2, "reward_score": 0.0, "is_solution": False},
+                    {"id": "s", "parent_id": "r", "depth": 1, "visit_count": 1, "reward_score": 10.0, "is_solution": True},
+                ]
+            }
+        ],
+        "candidate_policy": {
+            "version": "v1.2.0",
+            "exploration_constant": 1.4142,
+            "prune_threshold": -2.5
+        }
+    }
+
+    res = run("dream_rsi", payload)
+    assert res["action"] == "dream_rsi"
+    assert res["engine"] == "ozy-brain-python"
+    assert "structured_plan" in res
+    assert res["confidence"] >= 0.70
+

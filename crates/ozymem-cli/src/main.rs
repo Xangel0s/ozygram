@@ -163,6 +163,11 @@ enum Commands {
         #[command(subcommand)]
         subcommand: HookSubcommand,
     },
+    /// Dream-RSI: Recursive Self-Improvement & Monte Carlo Tree Search exploration
+    Dream {
+        #[command(subcommand)]
+        subcommand: DreamSubcommand,
+    },
 }
 
 #[tokio::main]
@@ -390,6 +395,9 @@ async fn main() -> anyhow::Result<()> {
                 hook::run_hook(&hook_type, project.as_deref()).await?;
             }
         },
+        Commands::Dream { subcommand } => {
+            run_dream_command(&subcommand)?;
+        }
     }
 
     Ok(())
