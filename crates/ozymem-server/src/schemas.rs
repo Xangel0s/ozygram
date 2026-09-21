@@ -832,6 +832,17 @@ pub fn handle_tools_list(
                     }),
                 },
                 mcp_common::ToolDefinition {
+                    name: "install_git_hook",
+                    description: "Installs the automated post-commit knowledge capture hook into .git/hooks/post-commit",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "project_path": { "type": "string", "description": "Git repository root (defaults to active project path)" }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "graph_path",
                     description: "Find dependency paths between two files using petgraph (shortest connection in the project graph)",
                     input_schema: json!({

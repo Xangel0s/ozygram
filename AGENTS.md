@@ -41,6 +41,19 @@
 - **Tabla Determinista de Engrams $O(1)$ (`rkyv` + `memmap2`)**: Búsqueda binaria de firmas y contratos de símbolos en $\approx 15\text{ ns}$.
 - **Prefill Predictivo**: Inyección automática de dependencias adyacentes de primer orden en el prefill de prompts.
 - **Sandbox de Validación Test-Time (`ozy_verify_diff`)**: Comprobación sintáctica de diffs antes de persistir cambios.
+- **Resolución de Dependencias Multi-Lenguaje (Python & TS/JS)**:
+  - Extracción nativa de imports/exports vía Tree-Sitter para Python y JavaScript/TypeScript.
+  - Resolución inteligente de rutas relativas (`.`, `..`), alias (`@/`, `~/`) y módulos de workspace hacia archivos físicos concretos (`.py`, `.ts`, `.tsx`, `.js`, `index.ts`, `__init__.py`).
+  - Detección precisa de relaciones entre archivos (`edge_count > 0`) en monorepos mixtos.
+- **Ciclo de Vida de Embeddings No Bloqueante & Transacciones SQLite Batch**:
+  - Descarga e inicialización en segundo plano (`std::thread::spawn` desacoplado del hilo JSON-RPC Tokio).
+  - Estados catalogados del modelo: `Ready`, `NotDownloaded`, `Downloading`, `CorruptedOrDeleted`, `Failed(String)`.
+  - Guardado de lecciones y observaciones inmediato (<20ms) en SQLite + cola `memory_outbox`.
+  - Transacciones `BEGIN IMMEDIATE ... COMMIT` en `full_scan` evitando miles de llamadas a fsync en Windows.
+- **Captura Automática de Conocimiento con Git Hooks (`ozymem hook`)**:
+  - Subcomando CLI `ozymem hook install|uninstall|status|run` y tool MCP `install_git_hook`.
+  - Hook nativo `.git/hooks/post-commit` multiplataforma (Windows y Unix) que indexa los deltas del commit y preserva lecciones/observaciones sin intervención manual.
+  - Verificación en `ozy_doctor` para auditar si el hook está activo.
 
 ## Principios y Convenciones
 - **SOLID, DRY, KISS**: Mantener el código acoplado lo mínimo posible, extraer lógica reutilizable y no sobrediseñar.

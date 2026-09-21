@@ -61,6 +61,29 @@ pub(crate) async fn handle_ozy_doctor(
         "severity": emb_sev,
         "detail": format!("Status: {:?} - {}", emb_status, emb_desc)
     }));
+
+    if let Some(b) = backend {
+        if let Some(proj) = b.project_path() {
+            let p = std::path::Path::new(&proj);
+            if p.join(".git").exists() {
+                let hook_path = p.join(".git").join("hooks").join("post-commit");
+                let hook_installed = hook_path.exists()
+                    && std::fs::read_to_string(&hook_path)
+                        .map(|c| c.contains("ozymem hook run post-commit"))
+                        .unwrap_or(false);
+                checks.push(serde_json::json!({
+                    "name": "git_hook",
+                    "severity": if hook_installed { "ok" } else { "warning" },
+                    "detail": if hook_installed {
+                        "Post-commit knowledge capture hook is active"
+                    } else {
+                        "Post-commit hook not installed. Run 'ozymem hook install' or MCP 'install_git_hook' for automatic knowledge capture on commit"
+                    }
+                }));
+            }
+        }
+    }
+
     let mut projects_json = Vec::new();
     if include_projects {
         match ozymem_core::registry::ProjectRegistry::open().and_then(|r| r.list_projects()) {
@@ -80,6 +103,7 @@ pub(crate) async fn handle_ozy_doctor(
         "checks":checks,
         "projects":projects_json,
         "recommended_actions":[
+            {"kind":"safe","action":"Run 'ozymem hook install' or MCP 'install_git_hook' to capture knowledge automatically on commit."},
             {"kind":"safe","action":"Run ozy_project action=refresh for projects with stale or empty indexes."},
             {"kind":"needs_confirmation","action":"Remove or archive broken/stale projects only after user confirmation."},
             {"kind":"manual","action":"Review skills metadata before applying best-practice guidance."}

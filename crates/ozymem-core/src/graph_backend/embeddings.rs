@@ -57,9 +57,13 @@ impl GraphBackend {
         matches!(*self.embedding_status.lock().unwrap(), EmbeddingModelStatus::Ready)
     }
 
-    /// Inicia la descarga o carga en segundo plano del modelo ONNX sin bloquear Tokio RPC.
     pub fn start_background_embedder_download(&self) {
-        if cfg!(test) && std::env::var_os("OZYMEM_ENABLE_AUTO_DOWNLOAD_IN_TESTS").is_none() {
+        let in_test = cfg!(test) || std::env::current_exe().map(|p| {
+            let s = p.to_string_lossy().to_lowercase();
+            s.contains("\\deps\\") || s.contains("/deps/")
+        }).unwrap_or(false);
+
+        if in_test && std::env::var_os("OZYMEM_ENABLE_AUTO_DOWNLOAD_IN_TESTS").is_none() {
             return;
         }
         if std::env::var_os("OZYMEM_DISABLE_AUTO_DOWNLOAD").is_some() {

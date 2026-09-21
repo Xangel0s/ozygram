@@ -158,6 +158,11 @@ enum Commands {
         subcommand: VectorSubcommand,
     },
     Dashboard,
+    /// Manage git hooks for automated knowledge capture (post-commit)
+    Hook {
+        #[command(subcommand)]
+        subcommand: HookSubcommand,
+    },
 }
 
 #[tokio::main]
@@ -368,6 +373,23 @@ async fn main() -> anyhow::Result<()> {
         Commands::Dashboard => {
             run_dashboard().await?;
         }
+        Commands::Hook { subcommand } => match subcommand {
+            HookSubcommand::Install { path } => {
+                let msg = hook::install_hook(path.as_deref())?;
+                println!("{msg}");
+            }
+            HookSubcommand::Uninstall { path } => {
+                let msg = hook::uninstall_hook(path.as_deref())?;
+                println!("{msg}");
+            }
+            HookSubcommand::Status { path } => {
+                let msg = hook::hook_status(path.as_deref())?;
+                println!("{msg}");
+            }
+            HookSubcommand::Run { hook_type, project } => {
+                hook::run_hook(&hook_type, project.as_deref()).await?;
+            }
+        },
     }
 
     Ok(())

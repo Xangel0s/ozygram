@@ -393,6 +393,7 @@ pub async fn handle_git_tool(
             | "git_diff_file"
             | "git_blame_line"
             | "recent_changes_with_impact"
+            | "install_git_hook"
     ) {
         return Ok(None);
     }
@@ -402,6 +403,7 @@ pub async fn handle_git_tool(
         "learn_from_changes" => handle_learn_from_changes(backend, tool_call, notifier, subscribed).await?,
         "ozy_export_memory_notes" => handle_export_memory_notes(backend, tool_call).await?,
         "ozy_import_memory_notes" => handle_import_memory_notes(backend, tool_call).await?,
+        "install_git_hook" => handle_install_git_hook(backend, tool_call).await?,
         _ => {
             let git = match git_res {
                 Ok(g) => g,
@@ -662,4 +664,68 @@ pub async fn handle_git_tool(
         }
     };
     Ok(Some(ok_response(id, serde_json::to_value(res)?)))
+}
+
+pub(crate) async fn handle_install_git_hook(
+    backend: &GraphBackend,
+    tool_call: &mcp_common::ToolCallParams,
+) -> anyhow::Result<ToolCallResult> {
+    let project_path = tool_call
+        .arguments
+        .get("project_path")
+        .and_then(Value::as_str)
+        .map(String::from)
+        .or_else(|| backend.project_path())
+        .ok_or_else(|| anyhow::anyhow!("no project path set"))?;
+
+    let p = Path::new(&project_path);
+    if !p.join(".git").exists() {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock {
+                kind: "text",
+                text: format!("Not a git repository: {project_path}"),
+            }],
+            is_error: Some(true),
+        });
+    }
+
+    let hooks_dir = p.join(".git").join("hooks");
+    std::fs::create_dir_all(&hooks_dir)?;
+    let hook_path = hooks_dir.join("post-commit");
+
+    let snippet = r#"
+# --- Ozymem automated knowledge capture ---
+if command -v ozymem >/dev/null 2>&1; then
+    ozymem hook run post-commit 2>/dev/null || true
+fi
+# --- End Ozymem ---
+"#;
+
+    if hook_path.exists() {
+        let content = std::fs::read_to_string(&hook_path)?;
+        if !content.contains("ozymem hook run post-commit") {
+            let updated = format!("{}\n{}", content.trim_end(), snippet);
+            std::fs::write(&hook_path, updated)?;
+        }
+    } else {
+        std::fs::write(&hook_path, format!("#!/bin/sh\n{snippet}"))?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&hook_path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&hook_path, perms);
+        }
+    }
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: format!("Successfully installed post-commit hook at {}", hook_path.display()),
+        }],
+        is_error: None,
+    })
 }

@@ -1254,11 +1254,13 @@ use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_ozy_brain_persistent_server_fallback() {
+        std::env::set_var("OZY_BRAIN_PORT", "59999");
         let payload = json!({
             "project": "ozymem-test",
             "goal": "test persistent fallback"
         });
         let res = try_call_ozy_brain_persistent("plan", &payload, 50);
+        std::env::remove_var("OZY_BRAIN_PORT");
         assert!(res.is_err(), "connecting to closed port must return error for fallback");
     }
 
@@ -1892,4 +1894,69 @@ pub fn audit_log(event: &str) -> bool {
         assert!(has_emb_check, "ozy_doctor must report embedding_model check");
 
         std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
+    async fn test_install_git_hook_tool_and_doctor_check() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_git_hook_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(tmp_root.join(".git")).unwrap();
+
+        let gb = GraphBackend::open_for_project(&tmp_root).unwrap();
+        *backend.lock().unwrap() = Some(gb);
+
+        // 1. Initial doctor check: git_hook warning
+        let doc_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(201)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": { "format": "json" }
+            })),
+        };
+        let doc_resp = handle_request(&backend, doc_req, None, None).await.unwrap().unwrap();
+        let doc_text = doc_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let payload: Value = serde_json::from_str(&doc_text).unwrap();
+        let checks = payload["checks"].as_array().unwrap();
+        let hook_check = checks.iter().find(|c| c["name"] == "git_hook").expect("must have git_hook check");
+        assert_eq!(hook_check["severity"], "warning", "expected warning when not installed");
+
+        // 2. Call install_git_hook tool
+        let install_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(202)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "install_git_hook",
+                "arguments": { "project_path": tmp_root.to_string_lossy() }
+            })),
+        };
+        let inst_resp = handle_request(&backend, install_req, None, None).await.unwrap().unwrap();
+        assert!(inst_resp.error.is_none());
+        let inst_text = inst_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(inst_text.contains("Successfully installed"));
+
+        let hook_file = tmp_root.join(".git").join("hooks").join("post-commit");
+        assert!(hook_file.exists());
+
+        // 3. Post-install doctor check: git_hook ok
+        let doc_req2 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(203)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": { "format": "json" }
+            })),
+        };
+        let doc_resp2 = handle_request(&backend, doc_req2, None, None).await.unwrap().unwrap();
+        let doc_text2 = doc_resp2.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let payload2: Value = serde_json::from_str(&doc_text2).unwrap();
+        let checks2 = payload2["checks"].as_array().unwrap();
+        let hook_check2 = checks2.iter().find(|c| c["name"] == "git_hook").expect("must have git_hook check");
+        assert_eq!(hook_check2["severity"], "ok", "expected ok after install");
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
     }

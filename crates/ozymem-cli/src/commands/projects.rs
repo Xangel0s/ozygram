@@ -1,7 +1,6 @@
 use crate::commands::scan::{canonicalize_target, clean_path, is_critical_root};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use crate::client::build_backend_client;
 use crate::config::{load_config, save_config};
 

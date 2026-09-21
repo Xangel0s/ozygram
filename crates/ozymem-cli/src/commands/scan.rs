@@ -2,7 +2,6 @@ use crate::config::load_config;
 use crate::client::AppContext;
 use crate::commands::projects::check_directory_authorized;
 use anyhow::{Context, Result};
-use notify::Watcher;
 use ozymem_parser::{
     extract_dependency_hints, is_binary_file, is_internal_dependency_hint, parse_source,
     resolve_dependency_target, ParsedDependencyHint, SupportedLanguage,
