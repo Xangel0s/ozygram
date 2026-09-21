@@ -25,24 +25,6 @@ use crate::resources::{
 use crate::schemas::handle_tools_list;
 use crate::unified::handle_unified_tool;
 
-fn resolve_project_root_str(uri: &str) -> String {
-    if let Some(path) = uri.strip_prefix("file:///") {
-        if cfg!(windows) {
-            path.replace('/', "\\")
-        } else {
-            format!("/{}", path)
-        }
-    } else if let Some(path) = uri.strip_prefix("file://") {
-        if cfg!(windows) {
-            path.replace('/', "\\")
-        } else {
-            path.to_string()
-        }
-    } else {
-        uri.to_string()
-    }
-}
-
 pub async fn handle_request(
     backend: &Arc<Mutex<Option<GraphBackend>>>,
     request: mcp_common::JsonRpcRequest,
@@ -70,19 +52,19 @@ pub async fn handle_request(
 
     let response = match request.method.as_str() {
         "initialize" => {
-            let workspace_folders = request
-                .params
-                .as_ref()
-                .and_then(|p| p.get("workspaceFolders"))
-                .and_then(Value::as_array);
-
-            let project_path_str = workspace_folders
-                .and_then(|folders| folders.first())
-                .and_then(|f| f.get("uri"))
-                .and_then(Value::as_str)
-                .map(resolve_project_root_str)
-                .unwrap_or_else(|| ".".to_string());
-            let project_path = PathBuf::from(&project_path_str);
+            let project_path = crate::state::resolve_workspace_from_params(request.params.as_ref())
+                .or_else(|| {
+                    if let Ok(cwd) = std::env::current_dir() {
+                        if crate::state::is_ide_install_dir(&cwd) {
+                            None
+                        } else {
+                            crate::state::find_project_root_from(&cwd).or(Some(cwd))
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| PathBuf::from("."));
 
             let mut guard = backend.lock().unwrap();
             let gb = match GraphBackend::open_for_project(&project_path) {

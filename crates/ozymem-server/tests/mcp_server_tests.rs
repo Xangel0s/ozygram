@@ -90,6 +90,91 @@ use std::sync::{Arc, Mutex};
     }
 
     #[tokio::test]
+    async fn test_initialize_with_root_uri() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_rooturi_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let request = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(101)),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test-rooturi", "version": "1" },
+                "rootUri": proj_uri
+            })),
+        };
+
+        let response = handle_request(&backend, request, None, None).await.unwrap();
+        assert!(response.is_some());
+        let resp = response.unwrap();
+        assert!(resp.error.is_none(), "initialize with rootUri should succeed: {:?}", resp.error);
+        assert!(backend.lock().unwrap().is_some());
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
+    async fn test_initialize_with_root_path() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_rootpath_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let request = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(102)),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test-rootpath", "version": "1" },
+                "rootPath": tmp_root.to_string_lossy().to_string()
+            })),
+        };
+
+        let response = handle_request(&backend, request, None, None).await.unwrap();
+        assert!(response.is_some());
+        let resp = response.unwrap();
+        assert!(resp.error.is_none(), "initialize with rootPath should succeed: {:?}", resp.error);
+        assert!(backend.lock().unwrap().is_some());
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
+    async fn test_ancestor_project_root_discovery() {
+        let tmp_parent =
+            std::env::temp_dir().join(format!("ozymem_test_parent_{}", std::process::id()));
+        let tmp_sub = tmp_parent.join("src").join("nested");
+        let _ = std::fs::remove_dir_all(&tmp_parent);
+        std::fs::create_dir_all(&tmp_sub).unwrap();
+        // Create an AGENTS.md in the parent to mark it as the project root
+        std::fs::write(tmp_parent.join("AGENTS.md"), "# Test Agent Guidelines").unwrap();
+
+        assert!(ozymem_server::state::is_project_root(&tmp_parent));
+        let discovered = ozymem_server::state::find_project_root_from(&tmp_sub);
+        assert_eq!(discovered, Some(tmp_parent.clone()));
+
+        std::fs::remove_dir_all(&tmp_parent).ok();
+    }
+
+    #[tokio::test]
+    async fn test_ide_cwd_drift_protection_and_env_fallback() {
+        let ide_fake_path = std::path::PathBuf::from("C:\\Users\\User\\AppData\\Local\\Programs\\Antigravity IDE");
+        assert!(ozymem_server::state::is_ide_install_dir(&ide_fake_path));
+
+        let non_ide_path = std::path::PathBuf::from("C:\\Users\\User\\Documents\\crmnew");
+        assert!(!ozymem_server::state::is_ide_install_dir(&non_ide_path));
+    }
+
+    #[tokio::test]
     async fn test_context_for_task_empty_results() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
 
