@@ -37,39 +37,50 @@ Agrega la siguiente entrada en tu archivo de configuración de cliente MCP (`cla
 ## 2. Herramientas MCP Destacadas
 
 ### A. Memoria Contextual Persistente
-| Herramienta | Parámetros | Descripción |
+| Herramienta | Parámetros Clave | Descripción |
 | :--- | :--- | :--- |
-| `lookup_engram` | `symbol`, `file` | Búsqueda determinista $O(1)$ de firmas y contratos en memoria mapeada. |
-| `record_lesson` | `category`, `lesson`, `context` | Registra una lección aprendida en el SQLite del proyecto. |
-| `record_decision` | `title`, `decision`, `rationale` | Registra una decisión de diseño arquitectónico. |
-| `record_gotcha` | `gotcha`, `workaround` | Registra un problema conocido o comportamiento no obvio con su solución. |
-| `record_convention` | `rule`, `rationale` | Registra una regla de estilo o convención técnica del proyecto. |
-| `search_lessons` | `query`, `category` | Búsqueda léxica FTS5 en la base de lecciones. |
-| `deep_semantic_search` / `ozy_deep_search` | `query`, `top_k` | Búsqueda híbrida con RRF combinando FTS5 y embeddings FastEmbed. |
+| `lookup_engram` / `ozy_lookup_engram` | `symbol`, `file` | Búsqueda determinista $O(1)$ de firmas y contratos en memoria mapeada (`rkyv` + `memmap2`). |
+| `ozy_memory` | `action`, `kind`, `topic_key`, `query` | Herramienta unificada de memoria: lecciones, decisiones, convenciones, gotchas, sesiones, timelines y passive capture. |
+| `record_lesson` / `record_decision` | `title`, `lesson` / `decision` | Endpoints directos para registrar lecciones y decisiones de diseño. |
+| `record_gotcha` / `record_convention` | `gotcha`, `workaround` / `rule` | Registra comportamientos no obvios y convenciones de código. |
+| `deep_semantic_search` / `ozy_deep_search` | `query`, `limit`, `project` | Búsqueda híbrida con RRF combinando FTS5 léxico y embeddings densos locales FastEmbed ONNX. |
 
 ### B. Grafo de Código y Navegación AST
-| Herramienta | Parámetros | Descripción |
+| Herramienta | Parámetros Clave | Descripción |
 | :--- | :--- | :--- |
-| `file_context` / `ozy_context` | `file_path`, `task` | Entrega prefill predictivo, reglas de archivo, firmas adyacentes y lecciones. |
-| `analyze_impact` | `target_file` | Mapea archivos dependientes directos e indirectos y clasifica el riesgo. |
-| `graph_neighbors` | `file_path`, `direction` | Obtiene vecinos inmediatos (`incoming`, `outgoing`, `both`) en el grafo. |
-| `graph_summary` | `project_path` | Resumen del grafo: nodos, aristas, tipos de relación y archivos clave. |
+| `ozy_context` / `file_context` | `action`, `file_path`, `task` | Prefill predictivo, contratos de funciones adyacentes, reglas de archivo y dependientes. |
+| `ozy_graph` | `action`, `file_path`, `depth` | Navegación unificada de arquitectura: `summary`, `neighbors`, `impact`, `path` y reporte estructural. |
+| `analyze_impact` | `target_file` | Mapea archivos dependientes directos e indirectos calculando el radio de dispersión. |
+| `graph_neighbors` | `file_path`, `direction` | Obtiene vecinos inmediatos (`incoming`, `outgoing`, `both`) en el grafo AST. |
 
-### C. Cerebro Cognitivo y Auditoría (`ozy_brain`)
+### C. Árbol de Exploración y Auto-Mejora (`ozy_exploration` / Dream-RSI v1.1.0)
 | Acción | Parámetros Clave | Descripción |
 | :--- | :--- | :--- |
-| `plan` | `goal`, `context` | Genera un plan estructurado en 5 fases con checklist de parada. |
-| `audit_changes_with_critic` | `diff`, `files`, `plan_steps` | Auditoría adversaria con detección de hotspots y guardias DDL/DML. |
-| `get_repository_hotspots` | `limit` | Identifica archivos con mayor churn, commits de fix y riesgo de regresión. |
-| `consolidate_memory` | `threshold` | Sintetiza tópicos y depura memorias con decaimiento temporal. |
+| `start` | `trajectory_id`, `task_description` | Inicia una nueva trayectoria de exploración MCTS persistida en SQLite. |
+| `record_step` | `trajectory_id`, `action_type`, `observation`, `reward_score` | Registra un nodo con auto-parenting automático al último nodo activo en Rust core. |
+| `record_batch` | `trajectory_id`, `steps` | Inserción atómica en lote de múltiples hitos técnicos para eliminar turn tax. |
+| `complete` | `trajectory_id`, `status` | Marca la trayectoria como `completed`, `failed` o `abandoned`. |
+| `diagnose` | `trajectory_id` | Audita cuellos de botella: nodos de alta latencia, consumo excesivo de tokens y ramas muertas. |
+| `get_tree` | `trajectory_id` | Devuelve la topología jerárquica del árbol con cálculo de scores UCB1/UCT. |
+
+### D. Cerebro Cognitivo y Supervisión (`ozy_brain`)
+| Acción | Parámetros Clave | Descripción |
+| :--- | :--- | :--- |
+| `plan` | `goal`, `context` | Genera un plan estructurado en 5 fases con checklist de parada determinista. |
+| `audit_changes_with_critic` | `diff`, `files`, `plan_steps` | Auditoría adversaria con detección de hotspots y guardias DDL/DML destructivas. |
+| `get_repository_hotspots` | `limit` | Identifica archivos con mayor churn, commits de fix y riesgo de regresión con DuckDB. |
+| `consolidate_memory` | `threshold` | Sintetiza tópicos y depura memorias mediante decaimiento temporal exponencial. |
 | `build_mental_model` | `scope` | Proporciona un mapa mental del proyecto ("por dónde empezar a leer"). |
 
-### D. Diagnósticos y Salud del Código
-| Herramienta | Descripción |
-| :--- | :--- |
-| `ozy_verify_diff` | Sandbox de validación previa: chequea sintaxis AST antes de persistir cambios. |
-| `ozy_doctor` | Diagnóstico general de salud del proyecto, integridad de SQLite y dependencias. |
-| `ozy_code_doctor` | Detección de duplicados, boilerplate vs refactorización y errores AST. |
+### E. Diagnósticos y Salud del Código
+| Herramienta | Parámetros Clave | Descripción |
+| :--- | :--- | :--- |
+| `ozy_verify_diff` | `file_path`, `diff` | Sandbox de validación previa test-time: chequea sintaxis AST antes de persistir cambios. |
+| `ozy_doctor` | `format`, `include_projects` | Diagnóstico integral: integridad de SQLite, modelos de embedding, watchers y registro. |
+| `ozy_code_doctor` | `mode`, `scope`, `min_duplicate_lines` | Detección de duplicados, candidatos a refactor vs boilerplate estructural. |
+| `ozy_skills` | `action`, `query`, `category` | Integración oficial con skills.sh para búsqueda y aplicación de guías contextuales. |
+| `ozy_export_memory_notes` | `notes_ref` | Exporta lecciones y decisiones a Git Notes (`refs/notes/ozymem`) para sincronización P2P. |
+| `ozy_import_memory_notes` | `notes_ref` | Importa y fusiona memorias desde Git Notes sin colisiones. |
 
 ---
 

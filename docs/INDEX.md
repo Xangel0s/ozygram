@@ -1,6 +1,6 @@
 # Documentación Oficial de Ozygram
 
-Bienvenido a la documentación oficial y completa de **Ozygram** (Dual-Tier Engine v0.4.0), el sistema operativo cognitivo, memoria contextual persistente y grafo de código para agentes y asistentes de desarrollo asistidos por IA.
+Bienvenido a la documentación oficial y completa de **Ozygram** (Dual-Tier Engine v1.1.0), el sistema operativo cognitivo, memoria contextual persistente y grafo de código para agentes y asistentes de desarrollo asistidos por IA.
 
 ---
 
@@ -45,8 +45,16 @@ Bienvenido a la documentación oficial y completa de **Ozygram** (Dual-Tier Engi
 - Sandbox de validación previa test-time (`ozy_verify_diff`).
 - Sincronización descentralizada P2P con Git Notes (`refs/notes/ozymem`).
 
-### 7. [Historial de Versiones y Novedades (`docs/changelog.md`)](changelog.md)
-- Registro cronológico detallado de cambios y mejoras desde la v0.2.0 hasta la v0.4.0.
+### 7. [Dream-RSI & Monte Carlo Tree Search v1.1.0 (`docs/dream-rsi.md`)](dream-rsi.md)
+- Motor MCTS de exploración y auto-mejora continua (*Recursive Self-Improvement*).
+- Auto-parenting inteligente en Rust: encadenamiento automático de hojas sin propagación manual de hashes.
+- Inserción atómica en lote por hitos técnicos (`record_batch`).
+- Auditoría objetiva de recompensas (anti-alucinación de éxitos) y clampeo determinista.
+- Diagnóstico de cuellos de botella de trayectoria (`diagnose` y `ozymem dream diagnose`).
+- Replay contrafactual offline ("sueño") a costo $0 de tokens LLM.
+
+### 8. [Historial de Versiones y Novedades (`docs/changelog.md`)](changelog.md)
+- Registro cronológico detallado de cambios y mejoras desde la v0.2.0 hasta la v1.1.0.
 
 ---
 

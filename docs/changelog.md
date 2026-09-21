@@ -4,6 +4,30 @@ Este documento recopila de forma cronológica la evolución y mejoras clave de *
 
 ---
 
+## 🌙 Versión v1.1.0 — Dream-RSI: Zero-Friction MCTS Engine & Auto-Parenting
+
+### 1. Auto-Parenting Inteligente en Rust Core
+- Eliminación de la necesidad de que el agente memorice y propague IDs hash padre (`parent_id`) en tareas secuenciales.
+- Cuando `parent_id` es omitido, el motor en Rust localiza atómicamente el último nodo hoja activo (`ORDER BY depth DESC, created_at DESC LIMIT 1`) y calcula `depth = parent.depth + 1`.
+
+### 2. Inserción Atómica por Lotes (`record_batch`)
+- Nueva acción MCP `record_batch` para registrar múltiples pasos técnicos en una única llamada JSON-RPC.
+- Reduce radicalmente la latencia percibida por el usuario (*turn tax*) en tareas lineales mientras mantiene la topología MCTS intacta.
+
+### 3. Auditoría Objetiva de Recompensas (Anti-Alucinación)
+- El analizador determinista `detect_failure_signals` audita observaciones en busca de códigos de error de proceso (`exit code != 0`), errores de sintaxis (`SyntaxError`, `TypeError`) o fallos de tests (`FAILED`, `timed out`).
+- Clampea automáticamente recompensas positivas alucinadas a `-1.0` con la bandera `objective_reward_override: true`.
+
+### 4. Diagnóstico Nativo de Trayectorias (`diagnose` y `ozymem dream diagnose`)
+- Detección de cuellos de botella de latencia (> 3000 ms) y consumo de tokens (> 2000 tokens).
+- Detección de oportunidades de poda (*pruning*) no ejecutadas y sugerencia matemática de constante de exploración UCB1 ($c$).
+- Métricas de eficiencia de tokens en la rama de la solución final.
+
+### 5. Resiliencia de Instalación en Windows
+- Script `install.ps1` con reemplazo seguro de binarios mediante staging temporal (`.old`), evitando bloqueos de archivos en uso (`Resource busy / File in use`).
+
+---
+
 ## ⚡ Versión v0.4.0 — Dual-Tier Engine, SQLite Outbox & FastEmbed RRF
 
 ### 1. Arquitectura Dual-Tier Asimétrica
