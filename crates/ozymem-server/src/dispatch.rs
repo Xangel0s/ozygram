@@ -13,6 +13,7 @@ use crate::skills::handle_ozy_skills;
 use crate::state::{error_response, log_spawn, ok_response, Notifier};
 use crate::tools::handle_lookup_engram;
 use crate::verifier::handle_verify_diff;
+use crate::exploration::handle_exploration;
 
 use crate::git::handle_git_tool;
 use crate::graph::handle_graph_tool;
@@ -246,6 +247,9 @@ pub async fn handle_request(
                         }],
                         is_error: None,
                     }
+                }
+                "ozy_exploration" | "exploration" | "record_exploration_step" | "get_exploration_tree" => {
+                    handle_exploration(backend, &tool_call)?
                 }
                 _ => {
                     if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {

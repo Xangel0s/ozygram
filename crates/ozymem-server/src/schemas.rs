@@ -128,6 +128,32 @@ pub fn handle_tools_list(
                     }),
                 },
                 mcp_common::ToolDefinition {
+                    name: "ozy_exploration",
+                    description: "Dream-RSI & Monte Carlo Tree Search (MCTS) exploration tree: track trajectories, record steps/nodes with 32KB truncation guard, backpropagate rewards, and retrieve hierarchical decision trees.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "enum": ["start", "record_step", "complete", "get_tree", "list", "delete"], "default": "record_step" },
+                            "trajectory_id": { "type": "string", "description": "ID of the exploration trajectory" },
+                            "parent_id": { "type": "string", "description": "Optional parent node ID for tree branching" },
+                            "task_description": { "type": "string", "description": "Goal or bug to solve (for 'start')" },
+                            "project_path": { "type": "string", "description": "Optional project path" },
+                            "policy_version": { "type": "string", "description": "Version of the active exploration policy (e.g. 'v1.0.0')" },
+                            "action_type": { "type": "string", "description": "Action taken ('tool_call', 'edit_code', 'ast_query', 'run_test', etc.)" },
+                            "action_payload": { "type": "string", "description": "Payload/arguments of the action (JSON or text)" },
+                            "observation": { "type": "string", "description": "Resulting observation or tool output (truncated to 32KB)" },
+                            "cost_tokens": { "type": "integer", "description": "Tokens consumed in this step" },
+                            "latency_ms": { "type": "integer", "description": "Execution latency in ms" },
+                            "reward_score": { "type": "number", "description": "Reward score [-1.0, 1.0] or custom scale" },
+                            "is_solution": { "type": "boolean", "description": "Whether this step reached the desired solution" },
+                            "is_pruned": { "type": "boolean", "description": "Whether this branch should be pruned" },
+                            "status": { "type": "string", "enum": ["completed", "failed", "abandoned"], "description": "Final status (for 'complete')" },
+                            "limit": { "type": "integer", "default": 20 }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "deep_semantic_search",
                     description: "Hybrid semantic search combining SQLite FTS5 (BM25) with ChromaDB dense vectors via Reciprocal Rank Fusion (RRF) and Neural Re-ranking.",
                     input_schema: json!({

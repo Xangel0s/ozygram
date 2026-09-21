@@ -14,6 +14,7 @@ pub mod graph;
 pub mod unified;
 pub mod tools;
 pub mod verifier;
+pub mod exploration;
 pub mod dispatch;
 
 use ozymem_core::graph_backend::GraphBackend;

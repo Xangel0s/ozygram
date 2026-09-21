@@ -1960,3 +1960,148 @@ pub fn audit_log(event: &str) -> bool {
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
+
+    #[tokio::test]
+    async fn test_exploration_mcp_lifecycle_and_tree() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mcp_exploration_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 1. Initialize
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(301)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "rootPath": tmp_root.to_string_lossy(),
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // 2. Start trajectory
+        let start_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(302)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "start",
+                    "task_description": "Solve flaky test in auth_service",
+                    "policy_version": "v1.2.0"
+                }
+            })),
+        };
+        let start_resp = handle_request(&backend, start_req, None, None).await.unwrap().unwrap();
+        assert!(start_resp.error.is_none());
+        let start_text = start_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let start_json: Value = serde_json::from_str(&start_text).unwrap();
+        assert_eq!(start_json["status"], "ok");
+        let traj_id = start_json["trajectory_id"].as_str().unwrap().to_string();
+        assert!(traj_id.starts_with("traj_"));
+
+        // 3. Record root step
+        let step1_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(303)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "record_step",
+                    "trajectory_id": traj_id,
+                    "action_type": "inspect_test_log",
+                    "action_payload": "{\"log\": \"Timeout waiting for lock\"}",
+                    "observation": "Lock contended at line 42",
+                    "reward_score": 0.0
+                }
+            })),
+        };
+        let step1_resp = handle_request(&backend, step1_req, None, None).await.unwrap().unwrap();
+        let step1_text = step1_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let step1_json: Value = serde_json::from_str(&step1_text).unwrap();
+        let root_node_id = step1_json["node"]["id"].as_str().unwrap().to_string();
+
+        // 4. Record child step reaching solution
+        let step2_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(304)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "record_step",
+                    "trajectory_id": traj_id,
+                    "parent_id": root_node_id,
+                    "action_type": "apply_patch",
+                    "action_payload": "{\"patch\": \"use parking_lot::RwLock\"}",
+                    "observation": "Test passed in 12ms",
+                    "is_solution": true
+                }
+            })),
+        };
+        let step2_resp = handle_request(&backend, step2_req, None, None).await.unwrap().unwrap();
+        let step2_text = step2_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let step2_json: Value = serde_json::from_str(&step2_text).unwrap();
+        assert_eq!(step2_json["node"]["is_solution"], true);
+        assert_eq!(step2_json["node"]["reward_score"], 10.0); // Automatic heuristic reward
+
+        // 5. Get hierarchical tree
+        let tree_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(305)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "get_tree",
+                    "trajectory_id": traj_id
+                }
+            })),
+        };
+        let tree_resp = handle_request(&backend, tree_req, None, None).await.unwrap().unwrap();
+        let tree_text = tree_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let tree_json: Value = serde_json::from_str(&tree_text).unwrap();
+        let roots = tree_json["tree"].as_array().unwrap();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0]["children"].as_array().unwrap().len(), 1);
+        assert!(roots[0]["children"][0]["uct_score"].as_f64().unwrap() > 0.0);
+
+        // 6. Complete trajectory
+        let comp_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(306)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "complete",
+                    "trajectory_id": traj_id,
+                    "status": "completed"
+                }
+            })),
+        };
+        let comp_resp = handle_request(&backend, comp_req, None, None).await.unwrap().unwrap();
+        assert!(comp_resp.error.is_none());
+
+        // 7. List trajectories
+        let list_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(307)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "list"
+                }
+            })),
+        };
+        let list_resp = handle_request(&backend, list_req, None, None).await.unwrap().unwrap();
+        let list_text = list_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let list_json: Value = serde_json::from_str(&list_text).unwrap();
+        let list = list_json["trajectories"].as_array().unwrap();
+        assert!(list.iter().any(|t| t["id"] == traj_id && t["status"] == "completed"));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
