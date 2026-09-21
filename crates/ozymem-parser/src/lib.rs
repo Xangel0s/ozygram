@@ -41,6 +41,8 @@ pub struct ParsedRelation {
 pub enum DependencyHintKind {
     UseDeclaration,
     ModItem,
+    ImportStatement,
+    ExportStatement,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -116,10 +118,10 @@ impl SupportedLanguage {
             SupportedLanguage::Python => Some(tree_sitter_python::LANGUAGE.into()),
             SupportedLanguage::Go => Some(tree_sitter_go::LANGUAGE.into()),
             SupportedLanguage::Rust => Some(tree_sitter_rust::LANGUAGE.into()),
-            SupportedLanguage::JavaScript => Some(tree_sitter_javascript::LANGUAGE.into()),
-            SupportedLanguage::TypeScriptReact
-            | SupportedLanguage::SQL
-            | SupportedLanguage::Unknown => None,
+            SupportedLanguage::JavaScript | SupportedLanguage::TypeScriptReact => {
+                Some(tree_sitter_javascript::LANGUAGE.into())
+            }
+            SupportedLanguage::SQL | SupportedLanguage::Unknown => None,
         }
     }
 
@@ -147,7 +149,7 @@ impl SupportedLanguage {
                 ) @symbol.definition
                 "#,
             ),
-            SupportedLanguage::JavaScript => Some(
+            SupportedLanguage::JavaScript | SupportedLanguage::TypeScriptReact => Some(
                 r#"
                 (function_declaration
                     name: (identifier) @symbol.name
@@ -177,9 +179,7 @@ impl SupportedLanguage {
                 ) @symbol.definition
                 "#,
             ),
-            SupportedLanguage::TypeScriptReact
-            | SupportedLanguage::SQL
-            | SupportedLanguage::Unknown => None,
+            SupportedLanguage::SQL | SupportedLanguage::Unknown => None,
         }
     }
 
@@ -193,6 +193,38 @@ impl SupportedLanguage {
 
                 (mod_item
                     name: (identifier) @dependency.label
+                ) @dependency.definition
+                "#,
+            ),
+            SupportedLanguage::Python => Some(
+                r#"
+                (import_statement
+                    name: (dotted_name) @dependency.label
+                ) @dependency.definition
+
+                (import_statement
+                    name: (aliased_import
+                        name: (dotted_name) @dependency.label
+                    )
+                ) @dependency.definition
+
+                (import_from_statement
+                    module_name: (dotted_name) @dependency.label
+                ) @dependency.definition
+
+                (import_from_statement
+                    module_name: (relative_import) @dependency.label
+                ) @dependency.definition
+                "#,
+            ),
+            SupportedLanguage::JavaScript | SupportedLanguage::TypeScriptReact => Some(
+                r#"
+                (import_statement
+                    source: (string) @dependency.label
+                ) @dependency.definition
+
+                (export_statement
+                    source: (string) @dependency.label
                 ) @dependency.definition
                 "#,
             ),
@@ -272,11 +304,15 @@ pub fn extract_dependency_hints(
 
             match capture_name {
                 "dependency.definition" => {
-                    kind = Some(match capture.node.kind() {
-                        "use_declaration" => DependencyHintKind::UseDeclaration,
-                        "mod_item" => DependencyHintKind::ModItem,
+                    kind = match capture.node.kind() {
+                        "use_declaration" => Some(DependencyHintKind::UseDeclaration),
+                        "mod_item" => Some(DependencyHintKind::ModItem),
+                        "import_statement" | "import_from_statement" => {
+                            Some(DependencyHintKind::ImportStatement)
+                        }
+                        "export_statement" => Some(DependencyHintKind::ExportStatement),
                         _ => continue,
-                    });
+                    };
                     raw_text = capture
                         .node
                         .utf8_text(source_code.as_bytes())
@@ -290,7 +326,7 @@ pub fn extract_dependency_hints(
                         .node
                         .utf8_text(source_code.as_bytes())
                         .ok()
-                        .map(|text| text.to_string());
+                        .map(|text| text.trim_matches(|c| c == '\'' || c == '"' || c == '`').to_string());
                 }
                 _ => {}
             }
@@ -823,6 +859,59 @@ use ozymem_core::GraphBackend;
         assert!(labels.contains("internal"));
         assert!(labels.contains("crate::domain::User"));
         assert!(labels.contains("ozymem_core::GraphBackend"));
+    }
+
+    #[test]
+    fn extracts_python_dependency_hints() {
+        let source = r#"import os
+import sys as system
+from .models import User
+from ..database import get_db
+from app.services.auth import verify_token
+"#;
+
+        let hints = extract_dependency_hints("app/routers/user.py", SupportedLanguage::Python, source)
+            .expect("python dependency hint extraction should succeed");
+
+        assert_eq!(hints.len(), 5);
+
+        for hint in &hints {
+            assert_eq!(hint.kind, DependencyHintKind::ImportStatement);
+        }
+
+        let labels: HashSet<_> = hints.iter().map(|hint| hint.label.as_str()).collect();
+        assert!(labels.contains("os"));
+        assert!(labels.contains("sys"));
+        assert!(labels.contains(".models"));
+        assert!(labels.contains("..database"));
+        assert!(labels.contains("app.services.auth"));
+    }
+
+    #[test]
+    fn extracts_js_ts_dependency_hints() {
+        let source = r#"import React, { useState } from 'react';
+import { Button } from './components/Button';
+import Header from "@/components/Header";
+export * from './types';
+export { Footer } from './Footer';
+"#;
+
+        let hints = extract_dependency_hints("src/App.tsx", SupportedLanguage::TypeScriptReact, source)
+            .expect("js/ts dependency hint extraction should succeed");
+
+        assert_eq!(hints.len(), 5);
+
+        let imports: Vec<_> = hints.iter().filter(|h| h.kind == DependencyHintKind::ImportStatement).collect();
+        let exports: Vec<_> = hints.iter().filter(|h| h.kind == DependencyHintKind::ExportStatement).collect();
+        assert_eq!(imports.len(), 3);
+        assert_eq!(exports.len(), 2);
+
+        let labels: HashSet<_> = hints.iter().map(|hint| hint.label.as_str()).collect();
+        assert!(labels.contains("react"));
+        assert!(labels.contains("./components/Button"));
+        assert!(labels.contains("@/components/Header"));
+        assert!(labels.contains("./types"));
+        assert!(labels.contains("./Footer"));
     }
 
     #[test]

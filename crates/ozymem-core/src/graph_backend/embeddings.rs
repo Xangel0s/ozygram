@@ -59,6 +59,13 @@ impl GraphBackend {
 
     /// Inicia la descarga o carga en segundo plano del modelo ONNX sin bloquear Tokio RPC.
     pub fn start_background_embedder_download(&self) {
+        if cfg!(test) && std::env::var_os("OZYMEM_ENABLE_AUTO_DOWNLOAD_IN_TESTS").is_none() {
+            return;
+        }
+        if std::env::var_os("OZYMEM_DISABLE_AUTO_DOWNLOAD").is_some() {
+            return;
+        }
+
         let current = self.get_embedding_status();
         if current == EmbeddingModelStatus::Ready || current == EmbeddingModelStatus::Downloading {
             return;
@@ -73,6 +80,7 @@ impl GraphBackend {
             eprintln!("[ozymem] Iniciando descarga/carga de embedding model en segundo plano (all-MiniLM-L6-v2)...");
             std::fs::create_dir_all(&cache_dir).ok();
             let opts = InitOptions::new(EmbeddingModel::AllMiniLML6V2)
+                .with_cache_dir(cache_dir)
                 .with_show_download_progress(false);
             match TextEmbedding::try_new(opts) {
                 Ok(m) => {
