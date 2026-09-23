@@ -1,4 +1,4 @@
-# Ozy Brain — Hybrid Reasoning Engine for Ozygram / Ozymem
+# Ozy Brain — Hybrid Reasoning Engine for Ozygram
 
 `ozy-brain` is the local Python reasoning worker used by the Rust `ozymem-server` MCP server. It acts as an **advisory cognitive layer** for AI agents, providing planning, deep memory recall, risk reviews, failure reflection, mental model synthesis, and pattern detection.
 

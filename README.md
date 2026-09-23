@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ Ozygram / Ozymem ⚡
+# ⚡ Ozygram ⚡
 
 ### *Persistent Cognitive Memory, Code Graph & Recursive Self-Improvement for AI Agents*
 

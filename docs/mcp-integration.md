@@ -12,7 +12,7 @@ Add the following entry to your MCP client configuration file (`claude_desktop_c
 ```json
 {
   "mcpServers": {
-    "ozymem": {
+    "ozygram": {
       "command": "C:\\Users\\YOUR_USER\\.ozymem\\bin\\ozymem-server.exe",
       "args": []
     }
@@ -24,7 +24,7 @@ Add the following entry to your MCP client configuration file (`claude_desktop_c
 ```json
 {
   "mcpServers": {
-    "ozymem": {
+    "ozygram": {
       "command": "/home/YOUR_USER/.ozymem/bin/ozymem-server",
       "args": []
     }

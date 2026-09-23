@@ -1,7 +1,7 @@
 [project]
 name = "ozy-brain"
 version = "0.1.0"
-description = "Local reasoning worker for Ozygram/Ozymem"
+description = "Local reasoning worker for Ozygram"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0.0",

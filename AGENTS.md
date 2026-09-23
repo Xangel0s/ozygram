@@ -1,4 +1,4 @@
-# Ozymem / Ozygram Developer Agent Guidelines
+# Ozygram Developer Agent Guidelines
 
 ## Dual-Tier Architecture (v0.4.0 & v1.1.0)
 - `crates/ozymem-core`: Persistent ACID storage (SQLite), `memory_outbox` triggers, multi-language AST indexing (tree-sitter), hybrid semantic search (fastembed), graph analysis (petgraph).  
