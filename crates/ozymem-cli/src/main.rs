@@ -250,7 +250,11 @@ async fn main() -> anyhow::Result<()> {
             println!("[OzyMem] Vinculado exitosamente: {} --[{}]--> {}", current_proj, relation, target_name);
             return Ok(());
         }
-        Commands::Mcp { .. } => {
+        Commands::Mcp { action } => {
+            if action == "config" || action == "snippet" || action == "json" {
+                print_mcp_config();
+                return Ok(());
+            }
             return mcp::run_mcp_server().await;
         }
         Commands::Query { input, json, limit, tokens } => {
@@ -401,5 +405,44 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn print_mcp_config() {
+    let current_exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "ozygram".to_string());
+
+    let server_candidate = if let Ok(mut exe) = std::env::current_exe() {
+        exe.pop();
+        let candidate = if cfg!(windows) {
+            exe.join("ozymem-server.exe")
+        } else {
+            exe.join("ozymem-server")
+        };
+        if candidate.exists() {
+            Some(candidate.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (cmd, args) = if let Some(server) = server_candidate {
+        (server, vec![])
+    } else {
+        (current_exe, vec!["mcp".to_string()])
+    };
+
+    let config = serde_json::json!({
+        "mcpServers": {
+            "ozygram": {
+                "command": cmd,
+                "args": args
+            }
+        }
+    });
+
+    println!("{}", serde_json::to_string_pretty(&config).unwrap());
 }
 
