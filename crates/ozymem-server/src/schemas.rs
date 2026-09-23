@@ -133,7 +133,7 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["start", "record_step", "record_batch", "complete", "get_tree", "diagnose", "list", "delete"], "default": "record_step" },
+                            "action": { "type": "string", "enum": ["start", "record_step", "record_batch", "complete", "get_tree", "diagnose", "list", "delete", "resume"], "default": "record_step" },
                             "trajectory_id": { "type": "string", "description": "ID of the exploration trajectory" },
                             "parent_id": { "type": "string", "description": "Optional parent node ID for tree branching (auto-parents to last active leaf if omitted)" },
                             "task_description": { "type": "string", "description": "Goal or bug to solve (for 'start')" },

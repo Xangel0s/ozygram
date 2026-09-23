@@ -115,11 +115,61 @@ def _safe_mcp_calls(payload: dict[str, Any], include_graph: bool = True) -> list
     return calls
 
 
+def _is_noise_path(path: str) -> bool:
+    clean = path.replace("\\", "/").lower()
+    noise_tokens = [
+        ".fastembed_cache",
+        "node_modules",
+        "/.git/",
+        "/target/",
+        "/.cache/",
+        "/build/",
+        "/dist/",
+        "/.venv/",
+        "/venv/",
+    ]
+    if any(tok in clean for tok in noise_tokens):
+        return True
+    noise_exts = (
+        ".lock",
+        ".onnx",
+        ".bin",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".duckdb",
+        ".parquet",
+        ".pyc",
+        ".wasm",
+        ".so",
+        ".dll",
+        ".dylib",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".ico",
+        ".pdf",
+        ".zip",
+        ".tar",
+        ".gz",
+    )
+    if clean.endswith(noise_exts):
+        return True
+    parts = clean.split("/")
+    last = parts[-1]
+    if len(last) >= 32 and all(c in "0123456789abcdef" for c in last):
+        return True
+    return False
+
+
 def _candidate_files(payload: dict[str, Any], limit: int = 8) -> list[str]:
     files: list[str] = []
     goal = _goal(payload).lower()
     for item in _items(payload, "files"):
         text = str(item)
+        if _is_noise_path(text):
+            continue
         lower = text.lower().replace("\\", "/")
         if any(token in lower for token in goal.replace("/", " ").replace("-", " ").split() if len(token) >= 4):
             files.append(text)
@@ -151,6 +201,8 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
 
     for path in _items(payload, "files"):
         text = str(path)
+        if _is_noise_path(text):
+            continue
         lower = text.lower().replace("\\", "/")
         overlap = sorted(token for token in goal_tokens if token in lower)
         bump(text, 2 + min(len(overlap), 4), "indexed candidate" + (f" matches {', '.join(overlap[:3])}" if overlap else ""))

@@ -91,6 +91,7 @@ pub struct TrajectoryDiagnosis {
     pub token_efficiency_percent: f64,
     pub has_solution: bool,
     pub max_depth: i64,
+    pub recommended_resume_node_id: Option<String>,
 }
 
 /// Detecta señales objetivas de fallo en la observación o payload para calibrar la recompensa
@@ -194,16 +195,26 @@ impl GraphBackend {
 
         // 3. Calibración Objetiva de Recompensa: Detección de fallos para neutralizar sesgos optimistas
         let raw_reward = params.reward_score.unwrap_or(0.0);
-        let (reward, action_payload) = if raw_reward > 0.0 && detect_failure_signals(&observation, &params.action_payload) {
+        let has_failure = detect_failure_signals(&observation, &params.action_payload);
+        let (reward, action_payload) = if raw_reward > 0.0 && has_failure {
             let mut payload = params.action_payload.clone();
             if payload.starts_with('{') && payload.ends_with('}') {
                 if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&payload) {
                     if let Some(obj) = v.as_object_mut() {
                         obj.insert("objective_reward_override".to_string(), serde_json::json!(true));
                         obj.insert("original_reward".to_string(), serde_json::json!(raw_reward));
+                        obj.insert("auto_pruned".to_string(), serde_json::json!(true));
                         payload = v.to_string();
                     }
                 }
+            } else {
+                let wrapped = serde_json::json!({
+                    "raw_action": payload,
+                    "objective_reward_override": true,
+                    "original_reward": raw_reward,
+                    "auto_pruned": true
+                });
+                payload = wrapped.to_string();
             }
             (-1.0, payload)
         } else {
@@ -213,7 +224,8 @@ impl GraphBackend {
         let cost_tokens = params.cost_tokens.unwrap_or(0);
         let latency_ms = params.latency_ms.unwrap_or(0);
         let is_solution = params.is_solution.unwrap_or(false);
-        let is_pruned = params.is_pruned.unwrap_or(false);
+        // Auto-Poda Guiada por Tests: podar automáticamente ante señales duras de fallo si no se indicó lo contrario
+        let is_pruned = params.is_pruned.unwrap_or(has_failure);
 
         // 4. Inserción del nodo
         inner.sqlite.execute(
@@ -578,7 +590,9 @@ impl GraphBackend {
             let node_map: HashMap<String, &NodeDiag> = nodes.iter().map(|n| (n.id.clone(), n)).collect();
 
             while let Some(cid) = current {
-                sol_path_ids.insert(cid.clone());
+                if !sol_path_ids.insert(cid.clone()) {
+                    break;
+                }
                 current = node_map.get(&cid).and_then(|n| n.parent_id.clone());
             }
 
@@ -591,6 +605,13 @@ impl GraphBackend {
         } else {
             0.0
         };
+
+        // Identificar el mejor nodo activo para reanudar la exploración (no podado y no solución)
+        let recommended_resume_node_id = nodes
+            .iter()
+            .filter(|n| !n.is_pruned && !n.is_solution)
+            .max_by(|a, b| a.reward_score.partial_cmp(&b.reward_score).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|n| n.id.clone());
 
         // Sugerir constante UCB1 basada en varianza de recompensas
         let suggested_ucb1_c = if total_steps > 1 {
@@ -618,7 +639,45 @@ impl GraphBackend {
             token_efficiency_percent,
             has_solution,
             max_depth,
+            recommended_resume_node_id,
         })
+    }
+
+    /// Obtiene el nodo activo no podado y no solución recomendado para reanudar una trayectoria interrumpida
+    pub fn get_recommended_resume_node(&self, trajectory_id: &str) -> Result<Option<ExplorationNode>> {
+        let inner = self.inner.lock().unwrap();
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
+                    observation, cost_tokens, latency_ms, reward_score, visit_count,
+                    value_estimate, is_solution, is_pruned, created_at
+             FROM exploration_nodes
+             WHERE trajectory_id = ?1 AND is_pruned = 0 AND is_solution = 0
+             ORDER BY value_estimate DESC, depth DESC, created_at DESC
+             LIMIT 1"
+        )?;
+
+        let mut rows = stmt.query(params![trajectory_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(ExplorationNode {
+                id: row.get(0)?,
+                trajectory_id: row.get(1)?,
+                parent_id: row.get(2)?,
+                depth: row.get(3)?,
+                action_type: row.get(4)?,
+                action_payload: row.get(5)?,
+                observation: row.get(6)?,
+                cost_tokens: row.get(7)?,
+                latency_ms: row.get(8)?,
+                reward_score: row.get(9)?,
+                visit_count: row.get(10)?,
+                value_estimate: row.get(11)?,
+                is_solution: row.get(12)?,
+                is_pruned: row.get(13)?,
+                created_at: row.get(14)?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Elimina una trayectoria y todos sus nodos en cascada

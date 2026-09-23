@@ -919,8 +919,13 @@ export { Footer } from './Footer';
         assert!(is_binary_file(std::path::Path::new("document.pdf")));
         assert!(is_binary_file(std::path::Path::new("archive.tar.gz")));
         assert!(is_binary_file(std::path::Path::new("image.png")));
+        assert!(is_binary_file(std::path::Path::new("model.onnx")));
+        assert!(is_binary_file(std::path::Path::new("registry.db")));
+        assert!(is_binary_file(std::path::Path::new("Cargo.lock")));
+        assert!(is_binary_file(std::path::Path::new("56c8c186de9040d4fea8daac2ca110f9d412bf04")));
         assert!(!is_binary_file(std::path::Path::new("source.rs")));
         assert!(!is_binary_file(std::path::Path::new("script.py")));
+        assert!(!is_binary_file(std::path::Path::new("index.ts")));
     }
 
     #[test]
@@ -946,8 +951,45 @@ pub fn is_binary_file(path: &std::path::Path) -> bool {
         let ext = ext.to_lowercase();
         matches!(
             ext.as_str(),
-            "pdf" | "rar" | "zip" | "jpeg" | "jpg" | "png" | "exe" | "gif" | "ico" | "bin" | "tar" | "gz" | "7z"
+            "pdf"
+                | "rar"
+                | "zip"
+                | "jpeg"
+                | "jpg"
+                | "png"
+                | "exe"
+                | "gif"
+                | "ico"
+                | "bin"
+                | "tar"
+                | "gz"
+                | "7z"
+                | "onnx"
+                | "lock"
+                | "db"
+                | "sqlite"
+                | "sqlite3"
+                | "duckdb"
+                | "parquet"
+                | "so"
+                | "dll"
+                | "dylib"
+                | "wasm"
+                | "pyc"
+                | "pkl"
+                | "pt"
+                | "pth"
+                | "mp3"
+                | "mp4"
+                | "wav"
+                | "woff"
+                | "woff2"
+                | "ttf"
+                | "eot"
         )
+    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        // Blobs de modelos, hashes git u objetos sin extensión (>= 32 dígitos hex)
+        name.len() >= 32 && name.chars().all(|c| c.is_ascii_hexdigit())
     } else {
         false
     }

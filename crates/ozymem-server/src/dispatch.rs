@@ -249,7 +249,19 @@ pub async fn handle_request(
                     }
                 }
                 "ozy_exploration" | "exploration" | "record_exploration_step" | "get_exploration_tree" => {
-                    handle_exploration(backend, &tool_call)?
+                    match handle_exploration(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: serde_json::to_string_pretty(&json!({
+                                    "status": "error",
+                                    "error": e.to_string()
+                                })).unwrap_or_else(|_| format!("Error: {e}")),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
                 }
                 _ => {
                     if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {

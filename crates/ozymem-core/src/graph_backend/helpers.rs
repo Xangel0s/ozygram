@@ -214,6 +214,10 @@ pub fn is_noise_dir(path: &Path) -> bool {
                 | ".turbo"
                 | "coverage"
                 | ".output"
+                | ".fastembed_cache"
+                | "cache"
+                | ".onnx"
+                | "models"
         )
     } else {
         false

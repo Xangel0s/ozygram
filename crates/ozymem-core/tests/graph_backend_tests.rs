@@ -2218,3 +2218,74 @@ fn test_exploration_diagnose_trajectory() {
     assert!(diag.pruning_opportunities[0].contains("reward -2.00 no podado"));
     assert!(diag.token_efficiency_percent > 0.0);
 }
+
+#[test]
+fn test_exploration_auto_pruning_on_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Auto pruning task", None).unwrap();
+
+    // Node with hard test failure signal: should auto-prune
+    let failed_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "run_test".to_string(),
+        action_payload: "cargo test".to_string(),
+        observation: "failures: 3 tests failed".to_string(),
+        cost_tokens: Some(150),
+        latency_ms: Some(120),
+        reward_score: Some(1.0), // Intentó auto-asignarse recompensa positiva pero falló el test
+        is_solution: None,
+        is_pruned: None, // No especificado -> auto-poda
+    }).unwrap();
+
+    assert!(failed_node.is_pruned, "El nodo con fallos en test debió ser podado automáticamente");
+    assert!(failed_node.reward_score < 0.0, "La recompensa debió ser penalizada");
+    assert!(failed_node.action_payload.contains("auto_pruned"), "El payload debió registrar auto_pruned");
+}
+
+#[test]
+fn test_exploration_recommended_resume_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Resume task", None).unwrap();
+
+    // Root node
+    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "init".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "ok".to_string(),
+        cost_tokens: Some(50),
+        latency_ms: Some(20),
+        reward_score: Some(0.5),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    // Leaf node: highest value active leaf
+    let leaf = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "explore_promising".to_string(),
+        action_payload: "{}".to_string(),
+        observation: "great progress".to_string(),
+        cost_tokens: Some(60),
+        latency_ms: Some(30),
+        reward_score: Some(2.5),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    let resume_node = backend.get_recommended_resume_node(&traj_id).unwrap();
+    assert!(resume_node.is_some());
+    assert_eq!(resume_node.unwrap().id, leaf.id);
+
+    let diag = backend.diagnose_trajectory(&traj_id).unwrap();
+    assert_eq!(diag.recommended_resume_node_id, Some(leaf.id));
+}

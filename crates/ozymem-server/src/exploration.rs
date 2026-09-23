@@ -248,12 +248,31 @@ pub fn handle_exploration(
         }
 
         "diagnose" => {
-            let trajectory_id = args
-                .get("trajectory_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("Falta 'trajectory_id' para diagnosticar la trayectoria"))?;
+            let trajectory_id = match args.get("trajectory_id").and_then(Value::as_str) {
+                Some(tid) => tid.to_string(),
+                None => {
+                    let recent = backend.list_trajectories(None, 1)?;
+                    match recent.into_iter().next() {
+                        Some(t) => t.id,
+                        None => {
+                            let res = json!({
+                                "status": "ok",
+                                "message": "No hay trayectorias de exploración registradas en este proyecto.",
+                                "diagnosis": null
+                            });
+                            return Ok(ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: serde_json::to_string_pretty(&res)?,
+                                }],
+                                is_error: None,
+                            });
+                        }
+                    }
+                }
+            };
 
-            let diag = backend.diagnose_trajectory(trajectory_id)?;
+            let diag = backend.diagnose_trajectory(&trajectory_id)?;
 
             let res = json!({
                 "status": "ok",
@@ -266,6 +285,52 @@ pub fn handle_exploration(
                     diag.token_efficiency_percent,
                     diag.bottlenecks.len()
                 )
+            });
+
+            Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: serde_json::to_string_pretty(&res)?,
+                }],
+                is_error: None,
+            })
+        }
+
+        "resume" => {
+            let trajectory_id = match args.get("trajectory_id").and_then(Value::as_str) {
+                Some(tid) => tid.to_string(),
+                None => {
+                    let recent = backend.list_trajectories(None, 1)?;
+                    match recent.into_iter().next() {
+                        Some(t) => t.id,
+                        None => {
+                            let res = json!({
+                                "status": "ok",
+                                "message": "No hay trayectorias de exploración registradas para reanudar.",
+                                "resume_node": null
+                            });
+                            return Ok(ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: serde_json::to_string_pretty(&res)?,
+                                }],
+                                is_error: None,
+                            });
+                        }
+                    }
+                }
+            };
+
+            let node = backend.get_recommended_resume_node(&trajectory_id)?;
+            let res = json!({
+                "status": "ok",
+                "trajectory_id": trajectory_id,
+                "resume_node": node,
+                "message": if node.is_some() {
+                    "Nodo de reanudación identificado exitosamente (mayor valor estimado no podado)"
+                } else {
+                    "No hay nodos activos pendientes en la trayectoria (todos podados o marcados como solución)"
+                }
             });
 
             Ok(ToolCallResult {
