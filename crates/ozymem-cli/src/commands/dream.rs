@@ -17,6 +17,9 @@ pub enum DreamSubcommand {
     },
     /// Display current active MCTS exploration policy status and performance metrics
     Status {
+        /// Optional path to project or database
+        #[arg(long)]
+        path: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -72,8 +75,9 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
             Ok(())
         }
 
-        DreamSubcommand::Status { json } => {
-            let backend = GraphBackend::open_for_project(Path::new("."))
+        DreamSubcommand::Status { path, json } => {
+            let target_path = path.as_deref().unwrap_or(".");
+            let backend = GraphBackend::open_for_project(Path::new(target_path))
                 .context("No se pudo abrir base de datos para consultar status de Dream-RSI")?;
             let trajectories = backend.list_trajectories(None, 100).unwrap_or_default();
 
@@ -167,18 +171,45 @@ mod tests {
 
     #[test]
     fn test_dream_subcommand_status() {
-        let cmd = DreamSubcommand::Status { json: true };
-        assert!(run_dream_command(&cmd).is_ok());
+        let temp_root = std::env::temp_dir().join(format!(
+            "ozymem-dream-status-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&temp_root);
+
+        let cmd = DreamSubcommand::Status {
+            path: Some(temp_root.to_string_lossy().to_string()),
+            json: true,
+        };
+        let res = run_dream_command(&cmd);
+        let _ = std::fs::remove_dir_all(&temp_root);
+        assert!(res.is_ok(), "run_dream_command(&cmd) failed: {:?}", res);
     }
 
     #[test]
     fn test_dream_subcommand_diagnose_not_found() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "ozymem-dream-diag-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&temp_root);
+
         let cmd = DreamSubcommand::Diagnose {
             trajectory_id: "non_existent_traj_123".to_string(),
-            path: None,
+            path: Some(temp_root.to_string_lossy().to_string()),
             json: true,
         };
         // Diagnosing empty trajectory returns 0 steps cleanly
-        assert!(run_dream_command(&cmd).is_ok());
+        let res = run_dream_command(&cmd);
+        let _ = std::fs::remove_dir_all(&temp_root);
+        assert!(res.is_ok(), "run_dream_command(&cmd) failed: {:?}", res);
     }
 }
