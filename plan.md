@@ -1,75 +1,75 @@
-# Plan Maestro de Desarrollo: Ozygram Dual-Tier Engine (v0.4.0)
+# Master Development Plan: Ozygram Dual-Tier Engine (v0.4.0)
 
-## 1. Visión y Arquitectura Dual-Tier
+## 1. Dual-Tier Vision & Architecture
 
-Ozygram se estructura en **Dos Carriles Cognitivos** complementarios:
+Ozygram is structured into **Two Complementary Cognitive Lanes**:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
-│  IDE / Agente LLM (Claude, Gemini, Cursor)                  │
+│  IDE / LLM Agent (Claude, Gemini, Cursor)                   │
 └──────────────┬──────────────────────────────▲───────────────┘
-               │ JSON-RPC (<100 ms)           │ Respuesta Inmediata
+               │ JSON-RPC (<100 ms)           │ Immediate Response
 ┌──────────────▼──────────────────────────────┴───────────────┐
-│ CARRIL 1: Fast Lane (Rust Core - Ligero y Concurrente)      │
-│ • Handshake MCP instantáneo (CWD, proyectos, herramientas)  │
-│ • Hot cache en RAM + SQLite WAL transaccional               │
-│ • Filtro sanitario: bloquea archivos >256KB, .venv, etc.    │
-│ • Encolado asíncrono hacia el Worker de Python              │
+│ LANE 1: Fast Lane (Rust Core - Lightweight & Concurrent)    │
+│ • Instant MCP handshake (CWD, projects, tools)              │
+│ • Hot cache in RAM + transactional SQLite WAL               │
+│ • Hygiene filter: blocks files > 256KB, .venv, etc.         │
+│ • Asynchronous queueing to Python Worker                    │
 └──────────────┬──────────────────────────────▲───────────────┘
-               │ IPC / Local Socket           │ Lecciones Consolidadas
+               │ IPC / Local Socket           │ Consolidated Lessons
 ┌──────────────▼──────────────────────────────┴───────────────┐
-│ CARRIL 2: Power Lane (Python Heavy Daemon - Potencia Bruta) │
-│ • ChromaDB: Vectores densos de alta fidelidad               │
-│ • AI Noise Gate: Crítico que destruye logs y datos basura   │
-│ • Cross-Encoder Re-Ranker: Relevancia semántica > 95%       │
+│ LANE 2: Power Lane (Python Heavy Daemon - Raw Power)        │
+│ • ChromaDB: High-fidelity dense vectors                     │
+│ • AI Noise Gate: Critic filtering logs and junk data        │
+│ • Cross-Encoder Re-Ranker: Semantic relevance > 95%         │
 │ • Multi-Agent Supervisor: Pydantic-AI + DuckDB OLAP         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Diagnóstico de Causas Raíz Resueltas
+## 2. Resolved Root Causes & Diagnostics
 
-1. **Corrupción del índice de código (`files`, `functions`, `file_dependencies`):**
-   - Causa: `full_scan()` en `indexing.rs` no invocaba `check_noise_or_huge_file`. Archivos gigantescos (`.bundle.js`, `.sql` de 10MB) y carpetas `.venv`, `scratch/`, `.supabase/` eran leídos e insertados en SQLite, bloqueando transacciones.
-   - Estado: Las memorias sobrevivieron porque residen en tablas aisladas (`observations`, `lessons`).
-2. **Ruido en captura pasiva:**
-   - Causa: `passive_capture` en `lessons.rs` admitía cualquier línea con longitud >= 8 caracteres bajo `## Key Learnings`, absorbiendo volcados crudos de terminal y tablas markdown.
-3. **Latencia en llamadas MCP:**
-   - Causa: Procesos síncronos pesados bloqueaban el canal JSON-RPC en el hilo principal.
-
----
-
-## 3. Hoja de Ruta Detallada por Fases (4 Fases × 4 Tareas)
-
-### Fase 1: Blindaje Sanitario y Resiliencia en Rust Core (Fast Lane)
-- [x] **Task 1.1:** Conectar `check_noise_or_huge_file` dentro de `indexing.rs::full_scan()` y `reload_if_stale()`, descartando archivos > 256 KB.
-- [x] **Task 1.2:** Ampliar `is_noise_dir()` en `helpers.rs` con `.venv`, `venv`, `env`, `.tox`, `scratch`, `.supabase`, `.turbo`, `coverage`, `.output`, `target`.
-- [x] **Task 1.3:** Configurar PRAGMAs de SQLite en `schema.rs`: `PRAGMA busy_timeout = 5000;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA journal_mode = WAL;`.
-- [x] **Task 1.4:** Sanitizar `passive_capture()` en `lessons.rs` para rechazar volcados de terminal, tablas markdown y salidas de compilación crudas.
-
-### Fase 2: Power Engine en Python (ChromaDB + Vector Store + Re-ranking)
-- [x] **Task 2.1:** Configurar cliente persistente de **ChromaDB** en `python/ozy-brain` (almacenamiento en `.ozymem/chroma`).
-- [x] **Task 2.2:** Implementar pipeline de embeddings densos de alta dimensionalidad (`sentence-transformers` con aceleración por hardware CUDA/DirectML).
-- [x] **Task 2.3:** Integrar el modelo **Neural Cross-Encoder Re-ranker** (`bge-reranker`) para filtrar falsos positivos antes de entregar respuestas al LLM.
-- [x] **Task 2.4:** Crear acción unificada `deep_semantic_search` que combine FTS5 léxico de SQLite con búsqueda vectorial densa y re-ranking.
-
-### Fase 3: AI Noise Gate y Crítico Antiruido (Blindaje de Datos)
-- [x] **Task 3.1:** Implementar el **AI Noise Gate** en `python/ozy-brain/agents/memory_agent.py` para clasificar y evaluar la calidad semántica de cada memoria antes de indexar.
-- [x] **Task 3.2:** Desviar volcados crudos de terminal, trazas de stack trace y logs a `analytics.duckdb` como telemetría, impidiendo la contaminación del índice vectorial.
-- [x] **Task 3.3:** Crear rutina de **Clustering y Consolidación de Memorias** para sintetizar múltiples observaciones en 1 regla canónica maestra.
-- [x] **Task 3.4:** Implementar factor de decaimiento temporal (*Memory Decay*) para rebajar la relevancia de lecciones obsoletas con más de 90 días sin confirmación.
-
-### Fase 4: Orquestación Multi-Agente y Validación E2E
-- [x] **Task 4.1:** Conectar el `SupervisorAgent` en `brain.py` para coordinar el `RiskCritic`, el `MemoryConsolidationAgent` y el motor `DataEngine` (DuckDB + Polars).
-- [x] **Task 4.2:** Formatear salidas para el agente LLM con resúmenes ejecutivos "Token-Budget Aware" (< 1 KB) para no saturar la ventana de contexto.
-- [x] **Task 4.3:** Incorporar soporte para manifiesto `.ozy.toml` en repositorios para configuración instantánea sin fricción.
-- [x] **Task 4.4:** Ejecutar suites de pruebas cruzadas (`cargo test --all`, `python -m unittest discover`) y validar latencias (< 100 ms en Fast Lane y < 2.5 s en Power Lane).
+1. **Code Index Corruption (`files`, `functions`, `file_dependencies`):**
+   - Cause: `full_scan()` in `indexing.rs` did not invoke `check_noise_or_huge_file`. Giant files (`.bundle.js`, 10MB `.sql`) and folders like `.venv`, `scratch/`, `.supabase/` were ingested into SQLite, blocking transactions.
+   - Status: Memories survived because they reside in isolated tables (`observations`, `lessons`).
+2. **Noise in Passive Capture:**
+   - Cause: `passive_capture` in `lessons.rs` accepted any line with length >= 8 characters under `## Key Learnings`, absorbing raw terminal dumps and markdown tables.
+3. **Latency in MCP Calls:**
+   - Cause: Heavy synchronous processes blocked the JSON-RPC channel on the main thread.
 
 ---
 
-## 4. Métricas de Éxito
-1. **Latencia Fast Lane:** Respuestas a `mem_current_project` y `mem_context` en menos de 100 ms.
-2. **Cero Polución:** 0 archivos mayores a 256 KB o de carpetas virtuales (`.venv`, `scratch`) ingeridos en `memory.db`.
-3. **Relevancia Semántica:** Precisión de Re-ranking > 90% en pruebas de búsqueda con preguntas ambiguas.
-4. **Integridad de Base de Datos:** 100% de transacciones atómicas libres de bloqueos `database is locked`.
+## 3. Detailed Phase Roadmap (4 Phases × 4 Tasks)
+
+### Phase 1: Hygiene Guardrails and Resilience in Rust Core (Fast Lane)
+- [x] **Task 1.1:** Connect `check_noise_or_huge_file` inside `indexing.rs::full_scan()` and `reload_if_stale()`, discarding files > 256 KB.
+- [x] **Task 1.2:** Expand `is_noise_dir()` in `helpers.rs` with `.venv`, `venv`, `env`, `.tox`, `scratch`, `.supabase`, `.turbo`, `coverage`, `.output`, `target`.
+- [x] **Task 1.3:** Configure SQLite PRAGMAs in `schema.rs`: `PRAGMA busy_timeout = 5000;`, `PRAGMA synchronous = NORMAL;`, `PRAGMA journal_mode = WAL;`.
+- [x] **Task 1.4:** Sanitize `passive_capture()` in `lessons.rs` to reject terminal dumps, markdown tables, and raw build outputs.
+
+### Phase 2: Power Engine in Python (ChromaDB + Vector Store + Re-ranking)
+- [x] **Task 2.1:** Configure persistent **ChromaDB** client in `python/ozy-brain` (storage in `.ozymem/chroma`).
+- [x] **Task 2.2:** Implement dense high-dimensional embedding pipeline (`FastEmbed` / `sentence-transformers` with hardware acceleration).
+- [x] **Task 2.3:** Integrate **Neural Cross-Encoder Re-ranker** (`bge-reranker`) model to filter false positives before returning responses to the LLM.
+- [x] **Task 2.4:** Create unified `deep_semantic_search` action combining lexical FTS5 BM25 with dense vector search and re-ranking.
+
+### Phase 3: AI Noise Gate & Anti-Noise Critic (Data Shield)
+- [x] **Task 3.1:** Implement **AI Noise Gate** in `python/ozy-brain/agents/memory_agent.py` to classify and evaluate semantic quality of each memory prior to indexing.
+- [x] **Task 3.2:** Route raw terminal dumps, stack traces, and logs to `analytics.duckdb` as telemetry, preventing vector index pollution.
+- [x] **Task 3.3:** Create **Memory Clustering & Consolidation** routine to synthesize multiple observations into 1 canonical master rule.
+- [x] **Task 3.4:** Implement temporal decay factor (*Memory Decay*) to discount relevance of stale lessons unconfirmed for over 90 days.
+
+### Phase 4: Multi-Agent Orchestration & E2E Validation
+- [x] **Task 4.1:** Wire `SupervisorAgent` in `brain.py` to coordinate `RiskCritic`, `MemoryConsolidationAgent`, and `DataEngine` (DuckDB + Polars).
+- [x] **Task 4.2:** Format outputs for the LLM agent with "Token-Budget Aware" executive summaries (< 1 KB) to prevent context window saturation.
+- [x] **Task 4.3:** Incorporate support for `.ozy.toml` manifest in repositories for frictionless zero-config discovery.
+- [x] **Task 4.4:** Run cross-language test suites (`cargo test --workspace --tests`, `python -m unittest discover`) and validate latencies (< 100 ms in Fast Lane and < 2.5 s in Power Lane).
+
+---
+
+## 4. Success Metrics
+1. **Fast Lane Latency:** Responses to `mem_current_project` and `mem_context` in under 100 ms.
+2. **Zero Pollution:** 0 files larger than 256 KB or from virtual folders (`.venv`, `scratch`) ingested into `memory.db`.
+3. **Semantic Relevance:** Re-ranking precision > 90% in retrieval tests with ambiguous queries.
+4. **Database Integrity:** 100% of atomic transactions free from `database is locked` contention errors.

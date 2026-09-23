@@ -1,64 +1,65 @@
-# Documentación Oficial de Ozygram
+# Ozygram Official Documentation
 
-Bienvenido a la documentación oficial y completa de **Ozygram** (Dual-Tier Engine v1.1.0), el sistema operativo cognitivo, memoria contextual persistente y grafo de código para agentes y asistentes de desarrollo asistidos por IA.
+Welcome to the official, modular documentation for **Ozygram** (Dual-Tier Engine v1.1.0), the persistent cognitive memory operating system and code graph engine for AI coding agents and development assistants.
 
 ---
 
-## 📚 Índice Modular de Secciones
+## 📚 Documentation Index
 
-### 1. [Arquitectura Dual-Tier (`docs/architecture.md`)](architecture.md)
-- Desacoplamiento en dos carriles: **Carril Rápido (Rust)** y **Carril de Potencia (Python)**.
-- Desglose de crates en el monorepo (`crates/`, `python/`).
-- Autoridad transaccional única con SQLite local.
-- Patrón Transaccional Outbox (`memory_outbox`) con triggers nativos y sincronización asíncrona.
-- Resiliencia: Auto-spawn de demonios en segundo plano y Circuit Breaker de fallback determinista.
+### 1. [Dual-Tier Architecture (`docs/architecture.md`)](architecture.md)
+- Two-lane decoupling: **Fast Lane (Rust)** and **Power Lane (Python)**.
+- Monorepo crate breakdown (`crates/`, `python/`).
+- Single source of transactional truth with local SQLite ACID storage.
+- Transactional Outbox Pattern (`memory_outbox`) with native SQLite triggers and asynchronous draining.
+- Resilience: Background daemon auto-spawning and deterministic Circuit Breaker fallback.
 
-### 2. [Búsqueda Semántica Híbrida y Fusión RRF (`docs/semantic-search.md`)](semantic-search.md)
-- Fusión de búsqueda léxica dispersa (SQLite FTS5 / BM25) y búsqueda semántica densa.
-- Motor local `FastEmbed` con ONNX Runtime en C++ (`BAAI/bge-m3` / `bge-base-en-v1.5`).
-- Almacenamiento vectorial en colecciones locales de ChromaDB.
-- Algoritmo matemático **Reciprocal Rank Fusion (RRF)**: fórmula, ranking y ventajas.
+### 2. [Hybrid Semantic Search & RRF Fusion (`docs/semantic-search.md`)](semantic-search.md)
+- Fusing sparse lexical search (SQLite FTS5 / BM25) and dense semantic search.
+- Local `FastEmbed` engine with C++ ONNX Runtime (`BAAI/bge-m3` / `bge-base-en-v1.5`).
+- Local vector storage with ChromaDB collections.
+- Mathematical **Reciprocal Rank Fusion (RRF)**: formula, ranking weights, and benefits.
 
-### 3. [Supervisión Cognitiva y Validación Determinista (`docs/supervision-and-validation.md`)](supervision-and-validation.md)
-- Roles de `SupervisorAgent` y el crítico adversarial `RiskCriticAgent`.
-- Validación determinista sin LLM ($0 costo, <5 ms):
-  - Telemetría de Git Churn y detección de Hotspots con `DuckDB` + `Polars`.
-  - Guardia de seguridad anti-destrucción DDL/DML (`DROP TABLE`, `DELETE FROM`, etc.).
-  - Control de radio de explosión (*Blast Radius* > 8 archivos).
-  - Poda matemática de memoria por decaimiento temporal exponencial ($S = C \cdot e^{-\lambda \Delta t}$).
-- Supervisión semántica opcional con modelos gratuitos: Google AI Studio (`Gemini 2.0 Flash`), Ollama local (`qwen2.5-coder`), y OpenRouter.
-- Presupuesto estricto de tokens (*Zero Token Bloat*).
+### 3. [Cognitive Supervision & Deterministic Validation (`docs/supervision-and-validation.md`)](supervision-and-validation.md)
+- Co-pilot roles: `SupervisorAgent` and the adversarial critic `RiskCriticAgent`.
+- Deterministic zero-LLM validation ($0 API cost, <5 ms):
+  - Git Churn telemetry and Hotspot detection with `DuckDB` + `Polars`.
+  - Destructive DDL/DML security guards (`DROP TABLE`, `DELETE FROM`, etc.).
+  - Blast Radius containment (>8 files threshold).
+  - Mathematical memory pruning via exponential time decay ($S = C \cdot e^{-\lambda \Delta t}$).
+- Optional semantic supervision with free tiers: Google AI Studio (`Gemini 2.0 Flash`), local Ollama (`qwen2.5-coder`), and OpenRouter.
+- Strict token budgeting (*Zero Token Bloat*).
 
-### 4. [Herramientas de Alto Rendimiento ("The Dream Team") (`docs/dream-team-tools.md`)](dream-team-tools.md)
-- Integración de `tgrep` (Microsoft): Búsqueda trigram de expresiones regulares en milisegundos.
-- Integración de `rtk` (Rust Token Killer): Compresión agresiva de payloads, limpieza ANSI y ahorro de tokens.
-- Integración de `fastembed`: Inferencia vectorial local sin consumo de cuotas de API.
+### 4. [High-Performance Tooling ("The Dream Team") (`docs/dream-team-tools.md`)](dream-team-tools.md)
+- `tgrep` integration (Microsoft): Sub-millisecond trigram regex search across large monorepos.
+- `rtk` integration (Rust Token Killer): Payload compression, ANSI stripping, and token budget preservation.
+- `fastembed` integration: Local dense vector inference with zero API quota consumption.
 
-### 5. [Integración y Referencia MCP (`docs/mcp-integration.md`)](mcp-integration.md)
-- Guía de configuración para Antigravity IDE, Claude Desktop, Cursor y VS Code.
-- Catálogo completo de herramientas MCP: memoria, grafo, cerebro cognitivo, diagnósticos y salud de código.
-- Recursos MCP (`ozymem://summary`, `recent-lessons`, etc.) y suscripciones dinámicas.
+### 5. [MCP Integration & Tool Reference (`docs/mcp-integration.md`)](mcp-integration.md)
+- Setup guide for Antigravity IDE, Claude Desktop, Cursor, and VS Code.
+- Complete catalog of MCP tools: memory, code graph, cognitive brain, diagnostics, and code health.
+- MCP Resources (`ozymem://summary`, `recent-lessons`, etc.) and dynamic resource subscriptions.
 
-### 6. [Sistema Engram y Prefill Especulativo (`docs/engram_system.md`)](engram_system.md)
-- Tabla determinista de firmas y contratos $O(1)$ con `rkyv` y `memmap2`.
-- Prefill predictivo para maximizar la tasa de acierto de prompt cache (>90%).
-- Sandbox de validación previa test-time (`ozy_verify_diff`).
-- Sincronización descentralizada P2P con Git Notes (`refs/notes/ozymem`).
+### 6. [Engram System & Speculative Prefill (`docs/engram_system.md`)](engram_system.md)
+- Deterministic $O(1)$ symbol contract table using `rkyv` and `memmap2` (~15 ns lookups).
+- Predictive prefill to maximize LLM prompt cache hit rates (>90%).
+- Test-time sandboxed diff verification (`ozy_verify_diff`).
+- Decentralized P2P synchronization with Git Notes (`refs/notes/ozymem`).
 
 ### 7. [Dream-RSI & Monte Carlo Tree Search v1.1.0 (`docs/dream-rsi.md`)](dream-rsi.md)
-- Motor MCTS de exploración y auto-mejora continua (*Recursive Self-Improvement*).
-- Auto-parenting inteligente en Rust: encadenamiento automático de hojas sin propagación manual de hashes.
-- Inserción atómica en lote por hitos técnicos (`record_batch`).
-- Auditoría objetiva de recompensas (anti-alucinación de éxitos) y clampeo determinista.
-- Diagnóstico de cuellos de botella de trayectoria (`diagnose` y `ozymem dream diagnose`).
-- Replay contrafactual offline ("sueño") a costo $0 de tokens LLM.
+- Continuous Recursive Self-Improvement (MCTS) exploration engine.
+- Smart auto-parenting in Rust Core: automatic leaf chaining without manual node hash propagation.
+- Atomic milestone batch recording (`record_batch`).
+- Objective reward auditing (anti-hallucination) and automatic failure-guided self-pruning.
+- Deadlock-free trajectory bottleneck diagnostics (`diagnose` and `ozymem dream diagnose`).
+- Automatic trajectory resumption (`resume`) for seamless continuation after context compactions.
+- Offline counterfactual replay simulation ("dreaming") at $0 LLM token cost.
 
-### 8. [Historial de Versiones y Novedades (`docs/changelog.md`)](changelog.md)
-- Registro cronológico detallado de cambios y mejoras desde la v0.2.0 hasta la v1.1.0.
+### 8. [Changelog & Release Notes (`docs/changelog.md`)](changelog.md)
+- Comprehensive chronological log of all architectural milestones and enhancements from v0.2.0 to v1.1.0.
 
 ---
 
-## ⚡ Guía Rápida de Instalación
+## ⚡ Quick Start Installation
 
 ### Windows (PowerShell)
 ```powershell
@@ -71,11 +72,11 @@ chmod +x ./install.sh
 ./install.sh
 ```
 
-### Configuración MCP Básica
+### Basic MCP Configuration
 ```json
 {
   "mcpServers": {
-    "ozygram": {
+    "ozymem": {
       "command": "ozymem-server",
       "args": []
     }

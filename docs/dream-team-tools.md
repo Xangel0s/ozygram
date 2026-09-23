@@ -1,71 +1,71 @@
-# Herramientas de Alto Rendimiento ("The Dream Team")
+# High-Performance Tooling ("The Dream Team")
 
-Ozygram se integra con un conjunto selecto de herramientas de alto rendimiento escritas en Rust para formar el **"Dream Team"** de asistencia a agentes: velocidad instantánea, mínimo consumo de memoria y ahorro agresivo de tokens.
+Ozygram integrates with a curated set of high-performance tools written in Rust to form the **"Dream Team"** for AI agent assistance: instant response velocity, minimal memory footprint, and aggressive token economy.
 
 ---
 
-## 1. Composición del Dream Team
+## 1. Dream Team Composition
 
 ```text
  ┌──────────────────┬────────────────────────────────────────────────────────┐
- │ Herramienta      │ Rol Estratégico en Ozygram                             │
+ │ Tool             │ Strategic Role in Ozygram                              │
  ├──────────────────┼────────────────────────────────────────────────────────┤
- │ tgrep            │ Búsqueda instantánea de expresiones regulares con     │
- │ (Microsoft)      │ índices trigram indexados para bases de código masivas.│
+ │ tgrep            │ Instant regular expression search using trigram        │
+ │ (Microsoft)      │ inverted indexes for massive codebases.                │
  ├──────────────────┼────────────────────────────────────────────────────────┤
- │ rtk              │ Rust Token Killer: Compresión agresiva de payloads,   │
- │ (rtk-ai)         │ eliminación de caracteres ANSI y minimización de JSON. │
+ │ rtk              │ Rust Token Killer: Aggressive payload compression,     │
+ │ (rtk-ai)         │ ANSI escape stripping, and structural JSON reduction.  │
  ├──────────────────┼────────────────────────────────────────────────────────┤
- │ fastembed        │ Embeddings densos locales con ONNX Runtime en C++     │
- │                  │ (cero dependencia de PyTorch y cero costo de API).     │
+ │ fastembed        │ Local dense embeddings with C++ ONNX Runtime           │
+ │                  │ (zero PyTorch dependencies and zero API costs).        │
  └──────────────────┴────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. `tgrep` — Búsqueda Trigram de Expresiones Regulares
+## 2. `tgrep` — Trigram Inverted Index Regex Search
 
-Desarrollado por Microsoft, `tgrep` acelera las búsquedas complejas mediante índices trigram invertidos:
+Developed by Microsoft, `tgrep` accelerates complex pattern matching using inverted trigram indexes:
 
-### ¿Por qué es superior para Ozygram?
-- **Indexación Trigram**: Mientras que herramientas tradicionales como `grep` escanean cada línea secuencialmente, `tgrep` descarta el 95% de los archivos irrelevantes antes de evaluar la expresión regular.
-- **Rendimiento en Proyectos Gigantes**: Ideal para monorepos con cientos de miles de líneas donde el agente necesita localizar firmas o patrones de llamada en milisegundos.
+### Why It Excels for Ozygram
+- **Trigram Indexing**: While traditional linear scanners (like `grep`) inspect every line sequentially, `tgrep` filters out 95% of irrelevant files before evaluating the regular expression.
+- **Large Codebase Performance**: Ideal for monorepos with hundreds of thousands of lines where the AI agent needs to locate signatures or call sites within milliseconds.
 
-### Uso en Terminal
+### CLI Usage
 ```powershell
-# Búsqueda por patrón de expresión regular
+# Search using regex pattern
 tgrep "fn [a-z_]+\(ctx: &Context\)"
 
-# Búsqueda insensible a mayúsculas
+# Case-insensitive symbol search
 tgrep -i "class SupervisorAgent"
 ```
 
 ---
 
-## 3. `rtk` (Rust Token Killer) — Compresión de Tokens para LLMs
+## 3. `rtk` (Rust Token Killer) — LLM Token Optimization
 
-Desarrollado por `rtk-ai`, `rtk` es una herramienta especializada en reducir el volumen de tokens que se inyectan en las ventanas de contexto de los modelos:
+Developed by `rtk-ai`, `rtk` specializes in trimming token bloat injected into LLM context windows:
 
-### Capacidades Clave
-1. **Sanitización de Secuencias de Escape**: Elimina códigos de color ANSI, caracteres de control de terminal y secuencias de escape que inflan el conteo de tokens sin aportar valor semántico.
-2. **Minificación Inteligente de Estructuras**: Compacta respuestas JSON, logs y salidas de terminal manteniendo intacta la información semántica.
-3. **Ahorro de Ventana de Contexto**: Reduce entre un 20% y un 45% el uso de tokens en prompts y transcripciones de herramientas.
+### Core Capabilities
+1. **Escape Sequence Stripping**: Removes terminal ANSI colors, carriage returns, and control characters that consume tokens without providing semantic value.
+2. **Structural Minification**: Compacts JSON responses, execution logs, and terminal outputs while preserving all syntactic and semantic data.
+3. **Context Window Conservation**: Achieves 20% to 45% token reduction across tool result transcripts and environment prompt payloads.
 
-### Uso en Terminal
+### CLI Usage
 ```powershell
-# Filtrar y comprimir la salida de un comando largo
+# Filter and compress long command outputs
 cargo test | rtk
 
-# Limpiar un log ruidoso antes de enviarlo a un LLM
+# Clean noisy build logs before sending to an LLM
 Get-Content build.log | rtk
 ```
 
 ---
 
-## 4. Sinergia con Ozygram
+## 4. Architectural Synergy with Ozygram
 
-Cuando un agente LLM trabaja con Ozygram:
-1. **`ozymem-server`** suministra el contexto estructurado de la memoria y el grafo de dependencias en <5 ms.
-2. **`tgrep`** permite al agente rastrear patrones transversales en el código a velocidad trigram sin saturar el sistema de archivos.
-3. **`rtk`** limpia y compacta cualquier salida densa de terminal o linter antes de que llegue a la ventana de contexto del LLM.
-4. **`fastembed`** garantiza que las búsquedas semánticas y vectoriales se resuelvan de forma local sin consumir tokens ni generar gastos de API.
+When an AI agent operates alongside Ozygram:
+1. **`ozymem-server`** provides structured memory and dependency graph context in < 5 ms.
+2. **`tgrep`** allows the agent to trace cross-cutting patterns at trigram speed without filesystem thrashing.
+3. **`rtk`** sanitizes and compresses verbose compiler and linter outputs before they enter the LLM context window.
+4. **`fastembed`** resolves semantic and vector search requests locally without consuming API credits or risking network latency.

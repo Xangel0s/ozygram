@@ -1,19 +1,19 @@
-# Integración y Referencia MCP (Model Context Protocol)
+# MCP (Model Context Protocol) Reference & Integration
 
-Ozygram expone todas sus capacidades como un servidor estándar **Model Context Protocol (MCP)** sobre `stdio`, haciéndolo compatible de forma nativa con **Antigravity IDE**, **Claude Desktop**, **Cursor**, **Windsurf** y extensiones MCP de **VS Code**.
+Ozygram exposes its complete feature set as a standard **Model Context Protocol (MCP)** server over `stdio`, providing native out-of-the-box compatibility with **Antigravity IDE**, **Claude Desktop**, **Cursor**, **Windsurf**, and MCP extensions for **VS Code**.
 
 ---
 
-## 1. Configuración del Servidor MCP
+## 1. MCP Server Configuration
 
-Agrega la siguiente entrada en tu archivo de configuración de cliente MCP (`claude_desktop_config.json`, `.gemini/antigravity-ide/mcp_config.json`, etc.):
+Add the following entry to your MCP client configuration file (`claude_desktop_config.json`, `.gemini/antigravity-ide/mcp_config.json`, etc.):
 
 ### Windows
 ```json
 {
   "mcpServers": {
-    "ozygram": {
-      "command": "C:\\Users\\TU_USUARIO\\.ozymem\\bin\\ozymem-server.exe",
+    "ozymem": {
+      "command": "C:\\Users\\YOUR_USER\\.ozymem\\bin\\ozymem-server.exe",
       "args": []
     }
   }
@@ -24,8 +24,8 @@ Agrega la siguiente entrada en tu archivo de configuración de cliente MCP (`cla
 ```json
 {
   "mcpServers": {
-    "ozygram": {
-      "command": "/home/TU_USUARIO/.ozymem/bin/ozymem-server",
+    "ozymem": {
+      "command": "/home/YOUR_USER/.ozymem/bin/ozymem-server",
       "args": []
     }
   }
@@ -34,62 +34,63 @@ Agrega la siguiente entrada en tu archivo de configuración de cliente MCP (`cla
 
 ---
 
-## 2. Herramientas MCP Destacadas
+## 2. Featured MCP Tools
 
-### A. Memoria Contextual Persistente
-| Herramienta | Parámetros Clave | Descripción |
+### A. Persistent Contextual Memory
+| Tool | Key Parameters | Description |
 | :--- | :--- | :--- |
-| `lookup_engram` / `ozy_lookup_engram` | `symbol`, `file` | Búsqueda determinista $O(1)$ de firmas y contratos en memoria mapeada (`rkyv` + `memmap2`). |
-| `ozy_memory` | `action`, `kind`, `topic_key`, `query` | Herramienta unificada de memoria: lecciones, decisiones, convenciones, gotchas, sesiones, timelines y passive capture. |
-| `record_lesson` / `record_decision` | `title`, `lesson` / `decision` | Endpoints directos para registrar lecciones y decisiones de diseño. |
-| `record_gotcha` / `record_convention` | `gotcha`, `workaround` / `rule` | Registra comportamientos no obvios y convenciones de código. |
-| `deep_semantic_search` / `ozy_deep_search` | `query`, `limit`, `project` | Búsqueda híbrida con RRF combinando FTS5 léxico y embeddings densos locales FastEmbed ONNX. |
+| `lookup_engram` / `ozy_lookup_engram` | `symbol`, `file` | Deterministic $O(1)$ lookup of function signatures and contracts via memory-mapped tables (`rkyv` + `memmap2`). |
+| `ozy_memory` | `action`, `kind`, `topic_key`, `query` | Unified memory manager: lessons, decisions, conventions, gotchas, sessions, timelines, and passive observation capture. |
+| `record_lesson` / `record_decision` | `title`, `lesson` / `decision` | Direct endpoints for registering key lessons learned and architectural design decisions. |
+| `record_gotcha` / `record_convention` | `gotcha`, `workaround` / `rule` | Records non-obvious runtime behaviors and team code conventions. |
+| `deep_semantic_search` / `ozy_deep_search` | `query`, `limit`, `project` | Hybrid search with RRF combining FTS5 BM25 lexical retrieval and local FastEmbed ONNX dense embeddings. |
 
-### B. Grafo de Código y Navegación AST
-| Herramienta | Parámetros Clave | Descripción |
+### B. Code Graph & AST Navigation
+| Tool | Key Parameters | Description |
 | :--- | :--- | :--- |
-| `ozy_context` / `file_context` | `action`, `file_path`, `task` | Prefill predictivo, contratos de funciones adyacentes, reglas de archivo y dependientes. |
-| `ozy_graph` | `action`, `file_path`, `depth` | Navegación unificada de arquitectura: `summary`, `neighbors`, `impact`, `path` y reporte estructural. |
-| `analyze_impact` | `target_file` | Mapea archivos dependientes directos e indirectos calculando el radio de dispersión. |
-| `graph_neighbors` | `file_path`, `direction` | Obtiene vecinos inmediatos (`incoming`, `outgoing`, `both`) en el grafo AST. |
+| `ozy_context` / `file_context` | `action`, `file_path`, `task` | Predictive prefill, adjacent function contracts, file-level rules, and dependent symbols. |
+| `ozy_graph` | `action`, `file_path`, `depth` | Unified architectural navigation: `summary`, `neighbors`, `impact`, `path`, and structural dependency reports. |
+| `analyze_impact` | `target_file` | Maps direct and transitive dependent files, calculating architectural blast radius. |
+| `graph_neighbors` | `file_path`, `direction` | Retrieves immediate incoming, outgoing, or bidirectional AST neighbors. |
 
-### C. Árbol de Exploración y Auto-Mejora (`ozy_exploration` / Dream-RSI v1.1.0)
-| Acción | Parámetros Clave | Descripción |
+### C. Exploration Tree & Self-Improvement (`ozy_exploration` / Dream-RSI v1.1.0)
+| Action | Key Parameters | Description |
 | :--- | :--- | :--- |
-| `start` | `trajectory_id`, `task_description` | Inicia una nueva trayectoria de exploración MCTS persistida en SQLite. |
-| `record_step` | `trajectory_id`, `action_type`, `observation`, `reward_score` | Registra un nodo con auto-parenting automático al último nodo activo en Rust core. |
-| `record_batch` | `trajectory_id`, `steps` | Inserción atómica en lote de múltiples hitos técnicos para eliminar turn tax. |
-| `complete` | `trajectory_id`, `status` | Marca la trayectoria como `completed`, `failed` o `abandoned`. |
-| `diagnose` | `trajectory_id` | Audita cuellos de botella: nodos de alta latencia, consumo excesivo de tokens y ramas muertas. |
-| `get_tree` | `trajectory_id` | Devuelve la topología jerárquica del árbol con cálculo de scores UCB1/UCT. |
+| `start` | `trajectory_id`, `task_description` | Initializes a new MCTS exploration trajectory persisted in SQLite. |
+| `record_step` | `trajectory_id`, `action_type`, `observation`, `reward_score` | Records an exploration node with automatic parenting to the active trajectory leaf. |
+| `record_batch` | `trajectory_id`, `steps` | Atomic bulk insertion of multiple technical milestones to eliminate agent turn tax. |
+| `resume` | `trajectory_id` | Identifies the optimal unpruned leaf node to resume an interrupted exploration trajectory. |
+| `complete` | `trajectory_id`, `status` | Marks the trajectory status as `completed`, `failed`, or `abandoned`. |
+| `diagnose` | `trajectory_id` | Audits trajectory bottlenecks: high-latency nodes, excessive token usage, dead branches, and auto-pruning. |
+| `get_tree` | `trajectory_id` | Returns the hierarchical tree topology with UCB1/UCT value scoring. |
 
-### D. Cerebro Cognitivo y Supervisión (`ozy_brain`)
-| Acción | Parámetros Clave | Descripción |
+### D. Cognitive Engine & Supervision (`ozy_brain`)
+| Action | Key Parameters | Description |
 | :--- | :--- | :--- |
-| `plan` | `goal`, `context` | Genera un plan estructurado en 5 fases con checklist de parada determinista. |
-| `audit_changes_with_critic` | `diff`, `files`, `plan_steps` | Auditoría adversaria con detección de hotspots y guardias DDL/DML destructivas. |
-| `get_repository_hotspots` | `limit` | Identifica archivos con mayor churn, commits de fix y riesgo de regresión con DuckDB. |
-| `consolidate_memory` | `threshold` | Sintetiza tópicos y depura memorias mediante decaimiento temporal exponencial. |
-| `build_mental_model` | `scope` | Proporciona un mapa mental del proyecto ("por dónde empezar a leer"). |
+| `plan` | `goal`, `context` | Generates a structured 5-phase plan with a deterministic completion checklist. |
+| `audit_changes_with_critic` | `diff`, `files`, `plan_steps` | Adversarial code audit with hotspot correlation and destructive DDL/DML guards. |
+| `get_repository_hotspots` | `limit` | Identifies repository files with the highest churn, bug-fix commits, and regression risk using DuckDB. |
+| `consolidate_memory` | `threshold` | Consolidates related topics and prunes stale memories via exponential time decay. |
+| `build_mental_model` | `scope` | Produces an architectural mental map ("where to start reading the codebase"). |
 
-### E. Diagnósticos y Salud del Código
-| Herramienta | Parámetros Clave | Descripción |
+### E. Diagnostics & Code Health
+| Tool | Key Parameters | Description |
 | :--- | :--- | :--- |
-| `ozy_verify_diff` | `file_path`, `diff` | Sandbox de validación previa test-time: chequea sintaxis AST antes de persistir cambios. |
-| `ozy_doctor` | `format`, `include_projects` | Diagnóstico integral: integridad de SQLite, modelos de embedding, watchers y registro. |
-| `ozy_code_doctor` | `mode`, `scope`, `min_duplicate_lines` | Detección de duplicados, candidatos a refactor vs boilerplate estructural. |
-| `ozy_skills` | `action`, `query`, `category` | Integración oficial con skills.sh para búsqueda y aplicación de guías contextuales. |
-| `ozy_export_memory_notes` | `notes_ref` | Exporta lecciones y decisiones a Git Notes (`refs/notes/ozymem`) para sincronización P2P. |
-| `ozy_import_memory_notes` | `notes_ref` | Importa y fusiona memorias desde Git Notes sin colisiones. |
+| `ozy_verify_diff` | `file_path`, `diff` | Test-time sandboxed validation: verifies AST syntactic integrity prior to saving modifications. |
+| `ozy_doctor` | `format`, `include_projects` | Comprehensive operational diagnostics: SQLite integrity, embedding models, watchers, and registries. |
+| `ozy_code_doctor` | `mode`, `scope`, `min_duplicate_lines` | Detects duplicated blocks, refactoring candidates, and structural boilerplate. |
+| `ozy_skills` | `action`, `query`, `category` | Official integration with skills.sh for searching and applying contextual guides. |
+| `ozy_export_memory_notes` | `notes_ref` | Exports lessons and decisions to Git Notes (`refs/notes/ozymem`) for decentralized P2P synchronization. |
+| `ozy_import_memory_notes` | `notes_ref` | Imports and merges memories from Git Notes without database conflicts. |
 
 ---
 
-## 3. Recursos MCP (`resources/list` y `resources/read`)
+## 3. MCP Resources (`resources/list` & `resources/read`)
 
-Ozygram expone URIs de recursos accesibles por los agentes:
-- `ozymem://summary`: Estado global del proyecto, conteo de lecciones, nodos y archivos.
-- `ozymem://recent-lessons`: Las últimas lecciones y decisiones registradas.
-- `ozymem://file/{path}`: Contexto integral y reglas específicas asociadas a un archivo.
-- `ozymem://file/{path}/neighbors`: Vecinos de grafo y dependencias del archivo.
+Ozygram exposes URI-addressable resources for AI agents:
+- `ozymem://summary`: Global repository overview, counts of lessons, nodes, and tracked files.
+- `ozymem://recent-lessons`: Latest lessons and decisions logged in the current project.
+- `ozymem://file/{path}`: Complete context and domain rules associated with a specific file.
+- `ozymem://file/{path}/neighbors`: Dependency graph relationships for a specified source file.
 
-Los clientes MCP pueden suscribirse a estos recursos (`resources/subscribe`) para recibir notificaciones automáticas cuando se registren nuevas lecciones o cambie el grafo del proyecto.
+MCP clients can subscribe to these resources (`resources/subscribe`) to receive automatic notifications when new lessons are captured or when project graph structures are refreshed.

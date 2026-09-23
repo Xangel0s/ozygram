@@ -1,76 +1,78 @@
 # Ozymem / Ozygram Developer Agent Guidelines
 
-## Arquitectura Dual-Tier (v0.4.0)
-- `crates/ozymem-core`: Almacenamiento persistente (SQLite), triggers de `memory_outbox`, indexación multi-lenguaje (tree-sitter), búsqueda semántica (fastembed), análisis de grafo (petgraph).  
-  `GraphBackend` (memoria por proyecto en `{proj}/.ozymem/memory.db`) y `ProjectRegistry` (global en `~/.ozymem/registry.db`).
-- `crates/ozymem-parser`: Parsers de código fuente estructurado (Python, Go, Rust, JS/TS, SQL) con tree-sitter nativo y heurística de texto.
-- `crates/ozymem-cli`: Herramienta de línea de comandos con subcomandos `scan`, `lessons`, `dashboard`, `register`, `list`, `ignore`, etc.
-- `crates/ozymem-server`: Servidor MCP sobre stdio con 30+ tools, resources, prompts, resource subscriptions y notificaciones push.
-- `python/ozy-brain`: Motor cognitivo auxiliar asíncrono en Python con `SupervisorAgent`, `RiskCriticAgent`, `DataEngine` (DuckDB + Polars), `OutboxConsumer` (ChromaDB + FastEmbed ONNX) y `MemoryConsolidationAgent`.
+## Dual-Tier Architecture (v0.4.0 & v1.1.0)
+- `crates/ozymem-core`: Persistent ACID storage (SQLite), `memory_outbox` triggers, multi-language AST indexing (tree-sitter), hybrid semantic search (fastembed), graph analysis (petgraph).  
+  `GraphBackend` (per-project memory at `{proj}/.ozymem/memory.db`) and `ProjectRegistry` (global registry at `~/.ozymem/registry.db`).
+- `crates/ozymem-parser`: Native source code AST parsers (Python, Go, Rust, JS/TS, SQL) using Tree-Sitter and text heuristics.
+- `crates/ozymem-cli`: Standalone CLI tool with subcommands `scan`, `lessons`, `dashboard`, `register`, `list`, `ignore`, `dream`, etc.
+- `crates/ozymem-server`: Ultra-low latency MCP stdio server with 30+ tools, resources, prompts, resource subscriptions, and push notifications.
+- `python/ozy-brain`: Asynchronous cognitive engine in Python with `SupervisorAgent`, `RiskCriticAgent`, `DataEngine` (DuckDB + Polars), `OutboxConsumer` (ChromaDB + FastEmbed ONNX), and `MemoryConsolidationAgent`.
 
-## Features Clave (v0.4.0, v0.3.0 & v0.2.0)
-- **Documentación Modular Completa**: Consulte la carpeta [`docs/`](docs/INDEX.md) con guías dedicadas por secciones:
-  - [`docs/architecture.md`](docs/architecture.md): Arquitectura Dual-Tier y Patrón Outbox.
-  - [`docs/semantic-search.md`](docs/semantic-search.md): Búsqueda Semántica Híbrida y Fusión RRF.
-  - [`docs/supervision-and-validation.md`](docs/supervision-and-validation.md): Supervisión Cognitiva y Validación Determinista.
-  - [`docs/dream-team-tools.md`](docs/dream-team-tools.md): Herramientas del Dream Team (`tgrep`, `rtk`, `fastembed`).
-  - [`docs/mcp-integration.md`](docs/mcp-integration.md): Referencia completa de endpoints MCP.
-  - [`docs/engram_system.md`](docs/engram_system.md): Sistema Engram $O(1)$, prefill especulativo y Git Notes P2P.
-- **Patrón Transaccional Outbox (`memory_outbox`)**:
-  - Triggers automáticos en SQLite (`lessons_outbox_ai`, `lessons_outbox_ad`, `observations_outbox_ai`, `observations_outbox_au`, `observations_outbox_ad`).
-  - Drenado en segundo plano por `OutboxConsumer` en `ozy-brain` hacia ChromaDB. Cero vectores huérfanos.
-- **Búsqueda Semántica Híbrida con RRF**:
-  - `deep_semantic_search` / `ozy_deep_search`: Combina resultados léxicos BM25 de SQLite FTS5 y embeddings densos ONNX (`FastEmbed` con `BAAI/bge-m3` o `bge-base`) mediante Reciprocal Rank Fusion (RRF). Cero tokens de API gastados.
+## Key Features
+- **Comprehensive Modular Documentation**: See [`docs/`](docs/INDEX.md) for dedicated domain guides:
+  - [`docs/architecture.md`](docs/architecture.md): Dual-Tier Architecture & Transactional Outbox Pattern.
+  - [`docs/semantic-search.md`](docs/semantic-search.md): Hybrid Semantic Search & RRF Fusion.
+  - [`docs/supervision-and-validation.md`](docs/supervision-and-validation.md): Cognitive Supervision & Deterministic Validation.
+  - [`docs/dream-team-tools.md`](docs/dream-team-tools.md): High-Performance Dream Team Tools (`tgrep`, `rtk`, `fastembed`).
+  - [`docs/mcp-integration.md`](docs/mcp-integration.md): Comprehensive MCP Endpoint & Tool Reference.
+  - [`docs/engram_system.md`](docs/engram_system.md): Deterministic $O(1)$ Engram System, Speculative Prefill & Git Notes P2P.
+  - [`docs/dream-rsi.md`](docs/dream-rsi.md): Dream-RSI: Zero-Friction MCTS Exploration & Offline Self-Improvement.
+  - [`docs/changelog.md`](docs/changelog.md): Chronological Version History & Release Notes.
+- **Transactional Outbox Pattern (`memory_outbox`)**:
+  - Automatic SQLite triggers (`lessons_outbox_ai`, `lessons_outbox_ad`, `observations_outbox_ai`, `observations_outbox_au`, `observations_outbox_ad`).
+  - Background draining via `OutboxConsumer` in `ozy-brain` to ChromaDB. Zero orphan vectors.
+- **Hybrid Semantic Search with RRF**:
+  - `deep_semantic_search` / `ozy_deep_search`: Fuses lexical BM25 results from SQLite FTS5 with dense ONNX embeddings (`FastEmbed` with `BAAI/bge-m3` or `bge-base`) using Reciprocal Rank Fusion (RRF). Zero API token expenditures.
 - **Daemon Auto-Spawn & Circuit Breaker**:
-  - `ensure_ozy_brain_running()` levanta automáticamente el proceso Python si no está activo.
-  - Si Python falla o excede el timeout (3s), el Circuit Breaker conmuta de inmediato al fallback determinista de SQLite FTS5.
-- **Sistema Multi-Agente Cognitivo (`ozy-brain`)**:
-  - **Supervisor Orquestador (`SupervisorAgent`)**: Despacho jerárquico y estructurado con `pydantic-ai`.
-  - **Agente Crítico Adversarial (`RiskCriticAgent`)**: Simulación de vectores de regresión, veto de operaciones destructivas (`DROP TABLE`, `DELETE FROM`, blast radius > 8 archivos) y análisis cruzado con hotspots.
-  - **Sintetizador y Decaimiento de Memoria (`MemoryConsolidationAgent`)**: Agrupación de engrams redundantes y cálculo de decaimiento temporal exponencial ($S = C \cdot e^{-\lambda \Delta t}$).
-- **Capa de Modelos Universal & OpenRouter (`config.py`)**:
-  - Detección automática en cascada de `OPENROUTER_API_KEY`, `OLLAMA_HOST`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
-  - Cadena de tolerancia a fallos con modelos gratuitos (`gemini-2.0-flash`, `nemotron-reasoning:free`, `qwen2.5-coder`).
-  - **Fallback Heurístico Local Offline ($0 Costo)**: Cero fallos en ausencia de red o claves API.
-- **Motor Analítico de Telemetría (`DataEngine` DuckDB + Polars)**:
-  - Ingestión de historial de Git para calcular frecuencia de cambios, volumen de líneas modificadas (*churn*), número de autores y densidad de fixes.
-  - Persistencia analítica embebida en `.ozymem/analytics.duckdb`.
-- **Integración con "The Dream Team"**:
-  - `tgrep` (Microsoft): Búsqueda trigram indexada de expresiones regulares sobre monorepos gigantes.
-  - `rtk` (Rust Token Killer): Purga de secuencias ANSI y compresión de payloads de terminal.
-- **Tabla Determinista de Engrams $O(1)$ (`rkyv` + `memmap2`)**: Búsqueda binaria de firmas y contratos de símbolos en $\approx 15\text{ ns}$.
-- **Prefill Predictivo**: Inyección automática de dependencias adyacentes de primer orden en el prefill de prompts.
-- **Sandbox de Validación Test-Time (`ozy_verify_diff`)**: Comprobación sintáctica de diffs antes de persistir cambios.
-- **Resolución de Dependencias Multi-Lenguaje (Python & TS/JS)**:
-  - Extracción nativa de imports/exports vía Tree-Sitter para Python y JavaScript/TypeScript.
-  - Resolución inteligente de rutas relativas (`.`, `..`), alias (`@/`, `~/`) y módulos de workspace hacia archivos físicos concretos (`.py`, `.ts`, `.tsx`, `.js`, `index.ts`, `__init__.py`).
-  - Detección precisa de relaciones entre archivos (`edge_count > 0`) en monorepos mixtos.
-- **Ciclo de Vida de Embeddings No Bloqueante & Transacciones SQLite Batch**:
-  - Descarga e inicialización en segundo plano (`std::thread::spawn` desacoplado del hilo JSON-RPC Tokio).
-  - Estados catalogados del modelo: `Ready`, `NotDownloaded`, `Downloading`, `CorruptedOrDeleted`, `Failed(String)`.
-  - Guardado de lecciones y observaciones inmediato (<20ms) en SQLite + cola `memory_outbox`.
-  - Transacciones `BEGIN IMMEDIATE ... COMMIT` en `full_scan` evitando miles de llamadas a fsync en Windows.
-- **Captura Automática de Conocimiento con Git Hooks (`ozymem hook`)**:
-  - Subcomando CLI `ozymem hook install|uninstall|status|run` y tool MCP `install_git_hook`.
-  - Hook nativo `.git/hooks/post-commit` multiplataforma (Windows y Unix) que indexa los deltas del commit y preserva lecciones/observaciones sin intervención manual.
-  - Verificación en `ozy_doctor` para auditar si el hook está activo.
+  - `ensure_ozy_brain_running()` automatically starts the Python process if not active.
+  - If Python fails or exceeds the timeout (3s), the Circuit Breaker switches immediately to deterministic SQLite FTS5 fallback.
+- **Cognitive Multi-Agent System (`ozy-brain`)**:
+  - **Orchestration Supervisor (`SupervisorAgent`)**: Hierarchical and structured dispatch using `pydantic-ai`.
+  - **Adversarial Critic (`RiskCriticAgent`)**: Regression vector simulation, destructive operation vetoes (`DROP TABLE`, `DELETE FROM`, blast radius > 8 files), and Git hotspot correlation.
+  - **Memory Consolidation & Decay (`MemoryConsolidationAgent`)**: Clusters redundant engrams and computes exponential temporal decay ($S = C \cdot e^{-\lambda \Delta t}$).
+- **Universal Model Cascade & OpenRouter Support (`config.py`)**:
+  - Automatic fallback cascading across `OPENROUTER_API_KEY`, `OLLAMA_HOST`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
+  - Zero-cost model tier (`gemini-2.0-flash`, `nemotron-reasoning:free`, `qwen2.5-coder`).
+  - **Offline Local Heuristic Fallback ($0 Cost)**: Zero downtime when offline or lacking API keys.
+- **Analytical Telemetry Engine (`DataEngine` DuckDB + Polars)**:
+  - Ingests Git history to compute change frequency, code churn, contributor counts, and bug-fix density.
+  - Embedded analytical storage in `.ozymem/analytics.duckdb`.
+- **High-Performance Dream Team Integration**:
+  - `tgrep` (Microsoft): Trigram inverted index regular expression search over massive repositories.
+  - `rtk` (Rust Token Killer): ANSI sequence stripping and terminal payload compression.
+- **Deterministic $O(1)$ Engram Table (`rkyv` + `memmap2`)**: Memory-mapped binary lookup of signatures and symbol contracts in $\approx 15\text{ ns}$.
+- **Predictive Speculative Prefill**: Automatic injection of adjacent 1st-order dependency contracts into prompt prefill.
+- **Test-Time Validation Sandbox (`ozy_verify_diff`)**: AST syntax and contract verification prior to disk write operations.
+- **Multi-Language Dependency Resolution (Python & TS/JS)**:
+  - Native import/export extraction via Tree-Sitter for Python and JavaScript/TypeScript.
+  - Resolves relative paths (`.`, `..`), aliases (`@/`, `~/`), and workspace modules to concrete physical files (`.py`, `.ts`, `.tsx`, `.js`, `index.ts`, `__init__.py`).
+  - Accurate file relationship mapping (`edge_count > 0`) in mixed monorepos.
+- **Non-Blocking Embedding Lifecycle & SQLite Batch Transactions**:
+  - Background initialization and download (`std::thread::spawn` decoupled from Tokio JSON-RPC thread).
+  - Explicit model states: `Ready`, `NotDownloaded`, `Downloading`, `CorruptedOrDeleted`, `Failed(String)`.
+  - Sub-20ms lesson and observation recording in SQLite + `memory_outbox`.
+  - `BEGIN IMMEDIATE ... COMMIT` batch transactions in `full_scan` avoiding disk fsync thrashing on Windows.
+- **Automatic Knowledge Capture with Git Hooks (`ozymem hook`)**:
+  - CLI subcommand `ozymem hook install|uninstall|status|run` and MCP tool `install_git_hook`.
+  - Cross-platform `.git/hooks/post-commit` hook indexing commit deltas and capturing lessons automatically.
+  - Verification in `ozy_doctor` to audit active hook status.
 - **Dream-RSI & Monte Carlo Tree Search (MCTS) v1.1.0**:
-  - **Árbol de Descubrimiento Persistente (`exploration_trajectories`, `exploration_nodes`)**: Persistencia jerárquica en SQLite con `parent_id`, `depth`, `action_payload`, `visit_count` y running Q-value (`value_estimate`).
-  - **Auto-Parenting Inteligente en Rust Core**: Si se omite `parent_id`, el motor enlaza automáticamente al último nodo activo no podado (`depth = parent.depth + 1`), eliminando la fricción y fragilidad de propagar hashes de nodos.
-  - **Modo Lote por Fases (`record_batch`)**: Inserción atómica en lote de múltiples pasos encadenados en una sola llamada MCP, reduciendo en un ~70% el overhead de turnos del agente.
-  - **Auditoría Objetiva de Recompensas y Auto-Poda (Self-Pruning)**: Detección automática de señales de fallo (`exit code != 0`, `timeout`, `SyntaxError`, `build failed`, `tests failed`) que neutraliza recompensas infladas a `< 0.0` y marca automáticamente `is_pruned = true` con `auto_pruned: true` en el payload.
-  - **Diagnóstico Nativo y Libre de Deadlocks (`diagnose`)**: Endpoint MCP `ozy_exploration(action="diagnose")` con fallback automático a la trayectoria más reciente si se omite `trajectory_id`, ruptura garantizada de ciclos y cálculo de eficiencia de tokens sin bloqueos de mutex SQLite.
-  - **Reanudación Automática de Trayectorias (`resume`)**: Acción MCP `ozy_exploration(action="resume")` que localiza el nodo hoja activo no podado con mayor valor estimado (`value_estimate`) y profundidad para continuar la exploración sin fricción tras compactación de contexto.
-  - **Guardas de Seguridad Anti-Inflado y Filtro de Ruido**: Truncado automático de logs y observaciones a **32 KB por paso** (`MAX_OBSERVATION_BYTES`), e ignorado exhaustivo de binarios (`.onnx`, `.lock`, `.db`, `.duckdb`, `.parquet`, hashes SHA) y carpetas de caché (`.fastembed_cache`, `node_modules`, `target`).
-  - **MCTS Backpropagation Nativo**: Actualización ascendente incremental de $Q \leftarrow Q + \frac{R - Q}{N}$ hacia los nodos ancestros.
-  - **Simulador Contrafactual Offline (`ReplaySimulator`)**: Simulación determinista a costo **0 tokens LLM y 0 re-ejecuciones** calculando el fitness score $J(\pi)$ y diagnosticando cuellos de botella de exploración.
-  - **Validación AST y Promoción Segura**: Auditoría estricta con `AstSafetyAuditor` (bloqueo de `subprocess`, `eval`, `rmtree`) y regla de no-regresión ($J_{\text{cand}} > J_{\text{base}} + \epsilon$ con cero falsos podados).
-  - **Herramienta MCP y CLI**: Endpoint MCP `ozy_exploration` (`start`, `record_step`, `record_batch`, `complete`, `get_tree`, `diagnose`, `list`, `delete`, `resume`), acción `ozy_brain(action="dream_rsi")` y subcomandos CLI `ozymem dream run|status|diagnose`.
+  - **Persistent Discovery Tree (`exploration_trajectories`, `exploration_nodes`)**: Hierarchical SQLite storage with `parent_id`, `depth`, `action_payload`, `visit_count`, and running Q-value (`value_estimate`).
+  - **Smart Auto-Parenting in Rust Core**: When `parent_id` is omitted, automatically links to the latest active unpruned node (`depth = parent.depth + 1`), eliminating the fragility of manual node hash forwarding.
+  - **Atomic Batch Mode (`record_batch`)**: Ingests multiple technical milestones in a single MCP turn, reducing agent turn tax by ~70%.
+  - **Objective Reward Verification & Self-Pruning**: Automatically detects failure signals (`exit code != 0`, `timeout`, `SyntaxError`, `build failed`, `tests failed`), clamps inflated rewards to `< 0.0`, and flags `is_pruned = true` with `auto_pruned: true`.
+  - **Deadlock-Free Trajectory Diagnostics (`diagnose`)**: Endpoint `ozy_exploration(action="diagnose")` with cycle-breaking visited sets, fallback to the latest trajectory if `trajectory_id` is omitted, and token efficiency metrics.
+  - **Trajectory Resumption (`resume`)**: Action `ozy_exploration(action="resume")` locates the highest-value active unpruned leaf node for frictionless recovery after context compaction.
+  - **Noise Filter & Token Budget Bounds**: Automatic truncation of observations to **32 KB per step** (`MAX_OBSERVATION_BYTES`), and exhaustive filtering of binary files (`.onnx`, `.lock`, `.db`, `.duckdb`, `.parquet`, SHA hex blobs) and cache directories (`.fastembed_cache`, `node_modules`, `target`).
+  - **Native MCTS Backpropagation**: Incremental ancestor update $Q \leftarrow Q + \frac{R - Q}{N}$.
+  - **Offline Counterfactual Simulator (`ReplaySimulator`)**: Deterministic replay at **0 LLM tokens and 0 re-executions**, computing fitness score $J(\pi)$ and diagnosing exploration bottlenecks.
+  - **AST Safety Validation**: Strict audit via `AstSafetyAuditor` (blocking `subprocess`, `eval`, `rmtree`) and non-regression guard ($J_{\text{cand}} > J_{\text{base}} + \epsilon$ with zero false prunes).
+  - **MCP & CLI Interface**: Endpoint `ozy_exploration` (`start`, `record_step`, `record_batch`, `complete`, `get_tree`, `diagnose`, `list`, `delete`, `resume`), `ozy_brain(action="dream_rsi")`, and CLI subcommands `ozymem dream run|status|diagnose`.
 
-## Principios y Convenciones
-- **SOLID, DRY, KISS**: Mantener el código acoplado lo mínimo posible, extraer lógica reutilizable y no sobrediseñar.
-- **Git y Commits**: Realizar commits limpios por característica siguiendo la convención de `conventional commits` (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
-- **Pruebas**: Cobertura de pruebas superior al 80% en cualquier funcionalidad nueva. Ejecutar `cargo test` antes de dar por completado cualquier desarrollo.
-- **Cambios en Código**: Solicitar confirmación del usuario mostrando un diff descriptivo de los cambios antes de editarlos en disco.
-- **Windows compat**: Usar `cmd /c` para comandos shell en Windows. Evitar `std::process::Command` directo para scripts `.ps1`.
-- **Nueva tool MCP**: Registrar tool en `tools/list`, añadir handler en `handle_request` (o `handle_project_tool`/`handle_package_tool` para tools sin backend lock). Añadir aserciones en tests de integración.
+## Principles & Conventions
+- **SOLID, DRY, KISS**: Keep code loosely coupled, extract reusable logic, and avoid over-engineering.
+- **Git & Commits**: Write clean, feature-scoped commits following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
+- **Testing**: Maintain test coverage above 80% on all new features. Run `cargo test` and Python test suites prior to completing tasks.
+- **Code Changes**: Always show descriptive diff previews and confirm with the user before applying modifications.
+- **Windows Compatibility**: Use `cmd /c` for shell execution on Windows. Avoid raw `std::process::Command` calls on `.ps1` scripts without powershell wrappers.
+- **Adding MCP Tools**: Register tool in `tools/list`, add handler in `handle_request` (or `handle_project_tool`/`handle_package_tool` for lock-free tools), and include assertions in integration tests.

@@ -1,74 +1,74 @@
-# Sistema de Engrams Deterministas, Prefill Especulativo y Validación Test-Time
+# Deterministic Engram System, Speculative Prefill & Test-Time Validation
 
-Este documento detalla la arquitectura de **Engrams**, **Decodificación Especulativa de Contexto**, **Sandbox Test-Time** y **Sincronización P2P con Git Notes** en Ozygram.
-
----
-
-## 1. Almacenamiento Determinista $O(1)$ con `rkyv` y `memmap2`
-
-### Motivación
-Para repositorios de gran escala o tareas de edición continua por agentes LLM, consultar firmas y contratos de símbolos a través de SQLite o parsers de texto introduce latencia acumulativa.
-
-### Implementación
-- **`IncrementalEngramStore` / `FastEngramReader`**: Motor de almacenamiento binario sin copia (*zero-copy*) basado en `rkyv` mapeado en memoria vía `memmap2`.
-- **Estructura de Contrato (`EngramContract`)**:
-  - `symbol_path`: Ruta canónica calificada (`crate::module::func`).
-  - `signature_hash`: Hash BLAKE3/SHA-256 de la firma para invalidación rápida.
-  - `input_types` y `return_type`: Tipos de entrada y retorno normalizados.
-  - `doc_summary`: Resumen semántico del contrato.
-  - `outgoing_calls` / `type_dependencies`: Enlaces directos a otros tipos dependientes.
-- **Rendimiento**: Búsqueda por símbolo en $\approx 15\text{ ns}$ con consumo de memoria constante $O(1)$ sin allocations en el heap.
+This document details the architectural design of **Engrams**, **Speculative Context Prefill**, **Test-Time Sandbox Validation**, and **P2P Decentralized Sync via Git Notes** in Ozygram.
 
 ---
 
-## 2. Prefill Predictivo y Speculative Decoding
+## 1. Deterministic $O(1)$ Storage with `rkyv` & `memmap2`
 
-### Motivación
-Los agentes LLM tradicionalmente requieren múltiples *roundtrips* sucesivos (`get_file_context` $\rightarrow$ `find_symbol` $\rightarrow$ `lookup_engram`) para descubrir tipos en archivos importados.
+### Motivation
+For massive codebases or high-frequency editing sessions by AI agents, querying signatures and symbol contracts through standard SQLite queries or on-the-fly text parsing introduces cumulative roundtrip latency.
 
-### Implementación
-- Al consultar `get_file_context` o `context_for_task`, `ozymem-core` utiliza el grafo de dependencias de `petgraph` para identificar los archivos vecinos de primer orden y los commits recientes en `GitBackend`.
-- El servidor MCP inyecta un encabezado determinista `[ENGRAM_CACHE: Deterministic Symbol Contracts]` con los contratos adyacentes de mayor probabilidad de edición antes del cuerpo del archivo.
-- **Beneficio**: Reduce los *roundtrips* del agente a cero y maximiza la tasa de acierto del **Prompt Cache** (>90%) en modelos con caching por prefijo (Claude 3.7 / GPT-4o / DeepSeek V3).
+### Implementation
+- **`IncrementalEngramStore` / `FastEngramReader`**: Zero-copy binary storage engine based on `rkyv` mapped into virtual memory via `memmap2`.
+- **Contract Schema (`EngramContract`)**:
+  - `symbol_path`: Canonical qualified path (`crate::module::func`).
+  - `signature_hash`: BLAKE3/SHA-256 signature hash for instant invalidation checks.
+  - `input_types` & `return_type`: Normalized input argument and return types.
+  - `doc_summary`: Semantic docstring summary of the contract.
+  - `outgoing_calls` / `type_dependencies`: Direct links to dependent types and callsites.
+- **Performance**: Symbol lookups execute in $\approx 15\text{ ns}$ with constant $O(1)$ memory usage and zero heap allocations.
 
 ---
 
-## 3. Sandbox de Validación Test-Time en Bucle Cerrado (`ozy_verify_diff`)
+## 2. Predictive Prefill & Speculative Decoding
 
-### Flujo de Verificación
-```
+### Motivation
+AI agents typically require multiple consecutive roundtrips (`get_file_context` $\rightarrow$ `find_symbol` $\rightarrow$ `lookup_engram`) to discover type contracts across imported modules.
+
+### Implementation
+- When calling `get_file_context` or `context_for_task`, `ozymem-core` leverages the `petgraph` dependency graph to identify immediate 1st-order neighbor files and recent modifications via `GitBackend`.
+- The MCP server injects a deterministic `[ENGRAM_CACHE: Deterministic Symbol Contracts]` header containing high-probability adjacent symbol contracts ahead of the target file body.
+- **Benefit**: Eliminates redundant agent tool calls and maximizes prefix **Prompt Cache** hit rates (>90%) on models with prompt caching support (Claude 3.7 / GPT-4o / DeepSeek V3).
+
+---
+
+## 3. Closed-Loop Test-Time Validation Sandbox (`ozy_verify_diff`)
+
+### Verification Pipeline
+```text
 ┌─────────────────────────────────────────────────────────────┐
-│                    Agente MCP / Tool Call                   │
+│                    MCP Agent / Tool Call                    │
 │                     `ozy_verify_diff`                       │
 └──────────────────────────────┬──────────────────────────────┘
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                 Sandbox Fast-Path (Rust)                    │
-│  - Chequeo de sintaxis Tree-Sitter                          │
-│  - Verificación de contratos Engram                         │
-│  - Verificación AST sin tocar el disco principal             │
+│  - Tree-Sitter syntax verification                          │
+│  - Engram contract validation                               │
+│  - AST integrity check without modifying target file on disk │
 └──────────────────────────────┬──────────────────────────────┘
-                               │ (Si hay advertencias o cambios)
+                               │ (If warnings or changes detected)
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 Reflexión Heurística (Python)               │
-│  - `reflector.py` destila causa raíz                        │
-│  - Generación de Reglas Procedimentales [TRIGGER]->[ACTION] │
+│                Heuristic Reflection (Python)                │
+│  - `reflector.py` isolates root causes                      │
+│  - Procedural rule extraction: [TRIGGER] -> [ACTION]        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Herramienta `ozy_verify_diff`**: Permite al agente enviar un parche o diff propuesto antes de guardarlo en disco.
-- **Detección Rápida**: Identifica rupturas de contratos, incompatibilidad de tipos y errores de sintaxis en $<200\text{ ms}$.
+- **`ozy_verify_diff` Tool**: Allows an AI agent to submit proposed patches or unified diffs for verification prior to writing changes to disk.
+- **Fast Detection**: Detects broken contracts, type incompatibilities, and AST syntax parse errors in $< 200\text{ ms}$.
 
 ---
 
-## 4. Sincronización Distribuida P2P con Git Notes (`refs/notes/ozymem`)
+## 4. Decentralized P2P Sync with Git Notes (`refs/notes/ozymem`)
 
-### Motivación
-Permitir que múltiples agentes o ramas compartan lecciones aprendidas y reglas procedimentales sin requerir bases de datos remotas dedicadas.
+### Motivation
+Enable multiple coding agents, subagents, or developer branches to share procedural rules, lessons, and architectural insights without deploying external database services.
 
-### Operación
-- **Exportación (`ozy_export_memory_notes`)**: Empaqueta lecciones episódicas, contratos engram y reglas procedimentales en un payload JSON y lo escribe en `refs/notes/ozymem` sobre el commit actual de Git.
-- **Importación (`ozy_import_memory_notes`)**: Lee la nota del commit actual o especificado, deduplica contra el SQLite local e inserta nuevas lecciones automáticamente.
-- **Portabilidad**: Sincronizable con `git push origin refs/notes/ozymem` y `git fetch origin refs/notes/ozymem:refs/notes/ozymem`.
+### Workflow
+- **Export (`ozy_export_memory_notes`)**: Bundles episodic lessons, engram contracts, and procedural rules into a JSON payload and writes it to `refs/notes/ozymem` attached to the current Git commit.
+- **Import (`ozy_import_memory_notes`)**: Reads the note at the specified or HEAD commit, deduplicates entries against local SQLite storage, and merges new lessons automatically.
+- **Portability**: Synchronizes seamlessly via standard Git commands: `git push origin refs/notes/ozymem` and `git fetch origin refs/notes/ozymem:refs/notes/ozymem`.

@@ -1,113 +1,113 @@
-# Supervisión Cognitiva y Validación Determinista
+# Cognitive Supervision & Deterministic Validation
 
-Ozygram incorpora un subsistema de supervisión arquitectónica diseñado para actuar como un revisor de código implacable (*Adversarial Critic*) que audita planes, detecta regresiones y bloquea operaciones destructivas antes de que se toquen los archivos del proyecto.
+Ozygram includes an architectural supervision subsystem designed to act as an unyielding adversarial code reviewer (*Adversarial Critic*) that audits plans, detects regressions, and halts destructive operations before touching repository files.
 
 ---
 
-## 1. El Supervisor y el Crítico Adversarial
+## 1. The Supervisor and the Adversarial Critic
 
-El sistema se estructura en dos roles complementarios:
+The system is organized into two complementary roles:
 
 - **`SupervisorAgent`** ([`supervisor.py`](../python/ozy-brain/ozy_brain/agents/supervisor.py)):
-  - Orquesta las peticiones cognitivas del IDE.
-  - Coordina la telemetría del repositorio, la consolidación de recuerdos y las auditorías de riesgo.
-  - Genera respuestas estructuradas con planes de mitigación, niveles de confianza y recomendaciones de acción.
+  - Orchestrates cognitive requests from the IDE.
+  - Coordinates repository telemetry, memory consolidation, and risk audits.
+  - Returns structured responses with mitigation plans, confidence scores, and actionable recommendations.
 - **`RiskCriticAgent`** ([`risk_critic.py`](../python/ozy-brain/ozy_brain/agents/risk_critic.py)):
-  - Adopta una postura adversaria: asume que cada cambio propuesto romperá algo en producción hasta que se demuestre lo contrario.
-  - Identifica vectores de regresión sutiles, incompatibilidades de firmas y acoplamiento peligroso.
+  - Adopts an adversarial posture: assumes every proposed change will cause production regressions until proven otherwise.
+  - Uncovers subtle regression vectors, signature mismatches, and dangerous coupling.
 
 ---
 
-## 2. Validación Determinista Sin LLM (Modo Offline / $0 Costo)
+## 2. Deterministic Validation Without LLMs (Offline Mode / $0 Cost)
 
-Una de las mayores fortalezas de Ozygram es que **no requiere un modelo de lenguaje de pago para proteger la base de código**. Si no hay conexión o no tienes API keys configuradas, entra en acción `_audit_offline`:
+One of Ozygram's key strengths is that **it does not require a paid language model to safeguard the codebase**. When offline or without API keys configured, `_audit_offline` takes over:
 
 ```text
-               Plan o Diff de Código Propuesto
+               Proposed Plan or Code Diff
                              │
                              ▼
  ┌───────────────────────────────────────────────────────────────┐
- │               MOTOR DE VALIDACIÓN DETERMINISTA                │
+ │               DETERMINISTIC VALIDATION ENGINE                 │
  ├───────────────────────────────────────────────────────────────┤
- │  1. Telemetría de Git (DuckDB + Polars)                       │
- │     → Cruce con archivos de alto Churn y Hotspots históricos  │
+ │  1. Git Telemetry (DuckDB + Polars)                           │
+ │     → Cross-reference with high churn files & historical hotspots│
  │                                                               │
- │  2. Control de Radio de Explosión (Blast Radius)              │
- │     → ¿Modifica > 8 archivos concurrentemente?               │
+ │  2. Blast Radius Boundary Control                             │
+ │     → Does it touch > 8 files concurrently?                  │
  │                                                               │
- │  3. Guardia Anti-Destrucción DDL/DML                          │
+ │  3. DDL/DML Anti-Destruction Guard                            │
  │     → Regex veto: DROP TABLE, DELETE FROM, TRUNCATE, etc.    │
  │                                                               │
- │  4. Decaimiento Temporal de Memoria                           │
- │     → S = C · e^(-λ·Δt) para poda matemática de contexto     │
+ │  4. Memory Exponential Time Decay                             │
+ │     → S = C · e^(-λ·Δt) for mathematical context pruning     │
  └───────────────────────────┬───────────────────────────────────┘
                              │
                              ▼
-         Veredicto: [LOW | MEDIUM | HIGH | CRITICAL]
-         (Bloqueo preventivo de la operación si is_blocked=True)
+         Verdict: [LOW | MEDIUM | HIGH | CRITICAL]
+         (Preventive operation block if is_blocked=True)
 ```
 
-### A. Telemetría de Hotspots con DuckDB + Polars ([`data_engine.py`](../python/ozy-brain/ozy_brain/data_engine.py))
-El motor analítico lee el log de Git local e indexa métricas históricas de cada archivo:
-- **Churn Score**: Volumen acumulado de líneas agregadas y eliminadas.
-- **Fix Commits**: Cuántas veces un archivo estuvo involucrado en commits con palabras como `fix`, `bug`, `issue` o `patch`.
-- **Author Churn**: Número de autores distintos que han editado el archivo.
+### A. Hotspot Telemetry with DuckDB + Polars ([`data_engine.py`](../python/ozy-brain/ozy_brain/data_engine.py))
+The analytical engine parses the local Git commit log to index historical metrics for each repository file:
+- **Churn Score**: Accumulated volume of lines added and deleted.
+- **Fix Commits**: Frequency of file association with commit messages containing `fix`, `bug`, `issue`, or `patch`.
+- **Author Churn**: Count of distinct contributors who have modified the file.
 
-Si un cambio propone tocar un archivo clasificado como **CRITICAL HOTSPOT**, el sistema emite una alerta roja y exige tests de regresión específicos.
+When a plan proposes modifying a file flagged as a **CRITICAL HOTSPOT**, the system triggers a warning and requires targeted regression tests.
 
-### B. Guardia Anti-Destrucción DDL/DML
-El supervisor inspecciona el texto del diff buscando sentencias destructivas en bases de datos:
+### B. DDL/DML Anti-Destruction Guard
+The supervisor inspects the plan and diff text for destructive database statements:
 `DROP TABLE`, `DELETE FROM`, `ALTER TABLE`, `TRUNCATE`, `DROP COLUMN`.
-Si alguna es detectada:
-- **Bloquea la operación (`is_blocked = True`)**.
-- Asigna nivel de riesgo **`CRITICAL`**.
-- Exige validación con scripts de migración no destructivos y salvaguardas de *rollback*.
+If detected:
+- **Blocks the operation (`is_blocked = True`)**.
+- Elevates the risk level to **`CRITICAL`**.
+- Demands non-destructive migration scripts with explicit rollback safeguards.
 
-### C. Control de Radio de Impacto (*Blast Radius*)
-Si un plan involucra más de **8 archivos simultáneamente**:
-- Marca el riesgo como `HIGH` por dispersión arquitectónica.
-- Emite la recomendación obligatoria de partir el trabajo en subtareas atómicas e independientes.
+### C. Blast Radius Control
+If an implementation plan touches more than **8 files concurrently**:
+- Flags the risk level as `HIGH` due to architectural dispersion.
+- Issues a mandatory recommendation to decompose the work into atomic, independent subtasks.
 
-### D. Consolidación de Memoria por Decaimiento Exponencial
-Para depurar y resumir memorias sin enviar miles de líneas a un LLM:
+### D. Memory Consolidation via Exponential Decay
+To prune and summarize memory collections without passing thousands of tokens to an LLM:
 $$S = C \cdot e^{-\lambda \Delta t}$$
-Donde:
-- $S$: Relevancia residual de la lección.
-- $C$: Puntuación de confianza inicial.
-- $\lambda$: Factor de decaimiento temporal.
-- $\Delta t$: Días transcurridos desde el último acceso o actualización.
+Where:
+- $S$: Residual relevance score of the lesson.
+- $C$: Initial confidence score.
+- $\lambda$: Temporal decay factor.
+- $\Delta t$: Days elapsed since the last observation or update.
 
 ---
 
-## 3. Supervisión Semántica Opcional con Modelos Gratuitos
+## 3. Optional Semantic Supervision with Free Models
 
-Si deseas agregar razonamiento semántico para que el supervisor actúe como un *Senior Tech Lead*, puedes activar proveedores sin costo:
+To add advanced semantic reasoning where the supervisor acts as a *Senior Tech Lead*, zero-cost LLM providers are supported:
 
-### Opción A: Gemini 2.0 Flash (Google AI Studio Free Tier)
-- **Cuota Gratuita Oficial**: 15 requests por minuto, 1 millón de tokens por minuto.
-- **Rendimiento**: Velocidad ultrarrápida (~500 ms) y alta capacidad de seguimiento de reglas estructuradas en JSON.
-- **Activación**:
+### Option A: Gemini 2.0 Flash (Google AI Studio Free Tier)
+- **Official Free Quota**: 15 requests per minute, 1,000,000 tokens per minute.
+- **Performance**: Sub-second latency (~500 ms) with high JSON schema adherence.
+- **Activation**:
   ```powershell
-  $env:GEMINI_API_KEY = "tu_clave_de_google_ai_studio"
+  $env:GEMINI_API_KEY = "your_google_ai_studio_key"
   ```
 
-### Opción B: Ollama Local (`qwen2.5-coder` / `gemma2`)
-- **100% Local y Privado**: Corre directamente en la GPU o CPU de tu máquina.
-- **Activación**: Ozygram detecta automáticamente si Ollama está corriendo en `http://localhost:11434` o mediante `$env:OLLAMA_HOST`.
+### Option B: Local Ollama (`qwen2.5-coder` / `gemma2`)
+- **100% Local & Private**: Runs directly on your machine's CPU or GPU.
+- **Activation**: Ozygram automatically detects active Ollama instances at `http://localhost:11434` or configured via `$env:OLLAMA_HOST`.
 
-### Opción C: Modelos Gratuitos de OpenRouter
-- Acceso a modelos como `openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` o `openrouter/cohere/north-mini-code:free`.
-- **Activación**:
+### Option C: OpenRouter Free Models
+- Access models such as `openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` or `openrouter/cohere/north-mini-code:free`.
+- **Activation**:
   ```powershell
-  $env:OPENROUTER_API_KEY = "tu_clave_de_openrouter"
+  $env:OPENROUTER_API_KEY = "your_openrouter_key"
   ```
 
 ---
 
-## 4. Presupuesto Estricto de Tokens (*Zero Token Bloat*)
+## 4. Strict Token Budget (*Zero Token Bloat*)
 
-Ozygram está diseñado específicamente para **no quemar tu ventana de contexto ni agotar tus cuotas**:
+Ozygram is designed to **minimize context consumption and conserve API limits**:
 
-1. **Pre-Filtrado Analítico**: Antes de enviar cualquier texto al modelo, DuckDB y `tgrep` reducen el repositorio a un diff condensado y un conjunto de métricas numéricas (< 2 KB).
-2. **Límite Estricto de Salida**: Configurado por defecto a `max_tokens = 1500` con `temperature = 0.2` para respuestas concisas y deterministas.
-3. **Respuesta en JSON Puro**: Las auditorías se devuelven en formato estructurado sin prosa innecesaria, reduciendo drásticamente el consumo de tokens de entrada y salida.
+1. **Analytical Pre-Filtering**: Before querying any language model, DuckDB and `tgrep` condense repository context into a minimal diff and numerical metrics summary (< 2 KB).
+2. **Strict Output Limits**: Configured by default to `max_tokens = 1500` with `temperature = 0.2` for concise, deterministic evaluations.
+3. **Structured Pure JSON**: Audits are returned as strongly-typed JSON without verbose conversational filler, minimizing both prompt and completion token counts.

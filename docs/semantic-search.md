@@ -1,73 +1,73 @@
-# Búsqueda Semántica Híbrida y Fusión RRF
+# Hybrid Semantic Search & RRF Fusion
 
-Ozygram combina la precisión del emparejamiento léxico exacto con la comprensión semántica profunda de modelos de lenguaje mediante una estrategia de **Búsqueda Híbrida con Reciprocal Rank Fusion (RRF)**.
-
----
-
-## 1. El Dilema: ¿Búsqueda Léxica o Búsqueda Vectorial?
-
-En bases de código reales, depender exclusivamente de una sola técnica produce fallos:
-
-- **Búsqueda Vectorial Pura (Dense Retrieval)**:
-  - Excelente para conceptos abstractos ("autenticación con tokens expirados").
-  - Falla en identificadores exactos de código (variables como `AUTH_JWT_EXP_SECS` o nombres de funciones exactas `verify_jwt_token`).
-- **Búsqueda Léxica Pura (BM25 / Full-Text Search)**:
-  - Excelente para nombres exactos de clases, métodos y errores.
-  - Falla cuando el desarrollador o agente busca por intención sin recordar el nombre exacto del símbolo.
-
-**Solución de Ozygram**: Ejecutar ambas en paralelo y fusionar sus listas ordenadas con el algoritmo matemático **RRF (Reciprocal Rank Fusion)**.
+Ozygram combines the precision of exact lexical matching with the deep contextual understanding of language models using a **Hybrid Search with Reciprocal Rank Fusion (RRF)** strategy.
 
 ---
 
-## 2. Arquitectura de Búsqueda Híbrida
+## 1. The Dilemma: Lexical Search vs. Vector Search?
+
+In real-world codebases, relying exclusively on either approach causes retrieval failures:
+
+- **Pure Vector Search (Dense Retrieval)**:
+  - Excellent for abstract conceptual queries (e.g., "authentication with expired tokens").
+  - Fails on exact code identifiers (e.g., specific environment variables like `AUTH_JWT_EXP_SECS` or exact function names like `verify_jwt_token`).
+- **Pure Lexical Search (BM25 / Full-Text Search)**:
+  - Excellent for exact class names, methods, and error strings.
+  - Fails when a developer or AI agent searches by intent without knowing the exact symbol name.
+
+**Ozygram's Solution**: Execute both retrieval pipelines concurrently and fuse their ordered result lists using the mathematical **RRF (Reciprocal Rank Fusion)** algorithm.
+
+---
+
+## 2. Hybrid Search Architecture
 
 ```text
-                     Consulta del Usuario / Agente
-                                  │
-                  ┌───────────────┴───────────────┐
-                  ▼                               ▼
-     [Carril Léxico Disperso]         [Carril Semántico Denso]
-      SQLite FTS5 (BM25 Nativo)       FastEmbed (ONNX Local)
-                  │                               │
-         Top-K Candidatos                 Top-K Candidatos
-                  │                               │
-                  └───────────────┬───────────────┘
-                                  ▼
-                [Reciprocal Rank Fusion (RRF)]
-                                  │
-                                  ▼
-                Lista Unificada Re-Rankeada (Top-N)
+                     User / Agent Query
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+    [Sparse Lexical Lane]           [Dense Semantic Lane]
+   SQLite FTS5 (Native BM25)       FastEmbed (Local ONNX)
+              │                               │
+       Top-K Candidates                Top-K Candidates
+              │                               │
+              └───────────────┬───────────────┘
+                              ▼
+            [Reciprocal Rank Fusion (RRF)]
+                              │
+                              ▼
+            Unified Re-Ranked List (Top-N)
 ```
 
 ---
 
-## 3. Carril Denso: FastEmbed con ONNX Runtime
+## 3. Dense Lane: FastEmbed with ONNX Runtime
 
-A diferencia de otros sistemas que requieren descargar PyTorch pesado (varios gigabytes) o llamar a APIs de pago (como OpenAI Embeddings):
+Unlike other systems that require heavy PyTorch installations (multiple gigabytes) or cloud API calls (such as OpenAI Embeddings):
 
-- **FastEmbed**: Utiliza el motor optimizado **ONNX Runtime en C++** con cuantización para inferencia en CPU de ultra-alta velocidad.
-- **Modelos Soportados**:
-  - `BAAI/bge-m3` (Soporte multilingüe denso + disperso, ventana de 8,192 tokens, 1024 dimensiones).
-  - `BAAI/bge-base-en-v1.5` / `all-MiniLM-L6-v2` (Modo ultra-ligero para bajo consumo de RAM).
-- **Consumo de Tokens**: **Cero tokens de API**. 100% de la inferencia ocurre en tu máquina local.
-- **Almacenamiento**: Persistencia vectorial en colecciones locales de **ChromaDB** en `{project}/.ozymem/vector_store/`.
+- **FastEmbed**: Uses the optimized **ONNX Runtime in C++** with quantization for ultra-fast CPU inference.
+- **Supported Models**:
+  - `BAAI/bge-m3` (Dense + sparse multilingual support, 8,192 token context window, 1024 dimensions).
+  - `BAAI/bge-base-en-v1.5` / `all-MiniLM-L6-v2` (Ultra-lightweight mode for minimal RAM footprint).
+- **Token Consumption**: **Zero API tokens**. 100% of inference executes locally on your machine.
+- **Storage**: Vector persistence in local **ChromaDB** collections located at `{project}/.ozymem/vector_store/`.
 
 ---
 
-## 4. Algoritmo de Fusión: Reciprocal Rank Fusion (RRF)
+## 4. Fusion Algorithm: Reciprocal Rank Fusion (RRF)
 
-El algoritmo RRF normaliza las posiciones de los candidatos de ambas fuentes sin requerir que las puntuaciones de similitud de coseno y las de BM25 estén en la misma escala métrica:
+The RRF algorithm normalizes candidate ranks across heterogeneous search engines without requiring cosine similarity scores and BM25 scores to share the same metric scale:
 
-### Fórmula Matemática
+### Mathematical Formulation
 $$RRF\_Score(d) = \sum_{m \in M} \frac{1}{k + r_m(d)}$$
 
-Donde:
-- $d$: Documento o lección candidata.
-- $M$: Conjunto de motores de búsqueda ($M = \{\text{BM25}, \text{Vectorial}\}$).
-- $r_m(d)$: Rango (posición 1-indexada) del documento $d$ en el motor $m$. Si no aparece en los primeros resultados de ese motor, su rango es tratado como infinito.
-- $k$: Constante de suavizado (por defecto $k = 60$, estándar de la literatura académica de Information Retrieval) para evitar que las primeras posiciones monopolicen la puntuación.
+Where:
+- $d$: Candidate document or lesson.
+- $M$: Set of search retrieval engines ($M = \{\text{BM25}, \text{Vector}\}$).
+- $r_m(d)$: Rank (1-indexed position) of document $d$ in engine $m$. If absent from top results, its rank is treated as infinity.
+- $k$: Smoothing constant (default $k = 60$, canonical standard in Information Retrieval literature) to prevent top positions from dominating the final score.
 
-### Implementación en Ozygram ([`vector_store.py`](../python/ozy-brain/ozy_brain/vector_store.py))
+### Implementation in Ozygram ([`vector_store.py`](../python/ozy-brain/ozy_brain/vector_store.py))
 
 ```python
 def reciprocal_rank_fusion(
@@ -95,8 +95,8 @@ def reciprocal_rank_fusion(
 
 ---
 
-## 5. Ventajas Prácticas para el Agente
+## 5. Practical Benefits for AI Agents
 
-1. **Inmunidad a Desfases Terminológicos**: Si el desarrollador llama a un error "falla en serialización" y el código dice `serde::de::Error`, el emparejador denso lo captura mientras el léxico refuerza la lección exacta.
-2. **Cero Dependencia de Red**: Todo el pipeline de búsqueda semántica funciona en aviones, redes corporativas aisladas o entornos de alta seguridad sin acceso a internet.
-3. **Puntuaciones Equilibradas**: Un elemento que esté en el Top 3 de ambos motores siempre rankeará por encima de un falso positivo que esté en el Top 1 de solo uno de ellos.
+1. **Terminology Mismatch Immunity**: If a developer refers to a problem as "serialization failure" while the codebase throws `serde::de::Error`, the dense matcher retrieves the semantic intent while the lexical engine reinforces the exact lesson.
+2. **Zero Network Dependency**: The entire semantic search pipeline functions offline, in air-gapped corporate networks, or in high-security environments without internet access.
+3. **Balanced Scoring**: A candidate present in the Top 3 of both engines will always outrank a false positive that appears at Top 1 in only one engine.

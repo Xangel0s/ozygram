@@ -1,131 +1,131 @@
-# Arquitectura Dual-Tier de Ozygram
+# Ozygram Dual-Tier Architecture
 
-Ozygram implementa una **Arquitectura Dual-Tier Asimétrica** diseñada para maximizar la velocidad de respuesta del asistente de código, eliminar la latencia de arranque y asegurar que las operaciones críticas del IDE jamás se bloqueen por cálculos cognitivos pesados.
+Ozygram implements an **Asymmetric Dual-Tier Architecture** designed to maximize coding assistant response velocity, eliminate startup latency, and ensure that critical IDE operations are never blocked by heavy cognitive computations.
 
 ---
 
-## 1. Visión General: Los Dos Carriles
+## 1. Overview: The Two Lanes
 
 ```text
        ┌────────────────────────────────────────────────────────┐
-       │             Cliente MCP (IDE / Asistente LLM)          │
+       │             MCP Client (IDE / LLM Assistant)           │
        └──────────────────────────┬─────────────────────────────┘
                                   │ JSON-RPC (Stdio)
                                   ▼
  ┌────────────────────────────────────────────────────────────────────────┐
- │                   CARRIL RÁPIDO (Fast Lane — Rust)                     │
+ │                   FAST LANE (Rust Core & MCP)                          │
  │                                                                        │
- │  • Servidor MCP de ultra-baja latencia (< 5ms)                         │
- │  • Almacenamiento persistente ACID en SQLite local                     │
- │  • Grafo de dependencias con Petgraph y AST nativo (Tree-Sitter)       │
- │  • Tabla Determinista de Engrams O(1) con rkyv + memmap2               │
- │  • Patrón Transaccional Outbox (SQLite Triggers)                       │
- │  • Circuit Breaker y Auto-Spawn de demonios auxiliares                 │
+ │  • Ultra-low latency MCP Server (< 5ms)                                │
+ │  • Persistent ACID storage in local SQLite                             │
+ │  • Dependency graph with Petgraph and native AST (Tree-Sitter)         │
+ │  • Deterministic O(1) Engram Table with rkyv + memmap2                 │
+ │  • Transactional Outbox Pattern (SQLite Triggers)                      │
+ │  • Circuit Breaker and Auxiliary Daemon Auto-Spawn                     │
  └───────────────────┬────────────────────────────────┬───────────────────┘
                      │ Triggers                       │ Fallback / RPC
                      ▼                                ▼
        ┌──────────────────────────┐     ┌─────────────────────────────────┐
-       │   memory_outbox Table    │     │  CARRIL DE POTENCIA (Python)    │
-       │   (Transaccional SQLite) │     │                                 │
+       │   memory_outbox Table    │     │      POWER LANE (Python)        │
+       │   (Transactional SQLite) │     │                                 │
        └─────────────┬────────────┘     │  • SupervisorAgent              │
-                     │ Consumo          │  • RiskCriticAgent              │
-                     ▼ Asíncrono        │  • DataEngine (DuckDB + Polars) │
+                     │ Async            │  • RiskCriticAgent              │
+                     ▼ Consumption      │  • DataEngine (DuckDB + Polars) │
        ┌──────────────────────────┐     │  • OutboxConsumer & FastEmbed   │
-       │   Motor Vectorial ONNX   │◄────┤  • ChromaDB Local               │
-       │   (bge-m3 / FastEmbed)   │     │  • Decaimiento Temporal Exp.    │
+       │   ONNX Vector Engine     │◄────┤  • Local ChromaDB               │
+       │   (bge-m3 / FastEmbed)   │     │  • Exponential Time Decay       │
        └──────────────────────────┘     └─────────────────────────────────┘
 ```
 
 ---
 
-## 2. Estructura del Monorepo
+## 2. Monorepo Structure
 
 ```text
 ozygram/
 ├── crates/
-│   ├── ozymem-core/       # Motor persistente (SQLite), Outbox triggers, grafo Petgraph, Engram store
-│   ├── ozymem-parser/     # Parsers AST Tree-Sitter nativos multi-lenguaje (Rust, Python, TS/JS, Go, SQL)
-│   ├── ozymem-cli/        # CLI standalone con subcomandos (scan, dashboard, projects, etc.)
-│   └── ozymem-server/     # Servidor MCP stdio modular de alta concurrencia (<5ms)
+│   ├── ozymem-core/       # Persistent storage (SQLite), Outbox triggers, Petgraph graph, Engram store
+│   ├── ozymem-parser/     # Native multi-language Tree-Sitter AST parsers (Rust, Python, TS/JS, Go, SQL)
+│   ├── ozymem-cli/        # Standalone CLI with subcommands (scan, dashboard, projects, etc.)
+│   └── ozymem-server/     # High-concurrency, low-latency stdio MCP server (< 5ms)
 ├── python/
-│   └── ozy-brain/         # Motor cognitivo: Supervisor, RiskCritic, DataEngine (DuckDB), OutboxConsumer
-└── docs/                  # Documentación técnica modular por secciones
+│   └── ozy-brain/         # Cognitive engine: Supervisor, RiskCritic, DataEngine (DuckDB), OutboxConsumer
+└── docs/                  # Modular technical documentation by domain
 ```
 
 ---
 
-## 3. El Carril Rápido (Fast Lane — Rust)
+## 3. Fast Lane (Rust)
 
-El carril rápido está compuesto por los crates `ozymem-core`, `ozymem-parser`, `ozymem-server` y `ozymem-cli`:
+The fast lane consists of `ozymem-core`, `ozymem-parser`, `ozymem-server`, and `ozymem-cli`:
 
-1. **Latencia Sub-Milisegundo**:
-   - Responde inmediatamente a las solicitudes de contexto del IDE.
-   - Las lecturas de firmas, dependencias y reglas de archivo se resuelven en $\approx 15\text{ ns}$ mediante memoria mapeada (`memmap2` y `rkyv`).
-2. **Autoridad Transaccional Única**:
-   - SQLite (`{project}/.ozymem/memory.db`) es la **única fuente de verdad** (*Single Source of Truth*).
-   - Ninguna escritura depende de que un servicio externo o proceso de Python esté activo. Si Python no responde o no está corriendo, la persistencia en Rust continúa sin degradarse.
-3. **Indexación Sintáctica en Caliente**:
-   - Parser multi-lenguaje (Rust, TypeScript, JavaScript, Python, Go, SQL) que extrae funciones, structs, clases y rutas HTTP sin necesidad de compiladores externos.
+1. **Sub-Millisecond Latency**:
+   - Responds immediately to IDE context requests.
+   - Signature lookups, dependency checks, and file rule reads resolve in $\approx 15\text{ ns}$ using memory-mapped zero-copy deserialization (`memmap2` and `rkyv`).
+2. **Single Transactional Authority**:
+   - SQLite (`{project}/.ozymem/memory.db`) is the **Single Source of Truth** (SSOT).
+   - No write operation depends on an external service or running Python daemon. If Python is unresponsive or not installed, Rust persistence operates without degradation.
+3. **Hot Syntactic Indexing**:
+   - Multi-language AST parser (Rust, TypeScript, JavaScript, Python, Go, SQL) extracts functions, structs, classes, and HTTP routes without requiring external language runtimes or compilers.
 
 ---
 
-## 4. Patrón Transaccional Outbox (`memory_outbox`)
+## 4. Transactional Outbox Pattern (`memory_outbox`)
 
-Para evitar "vectores fantasma" y desfases entre la base relacional y la base de datos vectorial, Ozygram implementa el patrón **Transactional Outbox** gobernado por triggers nativos en SQLite:
+To prevent phantom vectors and desynchronization between relational state and the vector database, Ozygram implements a **Transactional Outbox** pattern governed by native SQLite triggers:
 
-### Esquema de la Tabla
+### Table Schema
 ```sql
 CREATE TABLE IF NOT EXISTS memory_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type TEXT NOT NULL,       -- 'UPSERT' o 'DELETE'
-    entity_type TEXT NOT NULL,      -- 'lesson' u 'observation'
-    entity_id INTEGER NOT NULL,     -- ID en la tabla original
-    payload TEXT NOT NULL,          -- Contenido estructurado en JSON
+    event_type TEXT NOT NULL,       -- 'UPSERT' or 'DELETE'
+    entity_type TEXT NOT NULL,      -- 'lesson' or 'observation'
+    entity_id INTEGER NOT NULL,     -- ID in source table
+    payload TEXT NOT NULL,          -- JSON-serialized entity payload
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    processed_at TIMESTAMP NULL     -- NULL = pendiente de vectorización
+    processed_at TIMESTAMP NULL     -- NULL = pending vectorization
 );
 ```
 
-### Triggers Automáticos
-- **Inserción y Actualización**: Cada vez que se crea o actualiza una lección u observación en SQLite, un trigger automático inserta un evento `UPSERT` en `memory_outbox`.
-- **Borrado / Soft-Delete**: Cuando se elimina un registro de SQLite, se genera un evento `DELETE` en la outbox.
+### Automatic Triggers
+- **Insert & Update**: Whenever a lesson or observation is created or modified in SQLite, an automated trigger inserts an `UPSERT` event into `memory_outbox`.
+- **Delete / Soft-Delete**: Whenever a record is deleted from SQLite, a corresponding `DELETE` event is queued in the outbox.
 
-### Ventajas del Patrón Outbox
-- **Atomicidad Total**: Si una transacción de base de datos hace `ROLLBACK`, el evento de vectorización jamás llega a la outbox.
-- **Cero Vectores Huérfanos**: La base vectorial en ChromaDB nunca retiene recuerdos que hayan sido eliminados en la base principal.
-- **Desacoplamiento Temporal**: Rust escribe a disco en 1 ms; Python puede procesar los embeddings en segundo plano en lotes sin ralentizar al usuario.
+### Outbox Pattern Advantages
+- **Full Atomicity**: If a database transaction performs a `ROLLBACK`, the vectorization event never reaches the outbox.
+- **Zero Orphan Vectors**: ChromaDB never retains memories that have been deleted from the primary database.
+- **Temporal Decoupling**: Rust commits to disk in 1ms; Python handles dense embeddings in background batches without impacting user interactions.
 
 ---
 
-## 4. El Carril de Potencia (Power Lane — Python `ozy-brain`)
+## 5. Power Lane (Python `ozy-brain`)
 
-El motor auxiliar en Python se encarga de las tareas analíticas complejas que se benefician del ecosistema de Data Science:
+The auxiliary Python engine handles complex analytical tasks leveraging the modern data science and ML ecosystem:
 
 1. **`OutboxConsumer`**:
-   - Hilo demonio en segundo plano (intervalo de 10s) que vacía eventos pendientes de la tabla `memory_outbox`.
-   - Genera embeddings densos locales mediante `FastEmbed` y actualiza las colecciones en `ChromaDB`.
+   - Background daemon thread (10s polling interval) that flushes pending events from `memory_outbox`.
+   - Generates local dense embeddings via `FastEmbed` and synchronizes `ChromaDB` collections.
 2. **`SupervisorAgent` & `RiskCriticAgent`**:
-   - Orquesta la auditoría adversaria de planes de trabajo y cambios de código.
-   - En modo sin conexión, utiliza heurísticas deterministas; con LLM configurado, evalúa vectores de regresión sutiles.
+   - Orchestrates adversarial auditing of implementation plans and proposed code diffs.
+   - Operates in offline deterministic mode by default; evaluates subtle regression vectors with configured LLM providers.
 3. **`DataEngine` (DuckDB + Polars)**:
-   - Analiza el historial de commits y cambios en Git para computar puntuaciones de *Churn*, detectar archivos propensos a errores (*hotspots*) y correlacionar riesgos.
+   - Analyzes Git commit history and file modifications to compute *Churn* scores, detect hotspot files prone to regression, and correlate architectural risk.
 4. **`MemoryConsolidationAgent`**:
-   - Aplica fórmulas matemáticas de decaimiento exponencial ($S = C \cdot e^{-\lambda \Delta t}$) para podar lecciones obsoletas sin quemar tokens.
+   - Applies exponential time decay mathematical formulas ($S = C \cdot e^{-\lambda \Delta t}$) to prune stale or superseded memories without burning LLM tokens.
 
 ---
 
-## 5. Resiliencia: Daemon Auto-Spawn & Circuit Breaker
+## 6. Resilience: Daemon Auto-Spawn & Circuit Breaker
 
-La comunicación entre el servidor Rust y el motor Python incluye mecanismos de auto-sanación:
+Communication between the Rust MCP server and the Python engine features automated self-healing mechanisms:
 
-### Auto-Spawn de Daemon (`ensure_ozy_brain_running`)
-Si el servidor Rust recibe una petición semántica profunda (`deep_semantic_search`) o cognitiva (`ozy_brain`) y el demonio Python no está activo:
-1. Detecta automáticamente el entorno virtual local o global de Python.
-2. Inicia el proceso `ozy-brain` en segundo plano desacoplado (`DETACHED_PROCESS` en Windows).
-3. Espera el *health check* en el puerto RPC antes de dirigir la petición.
+### Daemon Auto-Spawn (`ensure_ozy_brain_running`)
+When the Rust server receives a cognitive or deep semantic search request (`ozy_brain` or `deep_semantic_search`) and the Python daemon is inactive:
+1. Automatically detects the local project virtual environment or system Python runtime.
+2. Spawns the `ozy-brain` process as a detached background worker (`DETACHED_PROCESS` on Windows).
+3. Awaits RPC health-check confirmation before routing the payload.
 
-### Circuit Breaker y Fallback Determinista
-Si el proceso de Python no responde, arroja un error o se agota el tiempo de espera (timeout de 3s):
-- El **Circuit Breaker** entra en acción inmediatamente.
-- Genera un resultado de fallback determinista basado en **SQLite FTS5 + BM25 local**.
-- El agente MCP recibe una respuesta válida sin fallos catastróficos ni pantallas de error.
+### Circuit Breaker & Deterministic Fallback
+If the Python process fails to respond, encounters an exception, or exceeds the timeout threshold (3s):
+- The **Circuit Breaker** triggers immediately.
+- Returns a deterministic fallback result computed via **SQLite FTS5 + BM25 local ranking**.
+- The MCP agent receives a valid response without catastrophic crashes or unhandled client exceptions.
