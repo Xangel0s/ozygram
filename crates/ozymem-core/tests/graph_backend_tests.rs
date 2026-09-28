@@ -1821,6 +1821,7 @@ fn test_exploration_trajectory_lifecycle() {
         reward_score: Some(1.0),
         is_solution: Some(false),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     assert_eq!(root_node.depth, 0);
@@ -1836,6 +1837,7 @@ fn test_exploration_trajectory_lifecycle() {
         reward_score: Some(10.0),
         is_solution: Some(true),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     assert_eq!(child_node.depth, 1);
@@ -1875,6 +1877,7 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
         reward_score: Some(0.0),
         is_solution: Some(false),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     // 2. Child branch 1: successful
@@ -1889,6 +1892,7 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
         reward_score: Some(8.0),
         is_solution: Some(true),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     // 3. Child branch 2: failed / pruned
@@ -1903,6 +1907,7 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
         reward_score: Some(-5.0),
         is_solution: Some(false),
         is_pruned: Some(true),
+        rollback_snapshot: None,
     }).unwrap();
 
     // Retrieve tree
@@ -1945,6 +1950,7 @@ fn test_exploration_observation_truncation_guard() {
         reward_score: None,
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
 
     // Verification: Observation must be truncated to MAX_OBSERVATION_BYTES + notice
@@ -1970,6 +1976,7 @@ fn test_exploration_cascade_delete() {
         reward_score: None,
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
 
     // Delete
@@ -2000,6 +2007,7 @@ fn test_exploration_auto_parenting_chain() {
         reward_score: Some(1.0),
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
     assert_eq!(n1.depth, 0);
     assert_eq!(n1.parent_id, None);
@@ -2016,6 +2024,7 @@ fn test_exploration_auto_parenting_chain() {
         reward_score: Some(2.0),
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
     assert_eq!(n2.depth, 1);
     assert_eq!(n2.parent_id, Some(n1.id.clone()));
@@ -2032,6 +2041,7 @@ fn test_exploration_auto_parenting_chain() {
         reward_score: Some(3.0),
         is_solution: Some(true),
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
     assert_eq!(n3.depth, 2);
     assert_eq!(n3.parent_id, Some(n2.id.clone()));
@@ -2063,6 +2073,7 @@ fn test_exploration_record_batch() {
             reward_score: Some(1.0),
             is_solution: None,
             is_pruned: None,
+            rollback_snapshot: None,
         },
         ozymem_core::graph_backend::RecordNodeParams {
             trajectory_id: traj_id.clone(),
@@ -2075,6 +2086,7 @@ fn test_exploration_record_batch() {
             reward_score: Some(2.0),
             is_solution: None,
             is_pruned: None,
+            rollback_snapshot: None,
         },
         ozymem_core::graph_backend::RecordNodeParams {
             trajectory_id: traj_id.clone(),
@@ -2087,6 +2099,7 @@ fn test_exploration_record_batch() {
             reward_score: Some(5.0),
             is_solution: Some(true),
             is_pruned: None,
+            rollback_snapshot: None,
         },
     ];
 
@@ -2123,6 +2136,7 @@ fn test_exploration_objective_reward_grounding() {
         reward_score: Some(1.0),
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
 
     // Objective override should have clamped the reward to -1.0
@@ -2151,6 +2165,7 @@ fn test_exploration_diagnose_trajectory() {
         reward_score: Some(0.0),
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
 
     // Node 2: Slow bottleneck node (latency 4500ms > 3000ms) and unpruned negative reward
@@ -2165,6 +2180,7 @@ fn test_exploration_diagnose_trajectory() {
         reward_score: Some(-2.0),
         is_solution: None,
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     // Node 3: Solution node
@@ -2179,6 +2195,7 @@ fn test_exploration_diagnose_trajectory() {
         reward_score: Some(5.0),
         is_solution: Some(true),
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
 
     let diag = backend.diagnose_trajectory(&traj_id).unwrap();
@@ -2213,6 +2230,7 @@ fn test_exploration_auto_pruning_on_failure() {
         reward_score: Some(1.0), // Intentó auto-asignarse recompensa positiva pero falló el test
         is_solution: None,
         is_pruned: None, // No especificado -> auto-poda
+        rollback_snapshot: None,
     }).unwrap();
 
     assert!(failed_node.is_pruned, "El nodo con fallos en test debió ser podado automáticamente");
@@ -2240,6 +2258,7 @@ fn test_exploration_recommended_resume_node() {
         reward_score: Some(0.5),
         is_solution: Some(false),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     // Leaf node: highest value active leaf
@@ -2254,6 +2273,7 @@ fn test_exploration_recommended_resume_node() {
         reward_score: Some(2.5),
         is_solution: Some(false),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     let resume_node = backend.get_recommended_resume_node(&traj_id).unwrap();
@@ -2288,6 +2308,7 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
         reward_score: Some(0.5),
         is_solution: Some(false),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     // 2. Pruned branch (failed hypothesis)
@@ -2302,6 +2323,7 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
         reward_score: Some(-3.0),
         is_solution: Some(false),
         is_pruned: Some(true),
+        rollback_snapshot: None,
     }).unwrap();
 
     // 3. Solution branch
@@ -2316,6 +2338,7 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
         reward_score: Some(10.0),
         is_solution: Some(true),
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
@@ -2362,6 +2385,7 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
         reward_score: None, // Auto-Reward
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
 
     assert_eq!(test_node.reward_score, 1.0, "Debe asignar +1.0 ante éxito en tests sin reward manual");
@@ -2380,6 +2404,7 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
         reward_score: None, // Auto-Reward
         is_solution: None,
         is_pruned: None,
+        rollback_snapshot: None,
     }).unwrap();
 
     assert_eq!(syntax_node.reward_score, -0.8, "Debe penalizar con -0.8 ante error de sintaxis/compilación");
@@ -2398,6 +2423,7 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
         reward_score: Some(5.0),
         is_solution: Some(true), // Agente falsamente declara solución
         is_pruned: Some(false),
+        rollback_snapshot: None,
     }).unwrap();
 
     assert!(!false_solution_node.is_solution, "La solución falsa debió ser rechazada (is_solution = false)");
@@ -2494,6 +2520,96 @@ async fn test_lesson_freshness_reality_check_mtime_and_missing_file() {
     assert!(display_str.contains("[ALERT: STALE_MEMORY: target file not found on disk]"));
     assert!(!display_str.contains("❌"));
     assert!(!display_str.contains("⚠️"));
+}
+
+#[test]
+fn test_exploration_node_rollback_file_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let db = root.join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(
+        &root.to_string_lossy(),
+        "Rollback test trajectory",
+        None,
+    ).unwrap();
+
+    let app_file = root.join("src").join("app.rs");
+    std::fs::create_dir_all(app_file.parent().unwrap()).unwrap();
+    std::fs::write(&app_file, "fn main() { original_code(); }").unwrap();
+
+    // 1. Registrar un nodo de exploración que guarda el snapshot previo
+    let snapshot = serde_json::json!({
+        "files": [
+            {
+                "path": "src/app.rs",
+                "content": "fn main() { original_code(); }"
+            }
+        ]
+    }).to_string();
+
+    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "edit_code".to_string(),
+        action_payload: "patch app.rs with broken syntax".to_string(),
+        observation: "syntax error: unexpected token".to_string(),
+        cost_tokens: Some(120),
+        latency_ms: Some(60),
+        reward_score: None, // Auto-Reward detecta syntax error -> -0.8, is_pruned = true
+        is_solution: None,
+        is_pruned: None,
+        rollback_snapshot: Some(snapshot),
+    }).unwrap();
+
+    assert!(node.is_pruned, "El nodo con error de sintaxis debió ser podado automáticamente");
+    assert_eq!(node.reward_score, -0.8);
+    assert!(node.rollback_snapshot.is_some());
+
+    // Simular que el archivo en disco quedó corrupto tras la acción del agente
+    std::fs::write(&app_file, "fn main() { broken_syntax_corrupt; }}}").unwrap();
+    assert_eq!(std::fs::read_to_string(&app_file).unwrap(), "fn main() { broken_syntax_corrupt; }}}");
+
+    // 2. Ejecutar rollback_node
+    let report = backend.rollback_node(&node.id).unwrap();
+    assert_eq!(report.status, "ok");
+    assert_eq!(report.restored_files, vec!["src/app.rs"]);
+    assert!(report.message.contains("[ROLLBACK: SUCCESS]"));
+
+    // 3. Verificar que el archivo en disco fue restaurado al contenido original exacto
+    let restored_content = std::fs::read_to_string(&app_file).unwrap();
+    assert_eq!(restored_content, "fn main() { original_code(); }", "El archivo en disco debió restaurarse al snapshot original");
+
+    // 4. Verificar rollback_to_parent desde un nodo hijo sin snapshot propio
+    let child_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(node.id.clone()),
+        action_type: "run_test".to_string(),
+        action_payload: "cargo test".to_string(),
+        observation: "test failed".to_string(),
+        cost_tokens: Some(50),
+        latency_ms: Some(30),
+        reward_score: Some(-1.0),
+        is_solution: Some(false),
+        is_pruned: Some(true),
+        rollback_snapshot: None, // No tiene snapshot propio
+    }).unwrap();
+
+    // Modificar el archivo otra vez
+    std::fs::write(&app_file, "second bad edit").unwrap();
+
+    // rollback_to_parent debe delegar al snapshot del nodo padre
+    let parent_report = backend.rollback_to_parent(&child_node.id).unwrap();
+    assert_eq!(parent_report.status, "ok");
+    assert_eq!(parent_report.restored_files, vec!["src/app.rs"]);
+    assert_eq!(std::fs::read_to_string(&app_file).unwrap(), "fn main() { original_code(); }");
+
+    // 5. Verificar que el árbol Mermaid muestre la etiqueta situacional de rollback listo sin emojis
+    let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
+    assert!(mermaid.contains("[ALERT: PRUNED: ROLLBACK READY]"));
+    assert!(!mermaid.contains("❌"));
+    assert!(!mermaid.contains("⚠️"));
 }
 
 

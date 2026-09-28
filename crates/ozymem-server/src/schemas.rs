@@ -133,8 +133,10 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["start", "record_step", "record_batch", "complete", "get_tree", "diagnose", "list", "delete", "resume"], "default": "record_step" },
+                            "action": { "type": "string", "enum": ["start", "record_step", "record_batch", "complete", "get_tree", "diagnose", "list", "delete", "resume", "rollback"], "default": "record_step" },
                             "trajectory_id": { "type": "string", "description": "ID of the exploration trajectory" },
+                            "node_id": { "type": "string", "description": "Node ID to rollback (for 'rollback')" },
+                            "to_parent": { "type": "boolean", "description": "Whether to rollback to parent node snapshot (for 'rollback')" },
                             "parent_id": { "type": "string", "description": "Optional parent node ID for tree branching (auto-parents to last active leaf if omitted)" },
                             "task_description": { "type": "string", "description": "Goal or bug to solve (for 'start')" },
                             "project_path": { "type": "string", "description": "Optional project path" },
@@ -142,6 +144,7 @@ pub fn handle_tools_list(
                             "action_type": { "type": "string", "description": "Action taken ('tool_call', 'edit_code', 'ast_query', 'run_test', etc.)" },
                             "action_payload": { "type": "string", "description": "Payload/arguments of the action (JSON or text)" },
                             "observation": { "type": "string", "description": "Resulting observation or tool output (truncated to 32KB)" },
+                            "rollback_snapshot": { "type": "string", "description": "JSON snapshot of files before modification for safe backtracking/rollback" },
                             "steps": {
                                 "type": "array",
                                 "description": "Array of steps for batch recording (for 'record_batch')",
@@ -156,7 +159,8 @@ pub fn handle_tools_list(
                                         "latency_ms": { "type": "integer" },
                                         "reward_score": { "type": "number" },
                                         "is_solution": { "type": "boolean" },
-                                        "is_pruned": { "type": "boolean" }
+                                        "is_pruned": { "type": "boolean" },
+                                        "rollback_snapshot": { "type": "string" }
                                     },
                                     "required": ["action_type"]
                                 }

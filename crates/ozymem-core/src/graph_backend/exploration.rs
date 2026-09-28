@@ -49,6 +49,8 @@ pub struct ExplorationNode {
     pub value_estimate: f64,
     pub is_solution: bool,
     pub is_pruned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_snapshot: Option<String>,
     pub created_at: String,
 }
 
@@ -71,6 +73,17 @@ pub struct RecordNodeParams {
     pub reward_score: Option<f64>,
     pub is_solution: Option<bool>,
     pub is_pruned: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_snapshot: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RollbackReport {
+    pub target_node_id: String,
+    pub trajectory_id: String,
+    pub restored_files: Vec<String>,
+    pub status: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -355,8 +368,8 @@ impl GraphBackend {
             "INSERT INTO exploration_nodes (
                 id, trajectory_id, parent_id, depth, action_type, action_payload,
                 observation, cost_tokens, latency_ms, reward_score, visit_count,
-                value_estimate, is_solution, is_pruned, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?12, ?13, datetime('now'))",
+                value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?12, ?13, ?14, datetime('now'))",
             params![
                 node_id,
                 params.trajectory_id,
@@ -371,6 +384,7 @@ impl GraphBackend {
                 reward, // Initial value estimate is its own reward
                 is_solution,
                 is_pruned,
+                params.rollback_snapshot,
             ],
         ).context("Error al registrar nodo de exploración")?;
 
@@ -435,6 +449,7 @@ impl GraphBackend {
             value_estimate: reward,
             is_solution,
             is_pruned,
+            rollback_snapshot: params.rollback_snapshot,
             created_at,
         })
     }
@@ -485,7 +500,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
                     observation, cost_tokens, latency_ms, reward_score, visit_count,
-                    value_estimate, is_solution, is_pruned, created_at
+                    value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
              FROM exploration_nodes
              WHERE trajectory_id = ?1
              ORDER BY depth ASC, created_at ASC",
@@ -507,7 +522,8 @@ impl GraphBackend {
                 value_estimate: row.get(11)?,
                 is_solution: row.get(12)?,
                 is_pruned: row.get(13)?,
-                created_at: row.get(14)?,
+                rollback_snapshot: row.get(14)?,
+                created_at: row.get(15)?,
             })
         })?;
 
@@ -772,7 +788,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
                     observation, cost_tokens, latency_ms, reward_score, visit_count,
-                    value_estimate, is_solution, is_pruned, created_at
+                    value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
              FROM exploration_nodes
              WHERE trajectory_id = ?1 AND is_pruned = 0 AND is_solution = 0
              ORDER BY value_estimate DESC, depth DESC, created_at DESC
@@ -796,10 +812,145 @@ impl GraphBackend {
                 value_estimate: row.get(11)?,
                 is_solution: row.get(12)?,
                 is_pruned: row.get(13)?,
-                created_at: row.get(14)?,
+                rollback_snapshot: row.get(14)?,
+                created_at: row.get(15)?,
             }))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Revierte los cambios de archivos asociados al snapshot de un nodo
+    pub fn rollback_node(&self, node_id: &str) -> Result<RollbackReport> {
+        let (snapshot_opt, project_path, trajectory_id) = {
+            let inner = self.inner.lock().unwrap();
+            let row: rusqlite::Result<(Option<String>, String, String)> = inner.sqlite.query_row(
+                "SELECT n.rollback_snapshot, t.project_path, n.trajectory_id
+                 FROM exploration_nodes n
+                 JOIN exploration_trajectories t ON n.trajectory_id = t.id
+                 WHERE n.id = ?1",
+                params![node_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            );
+            match row {
+                Ok(tuple) => tuple,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Ok(RollbackReport {
+                        target_node_id: node_id.to_string(),
+                        trajectory_id: String::new(),
+                        restored_files: Vec::new(),
+                        status: "not_found".to_string(),
+                        message: format!("[ROLLBACK: ERROR] No se encontró el nodo '{}'", node_id),
+                    });
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
+
+        let snapshot_str = match snapshot_opt {
+            Some(s) if !s.trim().is_empty() => s,
+            _ => {
+                return Ok(RollbackReport {
+                    target_node_id: node_id.to_string(),
+                    trajectory_id,
+                    restored_files: Vec::new(),
+                    status: "skipped_no_snapshot".to_string(),
+                    message: format!("[ROLLBACK: SKIPPED] El nodo '{}' no contiene snapshot de reversión", node_id),
+                });
+            }
+        };
+
+        let base_dir = std::path::Path::new(&project_path);
+        let mut restored = Vec::new();
+
+        // 1. JSON estructurado
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&snapshot_str) {
+            // Caso A: {"files": [{"path": "...", "content": "..."}, ...]}
+            if let Some(files_arr) = val.get("files").and_then(|f| f.as_array()) {
+                for item in files_arr {
+                    if let (Some(rel_path), Some(content)) = (
+                        item.get("path").or_else(|| item.get("file_path")).and_then(|p| p.as_str()),
+                        item.get("content").or_else(|| item.get("before_content")).and_then(|c| c.as_str()),
+                    ) {
+                        let target_path = if std::path::Path::new(rel_path).is_absolute() {
+                            std::path::PathBuf::from(rel_path)
+                        } else {
+                            base_dir.join(rel_path)
+                        };
+                        if let Some(parent) = target_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if std::fs::write(&target_path, content).is_ok() {
+                            restored.push(rel_path.to_string());
+                        }
+                    }
+                }
+            }
+            // Caso B: {"file_path": "...", "content": "..."}
+            else if let (Some(rel_path), Some(content)) = (
+                val.get("file_path").or_else(|| val.get("path")).and_then(|p| p.as_str()),
+                val.get("content").or_else(|| val.get("before_content")).and_then(|c| c.as_str()),
+            ) {
+                let target_path = if std::path::Path::new(rel_path).is_absolute() {
+                    std::path::PathBuf::from(rel_path)
+                } else {
+                    base_dir.join(rel_path)
+                };
+                if let Some(parent) = target_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&target_path, content).is_ok() {
+                    restored.push(rel_path.to_string());
+                }
+            }
+            // Caso C: {"git_restore": ["path1", ...]}
+            else if let Some(git_files) = val.get("git_restore").and_then(|g| g.as_array()) {
+                for item in git_files {
+                    if let Some(rel_path) = item.as_str() {
+                        let status = std::process::Command::new("git")
+                            .args(["checkout", "--", rel_path])
+                            .current_dir(base_dir)
+                            .status();
+                        if status.map(|s| s.success()).unwrap_or(false) {
+                            restored.push(rel_path.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        let count = restored.len();
+        Ok(RollbackReport {
+            target_node_id: node_id.to_string(),
+            trajectory_id,
+            restored_files: restored,
+            status: "ok".to_string(),
+            message: format!("[ROLLBACK: SUCCESS] Se restauraron {} archivo(s) al estado previo del snapshot", count),
+        })
+    }
+
+    /// Revierte al snapshot del padre del nodo o al propio nodo si éste tiene snapshot
+    pub fn rollback_to_parent(&self, node_id: &str) -> Result<RollbackReport> {
+        let parent_id_opt: Option<String> = {
+            let inner = self.inner.lock().unwrap();
+            inner.sqlite.query_row(
+                "SELECT parent_id FROM exploration_nodes WHERE id = ?1",
+                params![node_id],
+                |r| r.get(0),
+            ).ok().flatten()
+        };
+
+        // Si el propio nodo tiene snapshot válido con archivos restaurados, revertir
+        let report = self.rollback_node(node_id)?;
+        if report.status == "ok" && !report.restored_files.is_empty() {
+            return Ok(report);
+        }
+
+        // Si no, intentar con el nodo padre
+        if let Some(pid) = parent_id_opt {
+            self.rollback_node(&pid)
+        } else {
+            Ok(report)
         }
     }
 
@@ -849,7 +1000,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
                     observation, cost_tokens, latency_ms, reward_score, visit_count,
-                    value_estimate, is_solution, is_pruned, created_at
+                    value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
              FROM exploration_nodes
              WHERE trajectory_id = ?1
              ORDER BY depth ASC, created_at ASC",
@@ -872,7 +1023,8 @@ impl GraphBackend {
                     value_estimate: row.get(11)?,
                     is_solution: row.get(12)?,
                     is_pruned: row.get(13)?,
-                    created_at: row.get(14)?,
+                    rollback_snapshot: row.get(14)?,
+                    created_at: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -897,6 +1049,8 @@ impl GraphBackend {
             let node_id = format!("n_{}", sanitize_mermaid_id(&n.id));
             let (status_tag, class_name) = if n.is_solution {
                 ("[SOLUTION]", "solution")
+            } else if n.is_pruned && n.rollback_snapshot.is_some() {
+                ("[ALERT: PRUNED: ROLLBACK READY]", "pruned")
             } else if n.action_payload.contains("[ALERT: FALSE_SOLUTION_REJECTED]") {
                 ("[ALERT: FALSE_SOLUTION_REJECTED]", "pruned")
             } else if n.action_payload.contains("[ALERT: SYNTAX_ERROR]")

@@ -96,6 +96,10 @@ pub fn handle_exploration(
                     }
                 });
 
+            let rollback_snapshot = args
+                .get("rollback_snapshot")
+                .map(|v| if v.is_string() { v.as_str().unwrap().to_string() } else { v.to_string() });
+
             let node = backend.record_exploration_node(RecordNodeParams {
                 trajectory_id,
                 parent_id,
@@ -107,6 +111,7 @@ pub fn handle_exploration(
                 reward_score,
                 is_solution,
                 is_pruned,
+                rollback_snapshot,
             })?;
 
             let res = json!({
@@ -160,6 +165,10 @@ pub fn handle_exploration(
                     }
                 });
 
+                let rollback_snapshot = s
+                    .get("rollback_snapshot")
+                    .map(|v| if v.is_string() { v.as_str().unwrap().to_string() } else { v.to_string() });
+
                 batch_steps.push(RecordNodeParams {
                     trajectory_id: trajectory_id.clone(),
                     parent_id,
@@ -171,6 +180,7 @@ pub fn handle_exploration(
                     reward_score,
                     is_solution,
                     is_pruned,
+                    rollback_snapshot,
                 });
             }
 
@@ -337,6 +347,34 @@ pub fn handle_exploration(
                 } else {
                     "No hay nodos activos pendientes en la trayectoria (todos podados o marcados como solución)"
                 }
+            });
+
+            Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: serde_json::to_string_pretty(&res)?,
+                }],
+                is_error: None,
+            })
+        }
+
+        "rollback" => {
+            let node_id = args
+                .get("node_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("Falta el parámetro 'node_id' para ejecutar rollback"))?;
+
+            let to_parent = args.get("to_parent").and_then(Value::as_bool).unwrap_or(false);
+            let report = if to_parent {
+                backend.rollback_to_parent(node_id)?
+            } else {
+                backend.rollback_node(node_id)?
+            };
+
+            let res = json!({
+                "status": "ok",
+                "rollback": report,
+                "message": format!("[ROLLBACK] Proceso finalizado con estado '{}': {} archivos restaurados", report.status, report.restored_files.len())
             });
 
             Ok(ToolCallResult {
