@@ -50,6 +50,13 @@ class JSONRPCHandler(socketserver.StreamRequestHandler):
                     consumer = OutboxConsumer(db_path=params.get("db_path"), chroma_dir=params.get("chroma_dir"))
                     stats = consumer.drain(limit=int(params.get("limit", 100)))
                     res = {"jsonrpc": "2.0", "id": req_id, "result": stats}
+                elif method in ("shutdown", "exit", "quit"):
+                    res = {"jsonrpc": "2.0", "id": req_id, "result": {"status": "shutting down"}}
+                    out = json.dumps(res, ensure_ascii=False) + "\n"
+                    self.wfile.write(out.encode("utf-8"))
+                    self.wfile.flush()
+                    threading.Thread(target=lambda: os._exit(0)).start()
+                    return
                 else:
                     action = method or params.get("action") or "plan"
                     payload = params if isinstance(params, dict) else {}

@@ -104,11 +104,35 @@ pub(crate) async fn handle_ozy_brain(
         .map(|p| build_ozy_brain_git_context(Path::new(&p), limit.min(20)))
         .unwrap_or_else(|| json!({ "available": false, "reason": "project path unavailable" }));
 
+    let target_file_opt = tool_call
+        .arguments
+        .get("file_path")
+        .or_else(|| tool_call.arguments.get("file"))
+        .or_else(|| tool_call.arguments.get("target_file"))
+        .and_then(Value::as_str);
+
     let mut impact = Vec::new();
-    if let Some(target) = tool_call.arguments.get("file_path").or_else(|| tool_call.arguments.get("file")).and_then(Value::as_str) {
+    if let Some(target) = target_file_opt {
         impact = backend.analyze_impact(target, 2);
     } else if let Some(first_file) = files.first() {
         impact = backend.analyze_impact(first_file, 2);
+    }
+
+    let trajectory_id_opt = tool_call
+        .arguments
+        .get("trajectory_id")
+        .and_then(Value::as_str);
+
+    let mut trajectory_diagnosis = Value::Null;
+    let mut recommended_resume_node = Value::Null;
+
+    if let Some(traj_id) = trajectory_id_opt {
+        if let Ok(diag) = backend.diagnose_trajectory(traj_id) {
+            trajectory_diagnosis = serde_json::to_value(&diag).unwrap_or(Value::Null);
+        }
+        if let Ok(Some(resume_node)) = backend.get_recommended_resume_node(traj_id) {
+            recommended_resume_node = serde_json::to_value(&resume_node).unwrap_or(Value::Null);
+        }
     }
 
     let db_path = backend.project_path().map(|p| {
@@ -159,6 +183,15 @@ pub(crate) async fn handle_ozy_brain(
         "relevant_lessons": relevant_lessons,
         "git_context": git_context,
         "impact": impact,
+        "blast_radius": impact.len(),
+        "target_file": target_file_opt,
+        "file_path": target_file_opt,
+        "trajectory_id": trajectory_id_opt,
+        "trajectory_diagnosis": trajectory_diagnosis,
+        "recommended_resume_node": recommended_resume_node,
+        "proposed_action": tool_call.arguments.get("proposed_action").cloned().unwrap_or_else(|| {
+            tool_call.arguments.get("action_payload").cloned().unwrap_or(Value::Null)
+        }),
         "failures": tool_call.arguments.get("failures").cloned().unwrap_or_else(|| json!([])),
         "changes": tool_call.arguments.get("changes").cloned().unwrap_or_else(|| json!([])),
     });
@@ -316,6 +349,91 @@ pub fn ensure_ozy_brain_running() {
 }
 
 pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
+    if action == "simulate_action" || action == "critique_hypothesis" {
+        let target_file = payload
+            .get("target_file")
+            .or_else(|| payload.get("file_path"))
+            .and_then(Value::as_str)
+            .unwrap_or("workspace");
+        let blast_radius = payload
+            .get("blast_radius")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| {
+                payload.get("impact").and_then(Value::as_array).map(|a| a.len() as u64).unwrap_or(0)
+            }) as usize;
+
+        let critical_keywords = ["schema", "auth", "migration", "core", "token", "secret", "config", "backend"];
+        let is_critical = critical_keywords.iter().any(|kw| target_file.to_lowercase().contains(kw));
+        let snapshot_required = blast_radius >= 3 || is_critical;
+
+        let resume_node_id = payload
+            .get("recommended_resume_node")
+            .and_then(|r| r.get("id"))
+            .and_then(Value::as_str);
+
+        let mut plan = vec![
+            format!("[SIMULATION: ACTION PREVIEW] Simulación determinista sobre '{target_file}'."),
+            format!("[BLAST RADIUS] Radio de impacto calculado: {blast_radius} archivo(s) dependiente(s)."),
+        ];
+
+        if snapshot_required {
+            plan.push("[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED] Se requiere snapshot previo en ozy_exploration para rollback seguro.".to_string());
+        } else {
+            plan.push("[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT] Cambio con impacto acotado en dependencias.".to_string());
+        }
+
+        if let Some(rid) = resume_node_id {
+            plan.push(format!("[RESUME RECOMMENDATION] En caso de fallo o poda, reanudar desde nodo '{rid}'."));
+        }
+
+        let mut risks = Vec::new();
+        if snapshot_required {
+            risks.push(format!("Riesgo de regresión en cascada sobre {blast_radius} dependientes."));
+        }
+        if is_critical {
+            risks.push("Modificación directa sobre contratos o módulos críticos del sistema.".to_string());
+        }
+        if risks.is_empty() {
+            risks.push("Riesgo mínimo bajo alcance actual.".to_string());
+        }
+
+        let recommendations = vec![
+            if snapshot_required {
+                "Registrar nodo de exploración con rollback_snapshot antes de aplicar diffs.".to_string()
+            } else {
+                "Aplicar cambios de manera incremental.".to_string()
+            },
+            "Verificar suite de pruebas sobre componentes dependientes.".to_string(),
+        ];
+
+        return json!({
+            "action": action,
+            "summary": format!("Simulación de acción: blast radius {} | Snapshot {}.", blast_radius, if snapshot_required { "REQUERIDO" } else { "OPCIONAL" }),
+            "plan": plan,
+            "risks": risks,
+            "recommendations": recommendations,
+            "memory_updates": [format!("Blast radius: {blast_radius}"), format!("Snapshot required: {snapshot_required}")],
+            "confidence": 0.88,
+            "engine": "ozymem-fast-lane-fallback",
+            "brain_version": "0.4.0",
+            "brain_schema_version": "v1",
+            "safe_mode": true,
+            "structured_plan": {
+                "target_file": target_file,
+                "blast_radius_analysis": {
+                    "total_blast_radius": blast_radius,
+                    "risk_tier": if blast_radius > 6 || is_critical { "critical" } else if blast_radius >= 3 { "high" } else { "low" },
+                },
+                "exploration_guidance": {
+                    "snapshot_required": snapshot_required,
+                    "snapshot_alert": if snapshot_required { "[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]" } else { "[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT]" },
+                    "recommended_resume_node_id": resume_node_id,
+                    "backtracking_advice": resume_node_id.map(|rid| format!("Usar rollback_to_parent hacia '{rid}' si la prueba falla.")).unwrap_or_else(|| "No hay nodo de rescate previo.".to_string()),
+                }
+            }
+        });
+    }
+
     let goal = payload.get("goal").and_then(Value::as_str).unwrap_or("analyze task");
     let relevant_lessons = payload.get("relevant_lessons").and_then(Value::as_array);
     let count = relevant_lessons.map(|l| l.len()).unwrap_or(0);
@@ -522,6 +640,21 @@ pub(crate) fn format_ozy_brain_response(value: &Value) -> String {
                         let list = high.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
                         body.push_str(&format!("- high_severity_nodes: [{list}]\n"));
                     }
+                }
+            }
+            if let Some(exp) = structured.get("exploration_guidance").and_then(Value::as_object) {
+                body.push_str("\n### Exploration & Rollback Guidance\n");
+                if let Some(req) = exp.get("snapshot_required").and_then(Value::as_bool) {
+                    body.push_str(&format!("- snapshot_required: {req}\n"));
+                }
+                if let Some(alert) = exp.get("snapshot_alert").and_then(Value::as_str) {
+                    body.push_str(&format!("- alert: {alert}\n"));
+                }
+                if let Some(resume) = exp.get("recommended_resume_node_id").and_then(Value::as_str) {
+                    body.push_str(&format!("- recommended_resume_node_id: {resume}\n"));
+                }
+                if let Some(advice) = exp.get("backtracking_advice").and_then(Value::as_str) {
+                    body.push_str(&format!("- backtracking_advice: {advice}\n"));
                 }
             }
             if let Some(seq) = structured.get("topological_edit_sequence").and_then(Value::as_array) {

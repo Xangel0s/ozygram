@@ -217,6 +217,35 @@ class OzyBrainTests(unittest.TestCase):
         self.assertGreaterEqual(len(result["memory_updates"]), 2)
         self.assertTrue(any("AuthModule" in u for u in result["memory_updates"]))
 
+    def test_simulate_action_blast_radius_and_snapshot_required(self):
+        # 1. Critical schema file with high blast radius -> snapshot required
+        result = run("simulate_action", {
+            "project": "ozymem",
+            "target_file": "crates/ozymem-core/src/graph_backend/schema.rs",
+            "impact": [
+                {"file_path": "crates/ozymem-core/src/graph_backend/indexing.rs", "depth": 1},
+                {"file_path": "crates/ozymem-core/src/graph_backend/exploration.rs", "depth": 1},
+                {"file_path": "crates/ozymem-server/src/dispatch.rs", "depth": 2},
+                {"file_path": "crates/ozymem-cli/src/main.rs", "depth": 2},
+            ],
+            "recommended_resume_node": {"id": "node_root_safe_1"},
+        })
+        self.assertEqual(result["action"], "simulate_action")
+        self.assertTrue(any("[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]" in p for p in result["plan"]))
+        self.assertTrue(any("[RESUME RECOMMENDATION]" in p for p in result["plan"]))
+        self.assertTrue(result["structured_plan"]["exploration_guidance"]["snapshot_required"])
+        self.assertEqual(result["structured_plan"]["exploration_guidance"]["recommended_resume_node_id"], "node_root_safe_1")
+        self.assertEqual(result["structured_plan"]["blast_radius_analysis"]["total_blast_radius"], 4)
+
+        # 2. Non-critical leaf file with 0 blast radius -> safe
+        leaf_res = run("simulate_action", {
+            "project": "ozymem",
+            "target_file": "docs/architecture.md",
+            "impact": [],
+        })
+        self.assertFalse(leaf_res["structured_plan"]["exploration_guidance"]["snapshot_required"])
+        self.assertTrue(any("[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT]" in p for p in leaf_res["plan"]))
+
 
 if __name__ == "__main__":
     unittest.main()

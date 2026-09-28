@@ -111,14 +111,18 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_brain",
-                    description: "Hybrid Ozy brain: Rust-curated project context plus Python reasoning for plans, reflection, deep recall, risk review, memory ranking, and mental models. Advisory only; it does not modify files or execute commands.",
+                    description: "Hybrid Ozy brain: Rust-curated project context plus Python reasoning for plans, reflection, deep recall, risk review, action simulation with blast radius, memory ranking, and mental models. Advisory only; it does not modify files or execute commands.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review", "deep_semantic_search", "audit_changes_with_critic", "get_repository_hotspots", "consolidate_memory", "sync_outbox"], "default": "plan" },
+                            "action": { "type": "string", "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review", "deep_semantic_search", "audit_changes_with_critic", "get_repository_hotspots", "consolidate_memory", "sync_outbox", "simulate_action", "critique_hypothesis"], "default": "plan" },
                             "goal": { "type": "string" },
                             "query": { "type": "string" },
                             "project": { "type": "string" },
+                            "file_path": { "type": "string", "description": "Target file for blast radius and impact simulation" },
+                            "trajectory_id": { "type": "string", "description": "Exploration trajectory ID for tree context and resume recommendation" },
+                            "proposed_action": { "type": "string", "description": "Proposed action or code diff to simulate" },
+                            "parent_node_id": { "type": "string", "description": "Current parent node ID in exploration tree" },
                             "max_tokens": { "type": "integer", "default": 4000 },
                             "limit": { "type": "integer", "default": 20 },
                             "failures": { "type": "array", "items": { "type": "string" } },

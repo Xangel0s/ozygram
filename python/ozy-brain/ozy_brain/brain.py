@@ -144,6 +144,78 @@ def _dream_rsi_handler(payload: dict[str, Any]) -> BrainResponse:
     )
 
 
+def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
+    target_file = str(payload.get("file_path") or payload.get("file") or payload.get("target_file") or "")
+    impact = payload.get("impact") or []
+    blast_radius = int(payload.get("blast_radius") or len(impact))
+
+    critical_keywords = ["schema", "auth", "migration", "core", "token", "secret", "config", "backend"]
+    is_critical = any(kw in target_file.lower() for kw in critical_keywords) or any(
+        isinstance(item, dict) and any(kw in str(item.get("file_path", "")).lower() for kw in critical_keywords)
+        for item in impact
+    )
+
+    snapshot_required = blast_radius >= 3 or is_critical
+
+    plan_steps = [
+        f"[SIMULATION: ACTION PREVIEW] Simulación de acción sobre '{target_file or 'workspace'}'.",
+        f"[BLAST RADIUS] Radio de impacto calculado: {blast_radius} archivo(s) dependiente(s).",
+    ]
+    if snapshot_required:
+        plan_steps.append(
+            "[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED] Se requiere snapshot previo en ozy_exploration para rollback seguro."
+        )
+    else:
+        plan_steps.append(
+            "[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT] Cambio con impacto acotado en dependencias."
+        )
+
+    resume_node = payload.get("recommended_resume_node")
+    resume_node_id = None
+    if isinstance(resume_node, dict) and resume_node.get("id"):
+        resume_node_id = resume_node.get("id")
+        plan_steps.append(
+            f"[RESUME RECOMMENDATION] En caso de fallo o poda, reanudar desde nodo '{resume_node_id}'."
+        )
+
+    risks = []
+    if snapshot_required:
+        risks.append(f"Riesgo de regresión en cascada sobre {blast_radius} dependientes.")
+    if is_critical:
+        risks.append("Modificación directa sobre módulos críticos o contratos del sistema.")
+
+    recommendations = [
+        "Registrar nodo de exploración con rollback_snapshot antes de aplicar diffs."
+        if snapshot_required
+        else "Aplicar cambios de manera incremental.",
+        "Verificar suite de pruebas sobre componentes dependientes.",
+    ]
+
+    return BrainResponse(
+        action="simulate_action",
+        summary=f"Simulación de acción: blast radius {blast_radius} | Snapshot {'REQUERIDO' if snapshot_required else 'OPCIONAL'}.",
+        plan=plan_steps,
+        risks=risks or ["Riesgo mínimo bajo alcance actual."],
+        recommendations=recommendations,
+        memory_updates=[f"Blast radius: {blast_radius}", f"Snapshot required: {snapshot_required}"],
+        confidence=0.88,
+        structured_plan={
+            "target_file": target_file,
+            "blast_radius_analysis": {
+                "total_blast_radius": blast_radius,
+                "risk_tier": "critical" if (blast_radius > 6 or is_critical) else ("high" if blast_radius >= 3 else "low"),
+                "high_severity_files": [i.get("file_path") for i in impact if isinstance(i, dict)][:5],
+            },
+            "exploration_guidance": {
+                "snapshot_required": snapshot_required,
+                "snapshot_alert": "[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]" if snapshot_required else "[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT]",
+                "recommended_resume_node_id": resume_node_id,
+                "backtracking_advice": f"Usar rollback_to_parent hacia '{resume_node_id}' si la prueba falla." if resume_node_id else "No hay nodo de rescate previo.",
+            },
+        },
+    )
+
+
 ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "plan": plan,
     "reflect": reflect,
@@ -164,6 +236,8 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "upsert_vector_memory": _upsert_vector_memory_handler,
     "sync_outbox": _sync_outbox_handler,
     "dream_rsi": _dream_rsi_handler,
+    "simulate_action": _simulate_action_handler,
+    "critique_hypothesis": _simulate_action_handler,
 }
 
 

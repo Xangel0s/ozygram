@@ -1414,6 +1414,33 @@ use std::sync::{Arc, Mutex};
     }
 
     #[test]
+    fn test_deterministic_fallback_simulate_action() {
+        let payload = json!({
+            "target_file": "crates/ozymem-core/src/graph_backend/schema.rs",
+            "blast_radius": 5,
+            "recommended_resume_node": {
+                "id": "node_prev_stable_1"
+            }
+        });
+        let fallback = build_deterministic_fallback("simulate_action", &payload);
+        assert_eq!(fallback["action"], "simulate_action");
+        assert!(fallback["summary"].as_str().unwrap().contains("Snapshot REQUERIDO"));
+
+        let plan = fallback["plan"].as_array().unwrap();
+        assert!(plan.iter().any(|p| p.as_str().unwrap().contains("[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]")));
+        assert!(plan.iter().any(|p| p.as_str().unwrap().contains("[RESUME RECOMMENDATION]")));
+
+        let struct_plan = &fallback["structured_plan"];
+        assert_eq!(struct_plan["blast_radius_analysis"]["total_blast_radius"], 5);
+        assert_eq!(struct_plan["exploration_guidance"]["snapshot_required"], true);
+        assert_eq!(struct_plan["exploration_guidance"]["recommended_resume_node_id"], "node_prev_stable_1");
+
+        let validated = validate_ozy_brain_response_schema(&fallback).unwrap();
+        assert_eq!(validated.action, "simulate_action");
+        assert_eq!(validated.confidence, 0.88);
+    }
+
+    #[test]
     fn test_deep_semantic_search_hybrid_worker() {
         if resolve_ozy_brain_dir().is_none() {
             eprintln!("Skipping test: ozy-brain worker not resolved");
@@ -2207,6 +2234,97 @@ pub fn audit_log(event: &str) -> bool {
         assert_eq!(diag["total_tokens"], 400);
         assert_eq!(diag["bottlenecks"].as_array().unwrap().len(), 1); // 3500ms bottleneck
         assert!(diag["has_solution"].as_bool().unwrap());
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_simulate_action_mcp_with_exploration_trajectory() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mcp_simulate_action_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 1. Initialize
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(501)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "rootPath": tmp_root.to_string_lossy(),
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // 2. Start trajectory
+        let start_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(502)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "start",
+                    "task_description": "Refactor database migrations and schema"
+                }
+            })),
+        };
+        let start_resp = handle_request(&backend, start_req, None, None).await.unwrap().unwrap();
+        let start_text = start_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let start_json: Value = serde_json::from_str(&start_text).unwrap();
+        let traj_id = start_json["trajectory_id"].as_str().unwrap().to_string();
+
+        // 3. Record root step
+        let step1_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(503)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "record_step",
+                    "trajectory_id": traj_id,
+                    "action_type": "init",
+                    "action_payload": "{}",
+                    "observation": "baseline check ok",
+                    "reward_score": 1.5,
+                    "is_solution": false
+                }
+            })),
+        };
+        handle_request(&backend, step1_req, None, None).await.unwrap();
+
+        // 4. Call ozy_brain with action: simulate_action
+        let sim_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(504)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_brain",
+                "arguments": {
+                    "action": "simulate_action",
+                    "trajectory_id": traj_id,
+                    "file_path": "crates/ozymem-core/src/graph_backend/schema.rs",
+                    "proposed_action": "alter table exploration_nodes add column metadata"
+                }
+            })),
+        };
+        let sim_resp = handle_request(&backend, sim_req, None, None).await.unwrap().unwrap();
+        assert!(sim_resp.error.is_none());
+        let sim_text = sim_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        // Verifications
+        assert!(sim_text.contains("[SIMULATION: ACTION PREVIEW]"));
+        assert!(sim_text.contains("[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]"));
+        assert!(sim_text.contains("[RESUME RECOMMENDATION]"));
+        assert!(sim_text.contains("Snapshot REQUERIDO"));
+        assert!(sim_text.contains("Exploration & Rollback Guidance"));
+
+        // Strict emoji check
+        for emoji in ["❌", "🏆", "🔵", "⚠️", "🚨", "✅", "🔥", "🎯"] {
+            assert!(!sim_text.contains(emoji), "Output must not contain emoji: {emoji}");
+        }
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
