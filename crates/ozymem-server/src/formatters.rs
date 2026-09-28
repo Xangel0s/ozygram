@@ -32,9 +32,11 @@ pub(crate) fn format_lessons_list(results: &[ozymem_core::graph_backend::LessonE
     }
     let mut body = String::new();
     for (i, entry) in results.iter().enumerate() {
-        let stale_tag = if entry.stale != 0 {
+        let warning_tag = if let Some(ref warn) = entry.freshness_warning {
+            format!(" {}", warn)
+        } else if entry.stale != 0 {
             format!(
-                " [STALE: {}]",
+                " [ALERT: STALE_MEMORY: {}]",
                 entry.stale_reason.as_deref().unwrap_or("unknown")
             )
         } else {
@@ -44,13 +46,16 @@ pub(crate) fn format_lessons_list(results: &[ozymem_core::graph_backend::LessonE
             "{}. [{}]{} {} :: {}\n   context: {}\n   solution: {}\n   created: {}\n",
             i + 1,
             entry.kind,
-            stale_tag,
+            warning_tag,
             entry.file_path,
             entry.symbol_name,
             entry.error_context,
             entry.solution,
             entry.created_at
         ));
+        if entry.freshness_warning.is_some() {
+            body.push_str("   [ALERT: STALE_MEMORY] Esta memoria puede estar desactualizada; verifica el código vivo primero.\n");
+        }
     }
     body
 }
@@ -286,14 +291,23 @@ pub(crate) async fn build_ozy_task_context(
         }
     } else {
         for (i, e) in lessons.iter().enumerate() {
+            let warn_tag = if let Some(ref w) = e.freshness_warning {
+                format!(" {}", w)
+            } else {
+                String::new()
+            };
             body.push_str(&format!(
-                "{}. [{}] {} :: {}\n   {}\n",
+                "{}. [{}]{} {} :: {}\n   {}\n",
                 i + 1,
                 e.kind,
+                warn_tag,
                 e.file_path,
                 e.symbol_name,
                 e.solution
             ));
+            if e.freshness_warning.is_some() {
+                body.push_str("   [ALERT: STALE_MEMORY] Esta memoria puede estar desactualizada; verifica el código vivo primero.\n");
+            }
         }
     }
     let mut files: Vec<String> = if !lessons.is_empty() {

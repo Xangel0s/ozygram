@@ -2414,4 +2414,86 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
     assert!(!mermaid.contains("🏆"));
 }
 
+#[tokio::test]
+async fn test_lesson_freshness_reality_check_mtime_and_missing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let db = root.join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+    backend.set_project_path(Some(&root.to_string_lossy()));
+
+    let main_file = root.join("main.rs");
+    std::fs::write(&main_file, "fn main() { println!(\"v1\"); }").unwrap();
+
+    // 1. Guardar una lección vinculada a main.rs creada hace 100 segundos
+    let past_time = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()) - 100;
+
+    backend.record_entry(
+        &main_file.to_string_lossy(),
+        Some("main"),
+        "error context",
+        "solution v1",
+        "lesson",
+    ).await.unwrap();
+
+    // Ajustar manualmente created_at para simular que el archivo fue modificado después de la lección
+    {
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute(
+            "UPDATE lessons SET created_at = ?1 WHERE id = 1",
+            rusqlite::params![past_time.to_string()],
+        ).unwrap();
+    }
+
+    let lessons = backend.get_file_lessons(&main_file.to_string_lossy()).await.unwrap();
+    assert_eq!(lessons.len(), 1);
+    assert_eq!(
+        lessons[0].freshness_warning.as_deref(),
+        Some("[ALERT: STALE_MEMORY: file modified after lesson created]"),
+        "Debe detectar que el archivo tiene mtime posterior a la fecha de la lección"
+    );
+
+    // 2. Si la lección es registrada con fecha posterior al mtime, debe ser considerada fresca (None)
+    let future_time = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()) + 500;
+    {
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute(
+            "UPDATE lessons SET created_at = ?1 WHERE id = 1",
+            rusqlite::params![future_time.to_string()],
+        ).unwrap();
+    }
+    let lessons_fresh = backend.get_file_lessons(&main_file.to_string_lossy()).await.unwrap();
+    assert_eq!(lessons_fresh[0].freshness_warning, None, "Una lección más reciente que el mtime debe ser fresca");
+
+    // 3. Si el archivo en disco no existe, debe advertir que no se encontró
+    let non_existent = root.join("deleted_service.rs");
+    backend.record_entry(
+        &non_existent.to_string_lossy(),
+        None,
+        "missing context",
+        "solution deleted",
+        "lesson",
+    ).await.unwrap();
+
+    let lessons_missing = backend.get_file_lessons(&non_existent.to_string_lossy()).await.unwrap();
+    assert_eq!(lessons_missing.len(), 1);
+    assert_eq!(
+        lessons_missing[0].freshness_warning.as_deref(),
+        Some("[ALERT: STALE_MEMORY: target file not found on disk]"),
+        "Debe alertar cuando el archivo objetivo no existe en disco"
+    );
+
+    // 4. Verificar que Display formatee la advertencia situacional correctamente sin emojis
+    let display_str = format!("{}", lessons_missing[0]);
+    assert!(display_str.contains("[ALERT: STALE_MEMORY: target file not found on disk]"));
+    assert!(!display_str.contains("❌"));
+    assert!(!display_str.contains("⚠️"));
+}
+
 

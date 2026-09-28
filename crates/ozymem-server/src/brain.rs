@@ -117,12 +117,21 @@ pub(crate) async fn handle_ozy_brain(
 
     let mut candidates = Vec::new();
     for l in &relevant_lessons {
+        let content = if let Some(ref warn) = l.freshness_warning {
+            format!(
+                "{} Lesson in {} [{}]: {}\nSolution: {}\n[ALERT: STALE_MEMORY] Esta memoria puede estar desactualizada; verifica el código vivo primero.",
+                warn, l.file_path, l.kind, l.error_context, l.solution
+            )
+        } else {
+            format!("Lesson in {} [{}]: {}\nSolution: {}", l.file_path, l.kind, l.error_context, l.solution)
+        };
         candidates.push(json!({
             "id": format!("lesson:{}", l.id),
-            "content": format!("Lesson in {} [{}]: {}\nSolution: {}", l.file_path, l.kind, l.error_context, l.solution),
+            "content": content,
             "file_path": l.file_path,
             "kind": l.kind,
             "similarity_score": l.confidence_score,
+            "freshness_warning": l.freshness_warning,
         }));
     }
     for o in &relevant_observations {

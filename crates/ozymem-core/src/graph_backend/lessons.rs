@@ -671,4 +671,30 @@ impl GraphBackend {
         };
         Ok(affected)
     }
+
+    /// Verifica la frescura de una lección contra el estado real del archivo en disco
+    pub fn check_lesson_freshness(&self, lesson: &mut LessonEntry) {
+        let root = {
+            let inner = self.inner.lock().unwrap();
+            inner.workspace_root.clone()
+        };
+        lesson.check_freshness(if root.is_empty() { None } else { Some(Path::new(&root)) });
+    }
+
+    /// Verifica la frescura de un lote de lecciones con una ruta raíz dada
+    pub fn check_lessons_freshness_with_root(lessons: &mut [LessonEntry], root: Option<&Path>) {
+        for l in lessons.iter_mut() {
+            l.check_freshness(root);
+        }
+    }
+
+    /// Verifica la frescura de un lote de lecciones contra el estado en disco
+    pub fn check_lessons_freshness(&self, lessons: &mut [LessonEntry]) {
+        let root = {
+            let inner = self.inner.lock().unwrap();
+            inner.workspace_root.clone()
+        };
+        let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
+        Self::check_lessons_freshness_with_root(lessons, root_path);
+    }
 }

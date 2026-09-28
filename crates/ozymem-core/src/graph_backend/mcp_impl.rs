@@ -1,3 +1,4 @@
+use std::path::Path;
 use anyhow::Result;
 use rusqlite::params;
 use crate::{FileGraphContext, GraphSummary, StoredFunction};
@@ -318,6 +319,8 @@ impl McpBackend for GraphBackend {
             }
         }
 
+        let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
+        Self::check_lessons_freshness_with_root(&mut results, root_path);
         Ok(results)
     }
 
@@ -325,19 +328,20 @@ impl McpBackend for GraphBackend {
         let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
+        let root = inner.workspace_root.clone();
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
              WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND tenant_id = ?4 AND (workspace_root = ?5 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
-        let results = stmt
-            .query_map(
-                params![file_path, norm_path, resolved, self.tenant_id, inner.workspace_root],
-                |row| LessonEntry::from_row(row),
-            )?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows = stmt.query_map(
+            params![file_path, norm_path, resolved, self.tenant_id, root],
+            |row| LessonEntry::from_row(row),
+        )?;
+        let mut results: Vec<LessonEntry> = rows.filter_map(|r| r.ok()).collect();
+        let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
+        Self::check_lessons_freshness_with_root(&mut results, root_path);
         Ok(results)
     }
 
@@ -349,25 +353,27 @@ impl McpBackend for GraphBackend {
         let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
+        let root = inner.workspace_root.clone();
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
              WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND symbol_name = ?4 AND tenant_id = ?5 AND (workspace_root = ?6 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
-        let results = stmt
-            .query_map(
-                params![file_path, norm_path, resolved, symbol_name, self.tenant_id, inner.workspace_root],
-                |row| LessonEntry::from_row(row),
-            )?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows = stmt.query_map(
+            params![file_path, norm_path, resolved, symbol_name, self.tenant_id, root],
+            |row| LessonEntry::from_row(row),
+        )?;
+        let mut results: Vec<LessonEntry> = rows.filter_map(|r| r.ok()).collect();
+        let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
+        Self::check_lessons_freshness_with_root(&mut results, root_path);
         Ok(results)
     }
 
     async fn recent_lessons(&self, kind: Option<&str>, limit: usize) -> Result<Vec<LessonEntry>> {
         let inner = self.inner.lock().unwrap();
         let limit = (limit as i64).min(100).max(1);
+        let root = inner.workspace_root.clone();
 
         let (sql, kind_clause) = match kind {
             Some(_) => (
@@ -388,28 +394,25 @@ impl McpBackend for GraphBackend {
             ),
         };
 
-        if kind_clause {
+        let mut results: Vec<LessonEntry> = if kind_clause {
             let mut stmt = inner.sqlite.prepare(&sql)?;
             let k = kind.unwrap();
-            let results = stmt
-                .query_map(
-                    params![self.tenant_id, k, inner.workspace_root, limit],
-                    |row| LessonEntry::from_row(row),
-                )?
-                .filter_map(|r| r.ok())
-                .collect();
-            Ok(results)
+            let rows = stmt.query_map(
+                params![self.tenant_id, k, root, limit],
+                |row| LessonEntry::from_row(row),
+            )?;
+            rows.filter_map(|r| r.ok()).collect()
         } else {
             let mut stmt = inner.sqlite.prepare(&sql)?;
-            let results = stmt
-                .query_map(
-                    params![self.tenant_id, inner.workspace_root, limit],
-                    |row| LessonEntry::from_row(row),
-                )?
-                .filter_map(|r| r.ok())
-                .collect();
-            Ok(results)
-        }
+            let rows = stmt.query_map(
+                params![self.tenant_id, root, limit],
+                |row| LessonEntry::from_row(row),
+            )?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
+        Self::check_lessons_freshness_with_root(&mut results, root_path);
+        Ok(results)
     }
 
     async fn get_graph_neighbors(&self, file_path: &str) -> Result<NeighborInfo> {

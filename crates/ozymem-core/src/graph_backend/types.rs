@@ -44,10 +44,30 @@ pub struct LessonEntry {
     pub touch_count: i64,
     #[serde(default)]
     pub last_verified_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_warning: Option<String>,
 }
 
 fn default_confidence() -> f64 {
     1.0
+}
+
+/// Parsea un timestamp de forma flexible: segundos epoch UNIX o RFC3339/ISO-8601
+pub fn parse_timestamp_seconds(ts_str: &str) -> Option<u64> {
+    let trimmed = ts_str.trim();
+    if let Ok(secs) = trimmed.parse::<u64>() {
+        return Some(secs);
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Some(dt.timestamp().max(0) as u64);
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
+        return Some(ndt.and_utc().timestamp().max(0) as u64);
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
+        return Some(ndt.and_utc().timestamp().max(0) as u64);
+    }
+    None
 }
 
 impl LessonEntry {
@@ -65,7 +85,53 @@ impl LessonEntry {
             confidence_score: row.get::<_, Option<f64>>(9).unwrap_or(None).unwrap_or(1.0),
             touch_count: row.get::<_, Option<i64>>(10).unwrap_or(None).unwrap_or(0),
             last_verified_at: row.get::<_, Option<String>>(11).unwrap_or(None).unwrap_or_default(),
+            freshness_warning: None,
         })
+    }
+
+    /// Verifica la frescura de la lección contra el archivo activo en disco.
+    /// Si el archivo fue modificado después de haberse guardado la lección (mtime > created_at),
+    /// o si el archivo fue eliminado, añade una advertencia estructurada [ALERT: STALE_MEMORY].
+    pub fn check_freshness(&mut self, workspace_root: Option<&std::path::Path>) {
+        if self.stale != 0 {
+            let reason = self.stale_reason.as_deref().unwrap_or("unknown");
+            self.freshness_warning = Some(format!("[ALERT: STALE_MEMORY: {reason}]"));
+            return;
+        }
+
+        let fp = self.file_path.trim();
+        if fp.is_empty() || fp == "global" || fp == "unknown" {
+            return;
+        }
+
+        let path = std::path::Path::new(fp);
+        let effective_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else if let Some(root) = workspace_root {
+            root.join(path)
+        } else {
+            path.to_path_buf()
+        };
+
+        if !effective_path.exists() {
+            self.freshness_warning = Some("[ALERT: STALE_MEMORY: target file not found on disk]".to_string());
+            return;
+        }
+
+        if let Ok(metadata) = std::fs::metadata(&effective_path) {
+            if let Ok(mtime) = metadata.modified() {
+                let mtime_secs = mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+
+                if let Some(created_secs) = parse_timestamp_seconds(&self.created_at) {
+                    if mtime_secs > created_secs + 1 {
+                        self.freshness_warning = Some("[ALERT: STALE_MEMORY: file modified after lesson created]".to_string());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -142,9 +208,11 @@ pub struct NeighborInfo {
 
 impl fmt::Display for LessonEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let stale_tag = if self.stale != 0 {
+        let warning_tag = if let Some(ref warn) = self.freshness_warning {
+            format!(" {}", warn)
+        } else if self.stale != 0 {
             format!(
-                " [STALE: {}]",
+                " [ALERT: STALE_MEMORY: {}]",
                 self.stale_reason.as_deref().unwrap_or("unknown")
             )
         } else {
@@ -154,7 +222,7 @@ impl fmt::Display for LessonEntry {
             f,
             "[{}]{} {} :: {}\n    context: {}\n    solution: {}",
             self.kind,
-            stale_tag,
+            warning_tag,
             self.file_path,
             self.symbol_name,
             self.error_context,
