@@ -94,6 +94,48 @@ pub struct TrajectoryDiagnosis {
     pub recommended_resume_node_id: Option<String>,
 }
 
+/// Tipos de alertas situacionales detectadas durante la evaluación objetiva de recompensas
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectiveValidationAlert {
+    SyntaxError,
+    TestFailed,
+    FalseSolutionRejected,
+    ObjectiveTestPassed,
+}
+
+impl ObjectiveValidationAlert {
+    pub fn as_tag(&self) -> &'static str {
+        match self {
+            Self::SyntaxError => "[ALERT: SYNTAX_ERROR]",
+            Self::TestFailed => "[ALERT: TEST_FAILED]",
+            Self::FalseSolutionRejected => "[ALERT: FALSE_SOLUTION_REJECTED]",
+            Self::ObjectiveTestPassed => "[OBJECTIVE: TEST_PASSED]",
+        }
+    }
+}
+
+/// Detecta errores de sintaxis, compilación o linting
+fn detect_syntax_or_compilation_failure(observation: &str, payload: &str) -> bool {
+    let lower_obs = observation.to_lowercase();
+    let lower_pay = payload.to_lowercase();
+    let patterns = [
+        "syntaxerror",
+        "syntax error",
+        "error[e",
+        "could not compile",
+        "failed to compile",
+        "compilation error",
+        "cannot find value",
+        "cannot find type",
+        "unresolved import",
+        "eslint",
+        "lint error",
+        "typeerror:",
+        "nameerror:",
+    ];
+    patterns.iter().any(|p| lower_obs.contains(p) || lower_pay.contains(p))
+}
+
 /// Detecta señales objetivas de fallo en la observación o payload para calibrar la recompensa
 fn detect_failure_signals(observation: &str, payload: &str) -> bool {
     let lower_obs = observation.to_lowercase();
@@ -110,6 +152,7 @@ fn detect_failure_signals(observation: &str, payload: &str) -> bool {
         "tests failed",
         "failures: ",
         "syntaxerror",
+        "syntax error",
         "typeerror",
         "nameerror",
         "operationalerror",
@@ -119,6 +162,9 @@ fn detect_failure_signals(observation: &str, payload: &str) -> bool {
         "timeout error",
         "access is denied",
         "no such file or directory",
+        "assertionerror",
+        "could not compile",
+        "error[e",
     ];
 
     for pattern in &failure_patterns {
@@ -133,6 +179,23 @@ fn detect_failure_signals(observation: &str, payload: &str) -> bool {
         }
     }
     false
+}
+
+/// Detecta señales inequívocas de éxito en tests o ejecución de código
+fn detect_objective_success(observation: &str, payload: &str) -> bool {
+    let lower_obs = observation.to_lowercase();
+    let lower_pay = payload.to_lowercase();
+    let patterns = [
+        "exit code: 0",
+        "exit code 0",
+        "test result: ok",
+        "passed; 0 failed",
+        "all tests passed",
+        "build succeeded",
+        "100% passed",
+        "0 failed; 0 ignored",
+    ];
+    patterns.iter().any(|p| lower_obs.contains(p) || lower_pay.contains(p))
 }
 
 impl GraphBackend {
@@ -193,17 +256,79 @@ impl GraphBackend {
             }
         };
 
-        // 3. Calibración Objetiva de Recompensa: Detección de fallos para neutralizar sesgos optimistas
-        let raw_reward = params.reward_score.unwrap_or(0.0);
-        let has_failure = detect_failure_signals(&observation, &params.action_payload);
-        let (reward, action_payload) = if raw_reward > 0.0 && has_failure {
+        // 3. Calibración Objetiva y Validación Automática de Recompensas
+        let has_syntax_failure = detect_syntax_or_compilation_failure(&observation, &params.action_payload);
+        let has_general_failure = detect_failure_signals(&observation, &params.action_payload);
+        let has_success = detect_objective_success(&observation, &params.action_payload);
+
+        let raw_reward_opt = params.reward_score;
+        let mut is_solution = params.is_solution.unwrap_or(false);
+        let mut is_pruned = params.is_pruned.unwrap_or(has_general_failure);
+        let mut validation_alert: Option<ObjectiveValidationAlert> = None;
+
+        let reward = if is_solution && (has_syntax_failure || has_general_failure) {
+            // Rechazo de solución falsa: el agente marcó éxito pero hay errores en la evidencia
+            is_solution = false;
+            is_pruned = true;
+            validation_alert = Some(ObjectiveValidationAlert::FalseSolutionRejected);
+            -1.0
+        } else if let Some(raw_r) = raw_reward_opt {
+            if raw_r > 0.0 && has_general_failure {
+                // Neutralizar sesgo optimista ante fallo evidente
+                is_pruned = true;
+                validation_alert = if has_syntax_failure {
+                    Some(ObjectiveValidationAlert::SyntaxError)
+                } else {
+                    Some(ObjectiveValidationAlert::TestFailed)
+                };
+                -1.0
+            } else if raw_r < 0.0 {
+                if params.is_pruned.is_none() {
+                    is_pruned = true;
+                }
+                if has_syntax_failure {
+                    validation_alert = Some(ObjectiveValidationAlert::SyntaxError);
+                } else if has_general_failure {
+                    validation_alert = Some(ObjectiveValidationAlert::TestFailed);
+                }
+                raw_r
+            } else {
+                raw_r
+            }
+        } else {
+            // Recompensa automática basada en evidencias objetivas (Auto-Reward)
+            if has_syntax_failure {
+                is_pruned = true;
+                validation_alert = Some(ObjectiveValidationAlert::SyntaxError);
+                -0.8
+            } else if has_general_failure {
+                is_pruned = true;
+                validation_alert = Some(ObjectiveValidationAlert::TestFailed);
+                -0.8
+            } else if is_solution {
+                10.0
+            } else if has_success && (params.action_type.contains("test") || params.action_type == "run_test" || params.action_type == "execute" || params.action_payload.contains("test")) {
+                validation_alert = Some(ObjectiveValidationAlert::ObjectiveTestPassed);
+                1.0
+            } else if is_pruned {
+                -1.0
+            } else {
+                0.0
+            }
+        };
+
+        let action_payload = if let Some(ref alert) = validation_alert {
             let mut payload = params.action_payload.clone();
+            let alert_tag = alert.as_tag();
             if payload.starts_with('{') && payload.ends_with('}') {
                 if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&payload) {
                     if let Some(obj) = v.as_object_mut() {
                         obj.insert("objective_reward_override".to_string(), serde_json::json!(true));
-                        obj.insert("original_reward".to_string(), serde_json::json!(raw_reward));
-                        obj.insert("auto_pruned".to_string(), serde_json::json!(true));
+                        obj.insert("validation_tag".to_string(), serde_json::json!(alert_tag));
+                        if let Some(raw) = raw_reward_opt {
+                            obj.insert("original_reward".to_string(), serde_json::json!(raw));
+                        }
+                        obj.insert("auto_pruned".to_string(), serde_json::json!(is_pruned));
                         payload = v.to_string();
                     }
                 }
@@ -211,21 +336,19 @@ impl GraphBackend {
                 let wrapped = serde_json::json!({
                     "raw_action": payload,
                     "objective_reward_override": true,
-                    "original_reward": raw_reward,
-                    "auto_pruned": true
+                    "validation_tag": alert_tag,
+                    "original_reward": raw_reward_opt,
+                    "auto_pruned": is_pruned
                 });
                 payload = wrapped.to_string();
             }
-            (-1.0, payload)
+            payload
         } else {
-            (raw_reward, params.action_payload)
+            params.action_payload
         };
 
         let cost_tokens = params.cost_tokens.unwrap_or(0);
         let latency_ms = params.latency_ms.unwrap_or(0);
-        let is_solution = params.is_solution.unwrap_or(false);
-        // Auto-Poda Guiada por Tests: podar automáticamente ante señales duras de fallo si no se indicó lo contrario
-        let is_pruned = params.is_pruned.unwrap_or(has_failure);
 
         // 4. Inserción del nodo
         inner.sqlite.execute(
@@ -774,8 +897,22 @@ impl GraphBackend {
             let node_id = format!("n_{}", sanitize_mermaid_id(&n.id));
             let (status_tag, class_name) = if n.is_solution {
                 ("[SOLUTION]", "solution")
+            } else if n.action_payload.contains("[ALERT: FALSE_SOLUTION_REJECTED]") {
+                ("[ALERT: FALSE_SOLUTION_REJECTED]", "pruned")
+            } else if n.action_payload.contains("[ALERT: SYNTAX_ERROR]")
+                || n.observation.to_lowercase().contains("syntaxerror")
+                || n.observation.to_lowercase().contains("could not compile")
+            {
+                ("[ALERT: SYNTAX_ERROR]", "pruned")
+            } else if n.action_payload.contains("[ALERT: TEST_FAILED]")
+                || n.observation.to_lowercase().contains("test failed")
+                || n.observation.to_lowercase().contains("failures:")
+            {
+                ("[ALERT: TEST_FAILED]", "pruned")
             } else if n.is_pruned {
                 ("[ALERT: PRUNED]", "pruned")
+            } else if n.action_payload.contains("[OBJECTIVE: TEST_PASSED]") {
+                ("[OBJECTIVE: TEST_PASSED]", "solution")
             } else if n.reward_score < 0.0 {
                 ("[ALERT: LOW REWARD]", "warning")
             } else if n.depth <= 1 {

@@ -2338,3 +2338,80 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
     }
 }
 
+#[test]
+fn test_exploration_auto_reward_and_false_solution_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(
+        &dir.path().to_string_lossy(),
+        "Auto-reward validation test",
+        None,
+    ).unwrap();
+
+    // 1. Auto-reward +1.0 ante éxito en run_test sin reward manual
+    let test_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "run_test".to_string(),
+        action_payload: "cargo test --lib".to_string(),
+        observation: "test result: ok. 12 passed; 0 failed; exit code: 0".to_string(),
+        cost_tokens: Some(100),
+        latency_ms: Some(50),
+        reward_score: None, // Auto-Reward
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+
+    assert_eq!(test_node.reward_score, 1.0, "Debe asignar +1.0 ante éxito en tests sin reward manual");
+    assert!(!test_node.is_pruned, "No debe estar podado");
+    assert!(test_node.action_payload.contains("[OBJECTIVE: TEST_PASSED]"));
+
+    // 2. Auto-reward -0.8 y auto-poda ante error de sintaxis/compilación sin reward manual
+    let syntax_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(test_node.id.clone()),
+        action_type: "edit_code".to_string(),
+        action_payload: "patch src/lib.rs".to_string(),
+        observation: "error[E0425]: cannot find value 'x' in this scope\ncould not compile `core`".to_string(),
+        cost_tokens: Some(80),
+        latency_ms: Some(40),
+        reward_score: None, // Auto-Reward
+        is_solution: None,
+        is_pruned: None,
+    }).unwrap();
+
+    assert_eq!(syntax_node.reward_score, -0.8, "Debe penalizar con -0.8 ante error de sintaxis/compilación");
+    assert!(syntax_node.is_pruned, "Debe podar automáticamente ante error de sintaxis");
+    assert!(syntax_node.action_payload.contains("[ALERT: SYNTAX_ERROR]"));
+
+    // 3. Rechazo de solución falsa: agente declara solución pero observación contiene fallos
+    let false_solution_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(test_node.id.clone()),
+        action_type: "run_test".to_string(),
+        action_payload: "pytest tests/".to_string(),
+        observation: "FAILED tests/test_auth.py - AssertionError: 401 != 200, exit code: 1".to_string(),
+        cost_tokens: Some(150),
+        latency_ms: Some(80),
+        reward_score: Some(5.0),
+        is_solution: Some(true), // Agente falsamente declara solución
+        is_pruned: Some(false),
+    }).unwrap();
+
+    assert!(!false_solution_node.is_solution, "La solución falsa debió ser rechazada (is_solution = false)");
+    assert!(false_solution_node.is_pruned, "La rama con fallo debió ser podada");
+    assert_eq!(false_solution_node.reward_score, -1.0, "La recompensa debió ser penalizada con -1.0");
+    assert!(false_solution_node.action_payload.contains("[ALERT: FALSE_SOLUTION_REJECTED]"));
+
+    // 4. Verificar que Mermaid renderice las alertas situacionales exactas sin emojis
+    let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
+    assert!(mermaid.contains("[OBJECTIVE: TEST_PASSED]"));
+    assert!(mermaid.contains("[ALERT: SYNTAX_ERROR]"));
+    assert!(mermaid.contains("[ALERT: FALSE_SOLUTION_REJECTED]"));
+    assert!(!mermaid.contains("❌"));
+    assert!(!mermaid.contains("🏆"));
+}
+
+
