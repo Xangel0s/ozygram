@@ -6,7 +6,7 @@ use petgraph::visit::Bfs;
 use rusqlite::params;
 use crate::GraphSummary;
 use crate::mcp_common::McpBackend;
-use crate::graph_backend::types::{ContractMismatchAlert, ExportContractReport, FileEdge, FileNode, GraphBackend, ImpactEntry, UnifiedSearchResult};
+use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, UnifiedSearchResult};
 
 impl GraphBackend {
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
@@ -182,134 +182,6 @@ impl GraphBackend {
             .collect()
     }
 
-    pub fn record_excel_template(
-        &self,
-        meta: &ozymem_parser::ExcelTemplateMetadata,
-    ) -> anyhow::Result<()> {
-        let inner = self.inner.lock().unwrap();
-        let sheets_json = serde_json::to_string(&meta.sheets)?;
-        inner.sqlite.execute(
-            "INSERT INTO excel_templates (file_path, canonical_hash, template_name, version_tag, sheets_json, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
-             ON CONFLICT(file_path) DO UPDATE SET
-                canonical_hash = excluded.canonical_hash,
-                template_name = excluded.template_name,
-                version_tag = excluded.version_tag,
-                sheets_json = excluded.sheets_json,
-                updated_at = CURRENT_TIMESTAMP",
-            params![
-                meta.rel_path,
-                meta.canonical_hash,
-                meta.file_name,
-                meta.version_tag,
-                sheets_json,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn get_excel_templates(&self) -> anyhow::Result<Vec<ozymem_parser::ExcelTemplateMetadata>> {
-        let inner = self.inner.lock().unwrap();
-        let mut stmt = inner.sqlite.prepare(
-            "SELECT file_path, canonical_hash, template_name, version_tag, sheets_json FROM excel_templates ORDER BY file_path ASC"
-        )?;
-        let rows = stmt.query_map([], |row| {
-            let rel_path: String = row.get(0)?;
-            let canonical_hash: String = row.get(1)?;
-            let file_name: String = row.get(2)?;
-            let version_tag: Option<String> = row.get(3)?;
-            let sheets_json: String = row.get(4)?;
-            let sheets: Vec<String> = serde_json::from_str(&sheets_json).unwrap_or_default();
-            Ok(ozymem_parser::ExcelTemplateMetadata {
-                file_name,
-                rel_path,
-                canonical_hash,
-                version_tag,
-                sheets,
-                is_template_candidate: true,
-            })
-        })?;
-        let mut res = Vec::new();
-        for r in rows {
-            if let Ok(m) = r {
-                res.push(m);
-            }
-        }
-        Ok(res)
-    }
-
-    pub fn verify_export_contracts(&self) -> anyhow::Result<ExportContractReport> {
-        let templates = self.get_excel_templates()?;
-        let templates_reviewed = templates.len();
-
-        let inner = self.inner.lock().unwrap();
-        let mut stmt = inner.sqlite.prepare("SELECT path FROM files")?;
-        let file_paths: Vec<String> = stmt
-            .query_map([], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-        drop(stmt);
-        drop(inner);
-
-        let mut endpoints_count = 0;
-        let mut version_mismatches = Vec::new();
-        let mut missing_templates = Vec::new();
-
-        for fp in &file_paths {
-            if let Ok(source) = std::fs::read_to_string(fp) {
-                let hints = ozymem_parser::parse_export_contracts(fp, &source);
-                for hint in hints {
-                    if hint.endpoint_path.is_some() {
-                        endpoints_count += 1;
-                    }
-
-                    if let Some(ref t_ref) = hint.template_ref {
-                        let exists = templates
-                            .iter()
-                            .any(|t| t.file_name.contains(t_ref) || t_ref.contains(&t.file_name));
-                        if !exists {
-                            missing_templates.push(ContractMismatchAlert {
-                                alert_type: "MISSING_TEMPLATE".to_string(),
-                                file_path: fp.clone(),
-                                endpoint: hint.endpoint_path.clone(),
-                                template_found: None,
-                                header_version: None,
-                                template_version: None,
-                                message: format!("Plantilla referenciada '{}' no encontrada en los templates registrados", t_ref),
-                            });
-                        }
-                    }
-
-                    if let Some(ref cd_fn) = hint.content_disposition_filename {
-                        let cd_ver = ozymem_parser::extract_version_tag(cd_fn);
-                        if let Some(ref t_ref) = hint.template_ref {
-                            let t_ver = ozymem_parser::extract_version_tag(t_ref);
-                            if cd_ver.is_some() && t_ver.is_some() && cd_ver != t_ver {
-                                version_mismatches.push(ContractMismatchAlert {
-                                    alert_type: "VERSION_MISMATCH".to_string(),
-                                    file_path: fp.clone(),
-                                    endpoint: hint.endpoint_path.clone(),
-                                    template_found: Some(t_ref.clone()),
-                                    header_version: cd_ver,
-                                    template_version: t_ver,
-                                    message: format!("Desalineación de versión: Header genera '{cd_fn}' pero código usa plantilla '{t_ref}'"),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(ExportContractReport {
-            templates_reviewed,
-            endpoints_reviewed: endpoints_count,
-            version_mismatches,
-            missing_templates,
-            warnings: Vec::new(),
-        })
-    }
-
     pub async fn unified_search(
         &self,
         query: &str,
@@ -352,29 +224,6 @@ impl GraphBackend {
                         snippet: format!("{}: {}", l.error_context, l.solution),
                         score: 0.9,
                     });
-                }
-            }
-        }
-
-        // 3. Contract Search
-        if target_scope == "all" || target_scope == "contracts" {
-            if let Ok(templates) = self.get_excel_templates() {
-                for t in templates {
-                    if t.file_name.contains(query)
-                        || t.rel_path.contains(query)
-                        || t.sheets.iter().any(|s| s.contains(query))
-                    {
-                        results.push(UnifiedSearchResult {
-                            category: "contract".to_string(),
-                            title: format!("Excel Template: {}", t.file_name),
-                            path: t.rel_path,
-                            snippet: format!(
-                                "Versión: {:?} | Hojas: {:?}",
-                                t.version_tag, t.sheets
-                            ),
-                            score: 0.95,
-                        });
-                    }
                 }
             }
         }

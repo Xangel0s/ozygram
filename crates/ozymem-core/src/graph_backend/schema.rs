@@ -185,17 +185,6 @@ impl GraphBackend {
 
             CREATE INDEX IF NOT EXISTS idx_ast_diags_file ON ast_diagnostics(file_path, tenant_id);
 
-            CREATE TABLE IF NOT EXISTS excel_templates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_path TEXT NOT NULL UNIQUE,
-                canonical_hash TEXT NOT NULL,
-                template_name TEXT NOT NULL,
-                version_tag TEXT,
-                sheets_json TEXT NOT NULL,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_excel_hash ON excel_templates(canonical_hash);
-
             CREATE TABLE IF NOT EXISTS ozy_brain_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 request_hash TEXT NOT NULL,

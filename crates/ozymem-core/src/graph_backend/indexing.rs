@@ -208,11 +208,6 @@ impl GraphBackend {
                     .unwrap_or(raw)
             };
             if is_binary_file(path) {
-                if ozymem_parser::is_excel_template_candidate(&abs_path) {
-                    if let Ok(Some(meta)) = ozymem_parser::parse_excel_template(path, &abs_path) {
-                        let _ = self.record_excel_template(&meta);
-                    }
-                }
                 skipped_binary += 1;
                 if let Some(cb) = progress {
                     processed += 1;
@@ -432,12 +427,6 @@ impl GraphBackend {
 
         // 2. Binary file check
         if is_binary_file(file_path) {
-            let abs_path = crate::normalize_path(&file_path.to_string_lossy());
-            if ozymem_parser::is_excel_template_candidate(&abs_path) {
-                if let Ok(Some(meta)) = ozymem_parser::parse_excel_template(file_path, &abs_path) {
-                    let _ = self.record_excel_template(&meta);
-                }
-            }
             return Ok(DeltaIndexResult::SkippedBinary);
         }
 

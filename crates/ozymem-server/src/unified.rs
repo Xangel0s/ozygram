@@ -45,20 +45,6 @@ pub async fn handle_unified_tool(
                             is_error: None,
                         }
                     }
-                    "verify_contracts" => {
-                        
-                        let gb = backend;
-                        gb.reload_if_stale();
-                        let report = gb.verify_export_contracts()?;
-                        let body = serde_json::to_string_pretty(&report)?;
-                        ToolCallResult {
-                            content: vec![ContentBlock {
-                                kind: "text",
-                                text: body,
-                            }],
-                            is_error: None,
-                        }
-                    }
                     "context" => {
                         
                         let gb = backend;

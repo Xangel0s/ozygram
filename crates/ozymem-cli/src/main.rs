@@ -5,6 +5,7 @@ use ozymem_cli::commands::*;
 use ozymem_cli::client::*;
 use ozymem_cli::mcp;
 use ozymem_core::graph_backend::{auto_manage_gitignore, legacy_global_db_path};
+use ozymem_core::mcp_common::McpBackend;
 use ozymem_parser::{extract_dependency_hints, parse_source, SupportedLanguage};
 
 #[derive(Parser)]
@@ -63,11 +64,8 @@ enum Commands {
     Update,
     /// Configurar u obtener patrones de ignore (.ozymemignore)
     Ignore,
-    /// Auditar contratos de exportación Excel y cabeceras Content-Disposition
-    Verify {
-        #[arg(default_value = "export-contracts")]
-        target: String,
-    },
+    /// Verificar la integridad del grafo de código e indexación
+    Verify,
     /// Limpiar simbolos y dependencias de un archivo
     Clean {
         path: Option<PathBuf>,
@@ -295,23 +293,19 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Update => run_update().await?,
         Commands::Ignore => run_ignore().await?,
-        Commands::Verify { target: _ } => {
+        Commands::Verify => {
             let backend = ozymem_core::graph_backend::GraphBackend::open(None)?;
             if let Ok(cwd) = std::env::current_dir() {
                 backend.full_scan(&cwd.to_string_lossy(), None)?;
             }
-            let report = backend.verify_export_contracts()?;
-            println!("Templates revisados: {}", report.templates_reviewed);
-            println!("Endpoints de exportación: {}", report.endpoints_reviewed);
-            println!("Versiones inconsistentes: {}", report.version_mismatches.len());
-            println!("Templates faltantes: {}", report.missing_templates.len());
-
-            for m in &report.version_mismatches {
-                println!("  [ADVERTENCIA] {}", m.message);
-            }
-            for m in &report.missing_templates {
-                println!("  [ERROR] {}", m.message);
-            }
+            let summary = backend.get_graph_summary().await?;
+            println!("=== Verificación de Grafo y Memoria (Ozygram) ===");
+            println!("Archivos indexados: {}", summary.file_count);
+            println!("Funciones/Clases detectadas: {}", summary.function_count);
+            println!("Contratos Engram: {}", summary.engram_count);
+            println!("Vértices en grafo: {}", summary.vertex_count);
+            println!("Aristas de dependencias: {}", summary.edge_count);
+            println!("Uso de memoria estimado: {}", summary.memory_usage);
         }
         Commands::Watch { path, force } => run_watch(&context, &path, force).await?,
         Commands::Clean { path } => {

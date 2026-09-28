@@ -180,26 +180,6 @@ pub(crate) struct Inner {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ContractMismatchAlert {
-    pub alert_type: String,
-    pub file_path: String,
-    pub endpoint: Option<String>,
-    pub template_found: Option<String>,
-    pub header_version: Option<String>,
-    pub template_version: Option<String>,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ExportContractReport {
-    pub templates_reviewed: usize,
-    pub endpoints_reviewed: usize,
-    pub version_mismatches: Vec<ContractMismatchAlert>,
-    pub missing_templates: Vec<ContractMismatchAlert>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UnifiedSearchResult {
     pub category: String,
     pub title: String,

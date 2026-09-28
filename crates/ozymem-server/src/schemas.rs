@@ -318,17 +318,6 @@ pub fn handle_tools_list(
                     }),
                 },
                 mcp_common::ToolDefinition {
-                    name: "verify_contracts",
-                    description: "Auditar contratos de exportación Excel, routers HTTP y cabeceras Content-Disposition",
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "target": { "type": "string", "description": "Objetivo de auditoría ('export', 'all')", "default": "export" }
-                        },
-                        "additionalProperties": false
-                    }),
-                },
-                mcp_common::ToolDefinition {
                     name: "context",
                     description: "Contexto unificado de archivo/símbolo (funciones, grafo de dependencias, lecciones y git)",
                     input_schema: json!({
