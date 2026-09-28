@@ -1,10 +1,75 @@
-# 🌙 Dream-RSI & Monte Carlo Tree Search (MCTS) v1.1.0
+# Dream-RSI & Monte Carlo Tree Search (MCTS) v1.2.0
  
 **Dream-RSI** (*Recursive Self-Improvement via Offline MCTS Replay*) is Ozygram's continuous self-improvement subsystem. It elevates AI coding agents from flat, ephemeral chat histories into a **computable, structured, and optimizable exploration graph**.
  
 ---
  
-## 💡 Why Dream-RSI?
+## What's New in v1.2.0 (State Rollback, Action Simulation & Visual Decision Trees)
+
+Version v1.2.0 establishes Dream-RSI as a proactive decision and recovery engine:
+
+```mermaid
+flowchart TD
+    A[Agent Action Proposal] --> B[simulate_action / critique_hypothesis]
+    B -->|Calculate Blast Radius Depth 2| C{Blast Radius Check}
+    C -->|High Risk: Impacts Dependents| D[[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]]
+    C -->|Low Risk| E[Proceed with Hypothesis]
+    
+    D --> F[Capture File Snapshot: rollback_snapshot]
+    E --> F
+    
+    F --> G[Execute Action in Codebase]
+    G --> H{Objective Evaluator}
+    H -->|Test Passed exit 0| I[[OBJECTIVE: TEST_PASSED] +1.0 Reward]
+    H -->|Syntax/Lint Error| J[[ALERT: SYNTAX_OR_LINT_ERROR] -0.8 Reward]
+    H -->|False Solution Attempt| K[[ALERT: FALSE_SOLUTION_REJECTED] -1.0 Reward]
+    
+    J --> L[Prune Node: is_pruned=true]
+    K --> L
+    L --> M[Atomic Backtracking: rollback_to_parent / rollback_node]
+    M --> N[Disk State Cleaned & Files Restored]
+    
+    I --> O[Consolidate Solution Path]
+    
+    O --> P[get_tree: Clean Mermaid Tree without emojis]
+    N --> P
+```
+
+### 1. State Rollback & Backtracking with File Snapshots
+* **The Problem**: When an agent explores a hypothesis by editing code and that path fails (`is_pruned = true`), discarded changes remain in the repository, polluting git status and breaking subsequent turns.
+* **v1.2.0 Solution**:
+  - `rollback_snapshot`: Captures file states associated with an exploration node.
+  - `rollback_node`: Restores tracked files on disk to that node's recorded snapshot.
+  - `rollback_to_parent`: Automatically reverts disk files to the parent node state upon pruning or backtracking.
+
+### 2. Action Simulation & Blast Radius Pre-Flight (`simulate_action`)
+* Pre-flights changes via `ozy_brain` before touching disk:
+  - Computes AST dependency blast radius up to 2 hops.
+  - Detects if changes impact core architecture or multiple dependent modules.
+  - Issues explicit safety directives: `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]`.
+  - Proposes `recommended_resume_node` for safe fallback.
+
+### 3. Strict Objective Auto-Reward & Anti-Hallucination Guard
+* Eliminates subjective or false positive scoring:
+  - Exit code 0 / clean test verification -> `+1.0` (`[OBJECTIVE: TEST_PASSED]`).
+  - Syntax error, build crash, or lint failure -> `-0.8` (`[ALERT: SYNTAX_OR_LINT_ERROR]`) with UCT auto-prune.
+  - False claim (`is_solution = true` despite failed tests) -> Clamped to `-1.0`, rejected (`[ALERT: FALSE_SOLUTION_REJECTED]`), and pruned immediately.
+
+### 4. Emoji-Free Mermaid Decision Trees (`get_tree`)
+* In `ozy_exploration get_tree` and CLI `ozymem dream tree`, outputs clean Mermaid diagrams with textual status tags:
+  - `[STATUS: ACTIVE]` for in-progress nodes.
+  - `[ALERT: PRUNED]` for dead-end or rejected branches.
+  - `[OBJECTIVE: SOLVED / TEST_PASSED]` for verified solutions.
+  - `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]` for high-risk nodes.
+
+### 5. Stale Memory Reality Check against File MTime
+* In `ozy_brain` and `ozy_context`, when recalling lessons related to source files:
+  - Compares the lesson timestamp against the target file's physical `mtime` and existence on disk.
+  - If the file was modified more recently than the memory, inverts trust and flags `[ALERT: STALE_MEMORY]`, prompting the agent to verify the active code first.
+
+---
+
+## Why Dream-RSI?
  
 Traditional AI coding agents repeat the same failure modes: when exploring solutions (e.g. testing a SQL query, trying a library, refactoring a function), if an attempt fails, they either discard the entire context or bury it in unstructured chat logs.
  
@@ -14,7 +79,7 @@ Dream-RSI solves this through two complementary phases:
  
 ---
  
-## ⚡ What's New in v1.1.0 (Zero-Friction Engine)
+## What's New in v1.1.0 (Zero-Friction Engine)
  
 Based on operational observations in production workflows, version v1.1.0 addresses core friction points in the agentic MCTS lifecycle:
  
@@ -123,20 +188,35 @@ ozymem dream diagnose traj_5bbd6b4e5c6f --json
  
 ---
  
-## 🔌 MCP Tool Reference (`ozy_exploration`)
+## MCP Tool Reference (`ozy_exploration` & `ozy_brain`)
  
 ```json
 {
   "name": "ozy_exploration",
   "arguments": {
-    "action": "start | record_step | record_batch | complete | get_tree | diagnose | list | delete | resume",
+    "action": "start | record_step | record_batch | complete | get_tree | diagnose | list | delete | resume | rollback_snapshot | rollback_node | rollback_to_parent",
     "trajectory_id": "traj_123",
+    "node_id": "optional target node id",
+    "files": ["optional file paths list for snapshot/rollback"],
     "task_description": "Task objective",
     "steps": [...],
     "parent_id": "optional (auto-parenting enabled)",
     "reward_score": 1.0,
     "is_solution": true,
     "is_pruned": false
+  }
+}
+```
+
+```json
+{
+  "name": "ozy_brain",
+  "arguments": {
+    "action": "simulate_action | critique_hypothesis | ...",
+    "hypothesis": "Proposed implementation or code change hypothesis",
+    "action_type": "edit_code | refactor | run_test",
+    "files_affected": ["src/service.py", "src/models.py"],
+    "diff_preview": "Optional diff preview for AST blast radius analysis"
   }
 }
 ```

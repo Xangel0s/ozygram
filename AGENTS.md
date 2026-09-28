@@ -56,18 +56,22 @@
   - CLI subcommand `ozymem hook install|uninstall|status|run` and MCP tool `install_git_hook`.
   - Cross-platform `.git/hooks/post-commit` hook indexing commit deltas and capturing lessons automatically.
   - Verification in `ozy_doctor` to audit active hook status.
-- **Dream-RSI & Monte Carlo Tree Search (MCTS) v1.1.0**:
+- **Dream-RSI & Monte Carlo Tree Search (MCTS) v1.2.0**:
   - **Persistent Discovery Tree (`exploration_trajectories`, `exploration_nodes`)**: Hierarchical SQLite storage with `parent_id`, `depth`, `action_payload`, `visit_count`, and running Q-value (`value_estimate`).
+  - **State Rollback & Backtracking with File Snapshots**: Integrated `rollback_snapshot`, `rollback_node`, and `rollback_to_parent` actions in `ozy_exploration`. Captures file state before risky operations and automatically restores disk state to the parent node upon branch pruning or hypothesis abandonment.
+  - **Action Simulation & Blast Radius Pre-Flight (`simulate_action`)**: Evaluates code modification hypotheses in `ozy_brain` against the AST dependency graph (depth 2), issuing safety directives (`[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]`) and backtracking recommendations (`recommended_resume_node`).
+  - **Objective Auto-Reward & Anti-Hallucination Guard**: Deterministic validation of test runs (`+1.0` on exit code 0, `-0.8` on syntax/lint errors, `-1.0` on false solution claims), rejecting hallucinated successes and auto-pruning failing branches.
+  - **Emoji-Free Mermaid Decision Trees (`get_tree`)**: Generates interactive visual decision trees without emojis, using standardized textual tags (`[STATUS: ACTIVE]`, `[ALERT: PRUNED]`, `[OBJECTIVE: SOLVED / TEST_PASSED]`).
+  - **Stale Memory Reality Check against File MTime**: Verifies physical file modification timestamps in `ozy_brain` and `ozy_context` against stored lesson dates, injecting `[ALERT: STALE_MEMORY]` when disk state is newer.
   - **Smart Auto-Parenting in Rust Core**: When `parent_id` is omitted, automatically links to the latest active unpruned node (`depth = parent.depth + 1`), eliminating the fragility of manual node hash forwarding.
   - **Atomic Batch Mode (`record_batch`)**: Ingests multiple technical milestones in a single MCP turn, reducing agent turn tax by ~70%.
-  - **Objective Reward Verification & Self-Pruning**: Automatically detects failure signals (`exit code != 0`, `timeout`, `SyntaxError`, `build failed`, `tests failed`), clamps inflated rewards to `< 0.0`, and flags `is_pruned = true` with `auto_pruned: true`.
   - **Deadlock-Free Trajectory Diagnostics (`diagnose`)**: Endpoint `ozy_exploration(action="diagnose")` with cycle-breaking visited sets, fallback to the latest trajectory if `trajectory_id` is omitted, and token efficiency metrics.
   - **Trajectory Resumption (`resume`)**: Action `ozy_exploration(action="resume")` locates the highest-value active unpruned leaf node for frictionless recovery after context compaction.
   - **Noise Filter & Token Budget Bounds**: Automatic truncation of observations to **32 KB per step** (`MAX_OBSERVATION_BYTES`), and exhaustive filtering of binary files (`.onnx`, `.lock`, `.db`, `.duckdb`, `.parquet`, SHA hex blobs) and cache directories (`.fastembed_cache`, `node_modules`, `target`).
   - **Native MCTS Backpropagation**: Incremental ancestor update $Q \leftarrow Q + \frac{R - Q}{N}$.
   - **Offline Counterfactual Simulator (`ReplaySimulator`)**: Deterministic replay at **0 LLM tokens and 0 re-executions**, computing fitness score $J(\pi)$ and diagnosing exploration bottlenecks.
   - **AST Safety Validation**: Strict audit via `AstSafetyAuditor` (blocking `subprocess`, `eval`, `rmtree`) and non-regression guard ($J_{\text{cand}} > J_{\text{base}} + \epsilon$ with zero false prunes).
-  - **MCP & CLI Interface**: Endpoint `ozy_exploration` (`start`, `record_step`, `record_batch`, `complete`, `get_tree`, `diagnose`, `list`, `delete`, `resume`), `ozy_brain(action="dream_rsi")`, and CLI subcommands `ozymem dream run|status|diagnose`.
+  - **MCP & CLI Interface**: Endpoints `ozy_exploration` (`start`, `record_step`, `record_batch`, `complete`, `get_tree`, `diagnose`, `list`, `delete`, `resume`, `rollback_snapshot`, `rollback_node`, `rollback_to_parent`), `ozy_brain(action="simulate_action|dream_rsi")`, and CLI subcommands `ozymem dream run|status|diagnose|tree`.
 
 ## Principles & Conventions
 - **SOLID, DRY, KISS**: Keep code loosely coupled, extract reusable logic, and avoid over-engineering.

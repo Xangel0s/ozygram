@@ -2,6 +2,37 @@
 
 This document tracks the chronological evolution, architectural milestones, and key improvements in **Ozygram**.
 
+## Version v1.2.0 — Dream-RSI: State Rollback, Action Simulation, Visual Trees & Stale Memory Guard
+
+### 1. State Rollback and Backtracking with File Snapshots
+- **Atomic File Snapshots**: Added `rollback_snapshot` action in `ozy_exploration` and Rust Core to capture physical file states at key exploration nodes.
+- **Automated Disk Restoration**: Introduced `rollback_node` and `rollback_to_parent` to instantly revert tracked files on disk to prior states when an exploration branch is pruned or rejected, leaving the codebase pristine without manual reversions.
+
+### 2. Action Simulation & Blast Radius Pre-Flight (`simulate_action`)
+- **AST Dependency Blast Radius**: Added `simulate_action` / `critique_hypothesis` in `ozy_brain` to calculate the blast radius of proposed edits up to depth 2 using the dependency graph.
+- **Preventive Safety Directives**: Issues `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]` whenever proposed modifications touch core interfaces or multiple dependent files.
+- **Smart Backtracking Advice**: Automatically recommends optimal fallback nodes (`recommended_resume_node`) when hypotheses are assessed as high-risk or unviable.
+
+### 3. Objective Auto-Reward Calculation & Anti-Hallucination Rejection
+- **Deterministic Auto-Reward**: Evaluates objective signals from test runs and execution logs:
+  - Exit code 0 / passing tests: `+1.0` (`[OBJECTIVE: TEST_PASSED]`).
+  - Syntax or lint errors: `-0.8` (`[ALERT: SYNTAX_OR_LINT_ERROR]`).
+  - False claim rejection: Flags attempts to claim `is_solution: true` without clean test execution, clamping rewards to `-1.0` and pruning the branch (`[ALERT: FALSE_SOLUTION_REJECTED]`).
+
+### 4. Emoji-Free Mermaid Tree Visualizer (`get_tree`)
+- **Clean Interactive Graph Output**: Enhanced `ozy_exploration(action="get_tree")` and CLI `ozymem dream tree` to generate clean Mermaid diagrams with textual status tags:
+  - `[STATUS: ACTIVE]` for active leaf nodes.
+  - `[ALERT: PRUNED]` for dead-end or pruned branches.
+  - `[OBJECTIVE: SOLVED / TEST_PASSED]` for validated solution nodes.
+  - `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]` for high-risk modifications.
+
+### 5. Stale Memory Reality Check against File MTime
+- **Physical Disk MTime Auditing**: Integrated file modification time and existence checks into `ozy_brain` and `ozy_context`.
+- **Anti-Staleness Alert**: Injects `[ALERT: STALE_MEMORY]` whenever the underlying source file on disk has a modification time more recent than the recorded lesson, ensuring the agent prioritizes active code over outdated recollections.
+
+### 6. Architecture Streamlining (Excel Engine Pruning)
+- **Dead Code Pruning**: Pruned 507 lines of unused legacy Excel template engine and calamine parser code, reducing compile overhead and binary footprint to focus solely on high-performance semantic memory and reasoning.
+
 ---
 
 ## 🌙 Version v1.1.0 — Dream-RSI: Zero-Friction MCTS Engine, Trajectory Resumption & Auto-Pruning
