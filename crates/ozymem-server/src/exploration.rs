@@ -207,13 +207,17 @@ pub fn handle_exploration(
             let final_reward = args.get("reward_score").and_then(Value::as_f64);
 
             backend.complete_trajectory(trajectory_id, status, final_reward)?;
+            let mermaid = backend.render_mermaid_tree(trajectory_id).ok();
 
-            let res = json!({
+            let mut res = json!({
                 "status": "ok",
                 "trajectory_id": trajectory_id,
                 "final_status": status,
                 "message": "Trayectoria finalizada correctamente"
             });
+            if let Some(ref m) = mermaid {
+                res["mermaid"] = json!(m);
+            }
 
             Ok(ToolCallResult {
                 content: vec![ContentBlock {
@@ -231,10 +235,12 @@ pub fn handle_exploration(
                 .ok_or_else(|| anyhow!("Falta 'trajectory_id' para obtener el árbol"))?;
 
             let tree = backend.get_trajectory_tree(trajectory_id)?;
+            let mermaid = backend.render_mermaid_tree(trajectory_id).unwrap_or_default();
 
             let res = json!({
                 "status": "ok",
                 "trajectory_id": trajectory_id,
+                "mermaid": mermaid,
                 "tree": tree
             });
 

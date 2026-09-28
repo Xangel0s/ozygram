@@ -35,6 +35,17 @@ pub enum DreamSubcommand {
         #[arg(long)]
         json: bool,
     },
+    /// Export or visualize the MCTS exploration tree as a Mermaid diagram
+    Tree {
+        /// Trajectory ID to render
+        trajectory_id: String,
+        /// Optional path to project or database
+        #[arg(long)]
+        path: Option<String>,
+        /// Output raw JSON with mermaid string instead of markdown block
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
@@ -160,6 +171,24 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                 println!("============================================================");
             }
 
+            Ok(())
+        }
+        DreamSubcommand::Tree { trajectory_id, path, json } => {
+            let target_path = path.as_deref().unwrap_or(".");
+            let backend = GraphBackend::open_for_project(Path::new(target_path))
+                .context("No se pudo inicializar GraphBackend para Dream-RSI")?;
+
+            let mermaid = backend.render_mermaid_tree(trajectory_id)?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&json!({
+                    "trajectory_id": trajectory_id,
+                    "mermaid": mermaid
+                }))?);
+            } else {
+                println!("```mermaid");
+                println!("{}", mermaid.trim_end());
+                println!("```");
+            }
             Ok(())
         }
     }

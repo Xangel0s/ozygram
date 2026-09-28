@@ -2263,3 +2263,78 @@ fn test_exploration_recommended_resume_node() {
     let diag = backend.diagnose_trajectory(&traj_id).unwrap();
     assert_eq!(diag.recommended_resume_node_id, Some(leaf.id));
 }
+
+#[test]
+fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
+
+    let traj_id = backend.start_trajectory(
+        &dir.path().to_string_lossy(),
+        "Investigar bug de autocompletado en laboratorio",
+        Some("v1.2.0"),
+    ).unwrap();
+
+    // 1. Root hypothesis node
+    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "read_router".to_string(),
+        action_payload: "{\"file\": \"ensayo_especial.py\"}".to_string(),
+        observation: "Endpoints detectados".to_string(),
+        cost_tokens: Some(50),
+        latency_ms: Some(10),
+        reward_score: Some(0.5),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    // 2. Pruned branch (failed hypothesis)
+    let _pruned = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "edit_schema".to_string(),
+        action_payload: "{\"patch\": \"drop column\"}".to_string(),
+        observation: "Regression: schema mismatch".to_string(),
+        cost_tokens: Some(100),
+        latency_ms: Some(25),
+        reward_score: Some(-3.0),
+        is_solution: Some(false),
+        is_pruned: Some(true),
+    }).unwrap();
+
+    // 3. Solution branch
+    let _solution = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "fix_mapping".to_string(),
+        action_payload: "{\"target\": \"281-26-ING\"}".to_string(),
+        observation: "Tests passing 100%".to_string(),
+        cost_tokens: Some(80),
+        latency_ms: Some(20),
+        reward_score: Some(10.0),
+        is_solution: Some(true),
+        is_pruned: Some(false),
+    }).unwrap();
+
+    let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
+
+    // Verificaciones estructurales
+    assert!(mermaid.contains("graph TD"));
+    assert!(mermaid.contains("[TASK]"));
+    assert!(mermaid.contains("[HYPOTHESIS]"));
+    assert!(mermaid.contains("[ALERT: PRUNED]"));
+    assert!(mermaid.contains("[SOLUTION]"));
+    assert!(mermaid.contains("traj_root"));
+    assert!(mermaid.contains("classDef root"));
+    assert!(mermaid.contains("classDef solution"));
+    assert!(mermaid.contains("classDef pruned"));
+
+    // Verificación estricta: NO debe contener emojis
+    let forbidden_emojis = ["❌", "🏆", "🔵", "⚠️", "🚨", "✅", "🔥", "🎯"];
+    for emoji in forbidden_emojis {
+        assert!(!mermaid.contains(emoji), "Mermaid no debe contener emojis: {emoji}");
+    }
+}
+

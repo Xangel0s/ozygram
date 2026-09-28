@@ -693,4 +693,148 @@ impl GraphBackend {
         ).context("Error al eliminar trayectoria")?;
         Ok(())
     }
+
+    /// Renderiza la trayectoria MCTS como un grafo visual en formato Mermaid.
+    /// Emplea etiquetas textuales de estado ([TASK], [HYPOTHESIS], [ALERT: PRUNED], [ALERT: LOW REWARD], [SOLUTION], [STEP])
+    /// sin recurrir a emojis, asignando estilos visuales claros mediante clases Mermaid.
+    pub fn render_mermaid_tree(&self, trajectory_id: &str) -> Result<String> {
+        let inner = self.inner.lock().unwrap();
+
+        let header: TrajectoryHeader = inner
+            .sqlite
+            .query_row(
+                "SELECT id, project_path, task_description, policy_version, status, total_steps, cumulative_reward, created_at, completed_at
+                 FROM exploration_trajectories
+                 WHERE id = ?1",
+                params![trajectory_id],
+                |row| {
+                    Ok(TrajectoryHeader {
+                        id: row.get(0)?,
+                        project_path: row.get(1)?,
+                        task_description: row.get(2)?,
+                        policy_version: row.get(3)?,
+                        status: row.get(4)?,
+                        total_steps: row.get(5)?,
+                        cumulative_reward: row.get(6)?,
+                        created_at: row.get(7)?,
+                        completed_at: row.get(8)?,
+                    })
+                },
+            )
+            .context(format!("No se encontró la trayectoria '{trajectory_id}'"))?;
+
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
+                    observation, cost_tokens, latency_ms, reward_score, visit_count,
+                    value_estimate, is_solution, is_pruned, created_at
+             FROM exploration_nodes
+             WHERE trajectory_id = ?1
+             ORDER BY depth ASC, created_at ASC",
+        )?;
+
+        let nodes: Vec<ExplorationNode> = stmt
+            .query_map(params![trajectory_id], |row| {
+                Ok(ExplorationNode {
+                    id: row.get(0)?,
+                    trajectory_id: row.get(1)?,
+                    parent_id: row.get(2)?,
+                    depth: row.get(3)?,
+                    action_type: row.get(4)?,
+                    action_payload: row.get(5)?,
+                    observation: row.get(6)?,
+                    cost_tokens: row.get(7)?,
+                    latency_ms: row.get(8)?,
+                    reward_score: row.get(9)?,
+                    visit_count: row.get(10)?,
+                    value_estimate: row.get(11)?,
+                    is_solution: row.get(12)?,
+                    is_pruned: row.get(13)?,
+                    created_at: row.get(14)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut out = String::new();
+        out.push_str("graph TD\n");
+        out.push_str("    classDef root fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b;\n");
+        out.push_str("    classDef solution fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20;\n");
+        out.push_str("    classDef pruned fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c;\n");
+        out.push_str("    classDef warning fill:#fff8e1,stroke:#f57f17,stroke-width:2px,color:#e65100;\n");
+        out.push_str("    classDef hypothesis fill:#ede7f6,stroke:#512da8,stroke-width:1px,color:#311b92;\n");
+        out.push_str("    classDef step fill:#f5f5f5,stroke:#616161,stroke-width:1px,color:#212121;\n\n");
+
+        let task_desc = sanitize_mermaid_text(&header.task_description, 45);
+        let root_id = "traj_root";
+        out.push_str(&format!(
+            "    {}[\"[TASK] {}<br/>Status: {} | Reward: {:+.2} | Steps: {}\"]:::root\n",
+            root_id, task_desc, header.status, header.cumulative_reward, header.total_steps
+        ));
+
+        for n in &nodes {
+            let node_id = format!("n_{}", sanitize_mermaid_id(&n.id));
+            let (status_tag, class_name) = if n.is_solution {
+                ("[SOLUTION]", "solution")
+            } else if n.is_pruned {
+                ("[ALERT: PRUNED]", "pruned")
+            } else if n.reward_score < 0.0 {
+                ("[ALERT: LOW REWARD]", "warning")
+            } else if n.depth <= 1 {
+                ("[HYPOTHESIS]", "hypothesis")
+            } else {
+                ("[STEP]", "step")
+            };
+
+            let payload_snippet = sanitize_mermaid_text(&n.action_payload, 30);
+            let action_type = sanitize_mermaid_text(&n.action_type, 20);
+
+            out.push_str(&format!(
+                "    {}[\"{} {}: {}<br/>Q: {:.2} | N: {} | R: {:+.2}\"]:::{}\n",
+                node_id, status_tag, action_type, payload_snippet, n.value_estimate, n.visit_count, n.reward_score, class_name
+            ));
+
+            if let Some(ref pid) = n.parent_id {
+                let parent_node_id = format!("n_{}", sanitize_mermaid_id(pid));
+                out.push_str(&format!("    {} --> {}\n", parent_node_id, node_id));
+            } else {
+                out.push_str(&format!("    {} --> {}\n", root_id, node_id));
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+fn sanitize_mermaid_id(id: &str) -> String {
+    let mut clean: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if clean.starts_with(|c: char| c.is_ascii_digit()) {
+        clean.insert_str(0, "node_");
+    }
+    clean
+}
+
+fn sanitize_mermaid_text(text: &str, max_len: usize) -> String {
+    let single_line: String = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let sanitized: String = single_line
+        .replace('"', "'")
+        .replace('[', "(")
+        .replace(']', ")")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+
+    if sanitized.chars().count() > max_len {
+        let mut truncated: String = sanitized.chars().take(max_len).collect();
+        truncated.push_str("...");
+        truncated
+    } else {
+        sanitized
+    }
 }
