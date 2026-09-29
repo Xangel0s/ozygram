@@ -502,6 +502,189 @@ impl GraphBackend {
             END;"
         )?;
 
+        // --- Graph Memory Architecture v1.3.0 (Task 1.1 & Task 1.2) ---
+        inner.sqlite.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memory_nodes (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL DEFAULT 'lesson'
+                    CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule','architecture')),
+                title TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL,
+                error_context TEXT NOT NULL DEFAULT '',
+                solution TEXT NOT NULL DEFAULT '',
+                confidence_score REAL NOT NULL DEFAULT 1.0,
+                touch_count INTEGER NOT NULL DEFAULT 0,
+                stale INTEGER NOT NULL DEFAULT 0,
+                stale_reason TEXT NULL,
+                created_at TEXT NOT NULL,
+                last_verified_at TEXT NOT NULL DEFAULT '',
+                tenant_id TEXT NOT NULL,
+                workspace_root TEXT NOT NULL DEFAULT '',
+                embedding BLOB NULL,
+                embedding_model TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant ON memory_nodes(tenant_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_nodes_kind ON memory_nodes(kind, tenant_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_nodes_stale ON memory_nodes(stale, tenant_id);
+
+            CREATE TABLE IF NOT EXISTS memory_edges (
+                source_type TEXT NOT NULL CHECK(source_type IN ('memory', 'file', 'symbol', 'trajectory_node')),
+                source_id TEXT NOT NULL,
+                target_type TEXT NOT NULL CHECK(target_type IN ('memory', 'file', 'symbol', 'trajectory_node')),
+                target_id TEXT NOT NULL,
+                edge_type TEXT NOT NULL CHECK(edge_type IN (
+                    'applies_to',
+                    'coupled_with',
+                    'causes_regression',
+                    'supersedes',
+                    'reinforces',
+                    'derived_from'
+                )),
+                weight REAL NOT NULL DEFAULT 1.0,
+                created_at TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                workspace_root TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (source_type, source_id, target_type, target_id, edge_type, tenant_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_edges_src ON memory_edges(source_type, source_id, tenant_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_edges_dst ON memory_edges(target_type, target_id, tenant_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type, tenant_id);
+
+            CREATE TRIGGER IF NOT EXISTS lessons_sync_nodes_ai AFTER INSERT ON lessons BEGIN
+                INSERT OR IGNORE INTO memory_nodes (
+                    id, kind, title, content, error_context, solution,
+                    confidence_score, touch_count, stale, stale_reason,
+                    created_at, last_verified_at, tenant_id, workspace_root,
+                    embedding, embedding_model
+                )
+                VALUES (
+                    'legacy_lesson_' || CAST(new.id AS TEXT),
+                    new.kind,
+                    CASE WHEN new.symbol_name != '' THEN new.symbol_name ELSE new.file_path END,
+                    new.error_context || CASE WHEN new.solution != '' THEN ' -> ' || new.solution ELSE '' END,
+                    new.error_context,
+                    new.solution,
+                    new.confidence_score,
+                    new.touch_count,
+                    new.stale,
+                    new.stale_reason,
+                    new.created_at,
+                    new.last_verified_at,
+                    new.tenant_id,
+                    new.workspace_root,
+                    new.embedding,
+                    new.embedding_model
+                );
+
+                INSERT OR IGNORE INTO memory_edges (
+                    source_type, source_id, target_type, target_id, edge_type, weight, created_at, tenant_id, workspace_root
+                )
+                SELECT
+                    'memory',
+                    'legacy_lesson_' || CAST(new.id AS TEXT),
+                    'file',
+                    new.file_path,
+                    'applies_to',
+                    1.0,
+                    new.created_at,
+                    new.tenant_id,
+                    new.workspace_root
+                WHERE new.file_path != '' AND new.file_path != 'global' AND new.file_path != 'unknown';
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS lessons_sync_nodes_au AFTER UPDATE ON lessons BEGIN
+                UPDATE memory_nodes SET
+                    kind = new.kind,
+                    title = CASE WHEN new.symbol_name != '' THEN new.symbol_name ELSE new.file_path END,
+                    content = new.error_context || CASE WHEN new.solution != '' THEN ' -> ' || new.solution ELSE '' END,
+                    error_context = new.error_context,
+                    solution = new.solution,
+                    confidence_score = new.confidence_score,
+                    touch_count = new.touch_count,
+                    stale = new.stale,
+                    stale_reason = new.stale_reason,
+                    last_verified_at = new.last_verified_at,
+                    embedding = new.embedding,
+                    embedding_model = new.embedding_model
+                WHERE id = 'legacy_lesson_' || CAST(old.id AS TEXT);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS lessons_sync_nodes_ad AFTER DELETE ON lessons BEGIN
+                DELETE FROM memory_nodes WHERE id = 'legacy_lesson_' || CAST(old.id AS TEXT);
+                DELETE FROM memory_edges WHERE source_type = 'memory' AND source_id = 'legacy_lesson_' || CAST(old.id AS TEXT);
+                DELETE FROM memory_edges WHERE target_type = 'memory' AND target_id = 'legacy_lesson_' || CAST(old.id AS TEXT);
+            END;
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_nodes_fts USING fts5(
+                title, content, error_context, solution,
+                content='memory_nodes',
+                content_rowid='rowid',
+                tokenize='unicode61'
+            );
+
+            CREATE TRIGGER IF NOT EXISTS memory_nodes_ai AFTER INSERT ON memory_nodes BEGIN
+                INSERT INTO memory_nodes_fts(rowid, title, content, error_context, solution)
+                VALUES (new.rowid, new.title, new.content, new.error_context, new.solution);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS memory_nodes_ad AFTER DELETE ON memory_nodes BEGIN
+                INSERT INTO memory_nodes_fts(memory_nodes_fts, rowid, title, content, error_context, solution)
+                VALUES ('delete', old.rowid, old.title, old.content, old.error_context, old.solution);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS memory_nodes_au AFTER UPDATE ON memory_nodes BEGIN
+                INSERT INTO memory_nodes_fts(memory_nodes_fts, rowid, title, content, error_context, solution)
+                VALUES ('delete', old.rowid, old.title, old.content, old.error_context, old.solution);
+                INSERT INTO memory_nodes_fts(rowid, title, content, error_context, solution)
+                VALUES (new.rowid, new.title, new.content, new.error_context, new.solution);
+            END;
+
+            -- One-time backfill from lessons into memory_nodes and memory_edges
+            INSERT OR IGNORE INTO memory_nodes (
+                id, kind, title, content, error_context, solution,
+                confidence_score, touch_count, stale, stale_reason,
+                created_at, last_verified_at, tenant_id, workspace_root,
+                embedding, embedding_model
+            )
+            SELECT
+                'legacy_lesson_' || CAST(id AS TEXT),
+                kind,
+                CASE WHEN symbol_name != '' THEN symbol_name ELSE file_path END,
+                error_context || CASE WHEN solution != '' THEN ' -> ' || solution ELSE '' END,
+                error_context,
+                solution,
+                confidence_score,
+                touch_count,
+                stale,
+                stale_reason,
+                created_at,
+                last_verified_at,
+                tenant_id,
+                workspace_root,
+                embedding,
+                embedding_model
+            FROM lessons;
+
+            INSERT OR IGNORE INTO memory_edges (
+                source_type, source_id, target_type, target_id, edge_type, weight, created_at, tenant_id, workspace_root
+            )
+            SELECT
+                'memory',
+                'legacy_lesson_' || CAST(id AS TEXT),
+                'file',
+                file_path,
+                'applies_to',
+                1.0,
+                created_at,
+                tenant_id,
+                workspace_root
+            FROM lessons
+            WHERE file_path != '' AND file_path != 'global' AND file_path != 'unknown';
+
+            INSERT OR IGNORE INTO memory_nodes_fts(rowid, title, content, error_context, solution)
+            SELECT rowid, title, content, error_context, solution FROM memory_nodes;"
+        )?;
+
         Ok(())
     }
 

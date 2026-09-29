@@ -9,6 +9,7 @@ pub mod embeddings;
 pub mod mcp_impl;
 pub mod sqlite_backend;
 pub mod exploration;
+pub mod memory_graph;
 
 pub use types::*;
 pub use helpers::*;

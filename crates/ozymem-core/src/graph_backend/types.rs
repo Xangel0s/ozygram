@@ -25,6 +25,125 @@ pub struct FileNode {
 #[derive(Debug, Clone)]
 pub struct FileEdge;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GraphEntityType {
+    File,
+    Memory,
+    Symbol,
+    TrajectoryNode,
+}
+
+impl fmt::Display for GraphEntityType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::File => write!(f, "file"),
+            Self::Memory => write!(f, "memory"),
+            Self::Symbol => write!(f, "symbol"),
+            Self::TrajectoryNode => write!(f, "trajectory_node"),
+        }
+    }
+}
+
+impl std::str::FromStr for GraphEntityType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "file" => Ok(Self::File),
+            "memory" => Ok(Self::Memory),
+            "symbol" => Ok(Self::Symbol),
+            "trajectory_node" => Ok(Self::TrajectoryNode),
+            other => Err(format!("Unknown GraphEntityType: {}", other)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryEdgeType {
+    AppliesTo,
+    CoupledWith,
+    CausesRegression,
+    Supersedes,
+    Reinforces,
+    DerivedFrom,
+}
+
+impl fmt::Display for MemoryEdgeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AppliesTo => write!(f, "applies_to"),
+            Self::CoupledWith => write!(f, "coupled_with"),
+            Self::CausesRegression => write!(f, "causes_regression"),
+            Self::Supersedes => write!(f, "supersedes"),
+            Self::Reinforces => write!(f, "reinforces"),
+            Self::DerivedFrom => write!(f, "derived_from"),
+        }
+    }
+}
+
+impl std::str::FromStr for MemoryEdgeType {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "applies_to" => Ok(Self::AppliesTo),
+            "coupled_with" => Ok(Self::CoupledWith),
+            "causes_regression" => Ok(Self::CausesRegression),
+            "supersedes" => Ok(Self::Supersedes),
+            "reinforces" => Ok(Self::Reinforces),
+            "derived_from" => Ok(Self::DerivedFrom),
+            other => Err(format!("Unknown MemoryEdgeType: {}", other)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryNodeRecord {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub content: String,
+    #[serde(default)]
+    pub error_context: String,
+    #[serde(default)]
+    pub solution: String,
+    #[serde(default = "default_confidence")]
+    pub confidence_score: f64,
+    #[serde(default)]
+    pub touch_count: i64,
+    #[serde(default)]
+    pub stale: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_reason: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub last_verified_at: String,
+    #[serde(default = "default_tenant")]
+    pub tenant_id: String,
+    #[serde(default)]
+    pub workspace_root: String,
+}
+
+fn default_tenant() -> String {
+    "local".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEdgeRecord {
+    pub source_type: GraphEntityType,
+    pub source_id: String,
+    pub target_type: GraphEntityType,
+    pub target_id: String,
+    pub edge_type: MemoryEdgeType,
+    #[serde(default = "default_confidence")]
+    pub weight: f64,
+    pub created_at: String,
+    #[serde(default = "default_tenant")]
+    pub tenant_id: String,
+    #[serde(default)]
+    pub workspace_root: String,
+}
+
 pub const LESSON_KINDS: &[&str] = &["lesson", "decision", "convention", "gotcha", "module_rule"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
