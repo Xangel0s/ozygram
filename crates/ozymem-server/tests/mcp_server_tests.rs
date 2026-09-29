@@ -2328,3 +2328,102 @@ pub fn audit_log(event: &str) -> bool {
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
+
+    #[tokio::test]
+    async fn test_ozy_graph_memory_neighborhood_and_task_context_mcp() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_graph_mcp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 1. Initialize backend
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(601)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "rootPath": tmp_root.to_string_lossy(),
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // 2. Setup memories and edges
+        let file_path = "crates/ozymem-core/src/graph_backend/schema.rs";
+        let coupled_file = "crates/ozymem-server/src/unified.rs";
+        {
+            let guard = backend.lock().unwrap();
+            let gb = guard.as_ref().unwrap();
+            gb.record_lesson(
+                file_path,
+                Some("migrate_memory_graph_tables"),
+                "SQLite lock error",
+                "Wrap migration in atomic transaction",
+            ).await.unwrap();
+
+            // Insert coupled edge: schema.rs COUPLED_WITH unified.rs
+            gb.insert_memory_edge(&ozymem_core::graph_backend::types::MemoryEdgeRecord {
+                source_type: ozymem_core::graph_backend::types::GraphEntityType::File,
+                source_id: file_path.to_string(),
+                target_type: ozymem_core::graph_backend::types::GraphEntityType::File,
+                target_id: coupled_file.to_string(),
+                edge_type: ozymem_core::graph_backend::types::MemoryEdgeType::CoupledWith,
+                weight: 0.9,
+                created_at: "2026-09-29T12:00:00Z".to_string(),
+                tenant_id: "local".to_string(),
+                workspace_root: tmp_root.to_string_lossy().to_string(),
+            }).unwrap();
+        }
+
+        // 3. Call ozy_graph with action: memory_neighborhood
+        let graph_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(602)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_graph",
+                "arguments": {
+                    "action": "memory_neighborhood",
+                    "entity_type": "file",
+                    "entity_id": file_path,
+                    "max_depth": 2
+                }
+            })),
+        };
+        let graph_resp = handle_request(&backend, graph_req, None, None).await.unwrap().unwrap();
+        assert!(graph_resp.error.is_none());
+        let graph_text = graph_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(graph_text.contains("[GRAPH_NEIGHBORHOOD:"));
+        assert!(graph_text.contains("[APPLIES_TO]"));
+        assert!(graph_text.contains("[COUPLED_WITH]"));
+        assert!(graph_text.contains(coupled_file));
+
+        // 4. Call ozy_context to verify GRAPH_TOPOLOGY is injected
+        let ctx_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(603)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "query": "migrate_memory_graph_tables",
+                    "max_tokens": 1500
+                }
+            })),
+        };
+        let ctx_resp = handle_request(&backend, ctx_req, None, None).await.unwrap().unwrap();
+        assert!(ctx_resp.error.is_none());
+        let ctx_text = ctx_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(ctx_text.contains("[GRAPH_TOPOLOGY: Multi-Hop Memory & Component Neighborhood]"));
+        assert!(ctx_text.contains("[APPLIES_TO]"));
+
+        // Strict emoji check
+        for emoji in ["\u{274C}", "\u{1F3C6}", "\u{1F535}", "\u{26A0}", "\u{1F6A8}", "\u{2705}", "\u{1F525}", "\u{1F3AF}"] {
+            assert!(!graph_text.contains(emoji), "Graph neighborhood must not contain emoji");
+            assert!(!ctx_text.contains(emoji), "Context text must not contain emoji");
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }

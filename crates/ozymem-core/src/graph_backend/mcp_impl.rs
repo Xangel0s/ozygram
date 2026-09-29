@@ -199,6 +199,10 @@ impl McpBackend for GraphBackend {
             )?;
         }
 
+        // Keep RAM memory graph in sync with SQLite triggers
+        self.load_memory_graph_to_ram().ok();
+
+
         let node_idx = {
             let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
             let norm_path = crate::normalize_path(file_path);

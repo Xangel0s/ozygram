@@ -290,6 +290,34 @@ pub async fn handle_unified_tool(
                             )?
                         }
                         "architecture_report" => build_architecture_report(backend).await?,
+                        "memory_neighborhood" | "neighborhood" => {
+                            let entity_type_str = tool_call
+                                .arguments
+                                .get("entity_type")
+                                .and_then(Value::as_str)
+                                .unwrap_or("file");
+                            let entity_type = entity_type_str
+                                .parse::<ozymem_core::graph_backend::types::GraphEntityType>()
+                                .unwrap_or(ozymem_core::graph_backend::types::GraphEntityType::File);
+                            let entity_id = tool_call
+                                .arguments
+                                .get("entity_id")
+                                .or_else(|| tool_call.arguments.get("file_path"))
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing entity_id or file_path"))?;
+                            let depth = tool_call
+                                .arguments
+                                .get("depth")
+                                .or_else(|| tool_call.arguments.get("max_depth"))
+                                .and_then(Value::as_u64)
+                                .unwrap_or(2) as usize;
+                            let neighborhood = backend.get_memory_neighborhood(&entity_type, entity_id, depth)?;
+                            if tool_call.arguments.get("format").and_then(Value::as_str) == Some("json") {
+                                serde_json::to_string_pretty(&neighborhood)?
+                            } else {
+                                crate::formatters::format_memory_neighborhood(&entity_type, entity_id, &neighborhood)
+                            }
+                        }
                         "api_routes" => {
                             let file_path = tool_call.arguments.get("file_path").and_then(Value::as_str);
                             let routes = backend.map_api_routes(file_path)?;

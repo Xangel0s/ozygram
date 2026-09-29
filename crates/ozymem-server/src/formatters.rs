@@ -364,6 +364,32 @@ pub(crate) async fn build_ozy_task_context(
         body.push('\n');
     }
 
+    // 3. Inyección de Topología de Grafo de Memoria (GraphRAG Multi-Hop Neighborhood)
+    let mut memory_graph_block = String::new();
+    let mut seen_graph_nodes = std::collections::HashSet::new();
+    for fp in files.iter().take(3) {
+        if let Ok(neighbors) = backend.get_memory_neighborhood(&ozymem_core::graph_backend::types::GraphEntityType::File, fp, 2) {
+            for n in neighbors {
+                if seen_graph_nodes.insert(format!("{}:{}", n.entity.entity_type, n.entity.id)) {
+                    memory_graph_block.push_str(&format!(
+                        "- [{}] {} (type: {}, depth: {}, weight: {:.2}, dir: {})\n",
+                        n.edge_type.to_string().to_uppercase(),
+                        n.entity.id,
+                        n.entity.entity_type,
+                        n.depth,
+                        n.effective_weight,
+                        n.direction
+                    ));
+                }
+            }
+        }
+    }
+    if !memory_graph_block.is_empty() {
+        body.push_str("\n[GRAPH_TOPOLOGY: Multi-Hop Memory & Component Neighborhood]\n");
+        body.push_str(&memory_graph_block);
+        body.push('\n');
+    }
+
     for fp in files.iter().take(5) {
         if body.len() / 4 >= max_tokens {
             body.push_str(&format!("\n... truncated at ~{max_tokens} tokens"));
@@ -549,4 +575,40 @@ pub(crate) fn detect_lang(path: &str) -> ozymem_parser::SupportedLanguage {
         _ => ozymem_parser::SupportedLanguage::Unknown,
     }
 }
+
+pub(crate) fn format_memory_neighborhood(
+    entity_type: &ozymem_core::graph_backend::types::GraphEntityType,
+    entity_id: &str,
+    neighbors: &[ozymem_core::graph_backend::types::NeighborhoodResult],
+) -> String {
+    if neighbors.is_empty() {
+        return format!(
+            "[GRAPH_NEIGHBORHOOD: {}:{}]\nNo connected neighbors found within depth limit.\n",
+            entity_type, entity_id
+        );
+    }
+    let mut out = format!(
+        "[GRAPH_NEIGHBORHOOD: {}:{}]\nTotal neighbors: {}\n",
+        entity_type, entity_id, neighbors.len()
+    );
+    for n in neighbors {
+        let stale_badge = if n.entity.stale {
+            " [ALERT: STALE_MEMORY]"
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "- [{}] {} (type: {}, depth: {}, weight: {:.2}, dir: {}){}\n",
+            n.edge_type.to_string().to_uppercase(),
+            n.entity.id,
+            n.entity.entity_type,
+            n.depth,
+            n.effective_weight,
+            n.direction,
+            stale_badge
+        ));
+    }
+    out
+}
+
 
