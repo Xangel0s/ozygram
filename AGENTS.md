@@ -72,8 +72,15 @@
   - **Offline Counterfactual Simulator (`ReplaySimulator`)**: Deterministic replay at **0 LLM tokens and 0 re-executions**, computing fitness score $J(\pi)$ and diagnosing exploration bottlenecks.
   - **AST Safety Validation**: Strict audit via `AstSafetyAuditor` (blocking `subprocess`, `eval`, `rmtree`) and non-regression guard ($J_{\text{cand}} > J_{\text{base}} + \epsilon$ with zero false prunes).
   - **MCP & CLI Interface**: Endpoints `ozy_exploration` (`start`, `record_step`, `record_batch`, `complete`, `get_tree`, `diagnose`, `list`, `delete`, `resume`, `rollback_snapshot`, `rollback_node`, `rollback_to_parent`), `ozy_brain(action="simulate_action|dream_rsi")`, and CLI subcommands `ozymem dream run|status|diagnose|tree`.
+- **Property Graph Memory Architecture (v1.3.0)**:
+  - **Connected Graph Topology (`memory_nodes`, `memory_edges`)**: First-class vertices for memories, files, and symbols connected via directed typed edges (`APPLIES_TO`, `COUPLED_WITH`, `CAUSES_REGRESSION`, `SUPERSEDES`, `REINFORCES`, `DERIVED_FROM`).
+  - **In-Memory Multi-Hop BFS with Distance Decay**: Traverses RAM `petgraph` ($\text{depth} \le 2$) applying exponential distance attenuation ($0.6^{\text{depth}-1}$). Direct rules retain weight 1.0; coupled component context is injected at ~0.54 to surface blast radius without context explosion.
+  - **Cascade Stale Invalidation**: File modifications propagate `[ALERT: STALE_MEMORY]` through `APPLIES_TO` edges and cascade down `SUPERSEDES` and `DERIVED_FROM` chains, halving confidence and protecting against stale hallucinations.
+  - **Autonomous Cognitive Auto-Wiring (`ozymem dream run`)**: Analyzes memory clusters ($\text{sim} \ge 0.80$), weaving `REINFORCES` relationships for synergistic lessons and arbitrating contradictions into directional `SUPERSEDES` edges.
+  - **Emoji-Free Mermaid Visualization (`ozymem dream graph` & `ozy_graph`)**: Renders clean Markdown architecture diagrams with standardized textual tags (`[CONVENTION]`, `[APPLIES_TO]`, `[COUPLED_WITH]`).
 
 ## Principles & Conventions
+- **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
 - **SOLID, DRY, KISS**: Keep code loosely coupled, extract reusable logic, and avoid over-engineering.
 - **Git & Commits**: Write clean, feature-scoped commits following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
 - **Testing**: Maintain test coverage above 80% on all new features. Run `cargo test` and Python test suites prior to completing tasks.

@@ -255,3 +255,82 @@ async fn test_cascade_stale_invalidation() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_auto_wire_memories_reinforces_and_supersedes() -> Result<()> {
+    let tmp = tempdir()?;
+    let db_path = tmp.path().join("memory.db");
+    let backend = GraphBackend::open(Some(&db_path.to_string_lossy()))?;
+
+    // 1. Two similar memories -> REINFORCES
+    backend.insert_memory_node(&MemoryNodeRecord {
+        id: "mem_auth_cookie_1".to_string(),
+        kind: "convention".to_string(),
+        title: "JWT auth cookie secure flag".to_string(),
+        content: "Always set HttpOnly and Secure flags on auth cookies".to_string(),
+        error_context: "Cookie exposed over HTTP".to_string(),
+        solution: "Set cookie Secure HttpOnly SameSite=Lax".to_string(),
+        confidence_score: 1.0,
+        touch_count: 0,
+        stale: 0,
+        stale_reason: None,
+        created_at: "2026-09-29T10:00:00Z".to_string(),
+        last_verified_at: "2026-09-29T10:00:00Z".to_string(),
+        tenant_id: "local".to_string(),
+        workspace_root: tmp.path().to_string_lossy().to_string(),
+    })?;
+
+    backend.insert_memory_node(&MemoryNodeRecord {
+        id: "mem_auth_cookie_2".to_string(),
+        kind: "convention".to_string(),
+        title: "JWT auth cookie security flags".to_string(),
+        content: "Configure auth cookie with Secure and HttpOnly flags".to_string(),
+        error_context: "Cookie security audit warning".to_string(),
+        solution: "Set cookie Secure HttpOnly SameSite=Lax".to_string(),
+        confidence_score: 0.9,
+        touch_count: 0,
+        stale: 0,
+        stale_reason: None,
+        created_at: "2026-09-29T11:00:00Z".to_string(),
+        last_verified_at: "2026-09-29T11:00:00Z".to_string(),
+        tenant_id: "local".to_string(),
+        workspace_root: tmp.path().to_string_lossy().to_string(),
+    })?;
+
+    // 3. Obsolete memory -> SUPERSEDES
+    backend.insert_memory_node(&MemoryNodeRecord {
+        id: "mem_auth_cookie_legacy".to_string(),
+        kind: "gotcha".to_string(),
+        title: "Old auth cookie setting".to_string(),
+        content: "Deprecated old auth cookie setting no usar".to_string(),
+        error_context: "Insecure cookie".to_string(),
+        solution: "Deprecated configuration no usar".to_string(),
+        confidence_score: 0.5,
+        touch_count: 0,
+        stale: 0,
+        stale_reason: None,
+        created_at: "2026-09-28T09:00:00Z".to_string(),
+        last_verified_at: "2026-09-28T09:00:00Z".to_string(),
+        tenant_id: "local".to_string(),
+        workspace_root: tmp.path().to_string_lossy().to_string(),
+    })?;
+
+    // Run auto-wiring
+    let report = backend.auto_wire_memories(0.35)?;
+    assert!(report.edges_created >= 1, "Expected auto-wire edges to be created");
+    assert!(report.reinforces_count >= 1, "Expected at least one REINFORCES edge");
+
+    // Test Mermaid rendering
+    let mermaid = backend.render_mermaid_memory_graph(None)?;
+    assert!(mermaid.starts_with("graph TD"), "Mermaid must start with 'graph TD'");
+    assert!(mermaid.contains("[CONVENTION]"), "Mermaid must contain [CONVENTION] tag");
+    assert!(mermaid.contains("-->|"), "Mermaid must contain typed edge arrows");
+
+    // Strict zero-emoji check
+    for emoji in ["\u{274C}", "\u{1F3C6}", "\u{1F535}", "\u{26A0}", "\u{1F6A8}", "\u{2705}", "\u{1F525}", "\u{1F3AF}"] {
+        assert!(!mermaid.contains(emoji), "Mermaid must not contain emoji");
+    }
+
+    Ok(())
+}
+

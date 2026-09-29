@@ -323,6 +323,10 @@ pub async fn handle_unified_tool(
                             let routes = backend.map_api_routes(file_path)?;
                             serde_json::to_string_pretty(&routes)?
                         }
+                        "render_mermaid" | "mermaid" => {
+                            let module = tool_call.arguments.get("module").and_then(Value::as_str);
+                            backend.render_mermaid_memory_graph(module)?
+                        }
                         _ => {
                             let subpath = tool_call
                                 .arguments

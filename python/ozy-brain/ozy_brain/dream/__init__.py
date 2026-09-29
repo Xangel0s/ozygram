@@ -7,6 +7,7 @@ over historical trajectory trees at zero token cost.
 from ozy_brain.dream.policy import BaseExplorationPolicy, MctsExplorationPolicy
 from ozy_brain.dream.evaluator import SimulationReport, evaluate_trajectory_simulation
 from ozy_brain.dream.simulator import ReplaySimulator
+from ozy_brain.dream.auto_wire import RiskCriticArbitrator, auto_wire_memory_embeddings
 
 __all__ = [
     "BaseExplorationPolicy",
@@ -14,4 +15,6 @@ __all__ = [
     "SimulationReport",
     "evaluate_trajectory_simulation",
     "ReplaySimulator",
+    "RiskCriticArbitrator",
+    "auto_wire_memory_embeddings",
 ]

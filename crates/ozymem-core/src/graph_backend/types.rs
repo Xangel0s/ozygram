@@ -456,3 +456,12 @@ pub struct OutboxEvent {
     pub created_at: String,
     pub processed_at: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoWireReport {
+    pub edges_created: usize,
+    pub reinforces_count: usize,
+    pub supersedes_count: usize,
+    pub details: Vec<String>,
+}
+

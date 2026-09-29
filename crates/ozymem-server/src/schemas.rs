@@ -58,8 +58,9 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["summary", "neighbors", "impact", "path", "architecture_report", "memory_neighborhood"], "default": "summary" },
+                            "action": { "type": "string", "enum": ["summary", "neighbors", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid"], "default": "summary" },
                             "file_path": { "type": "string" },
+                            "module": { "type": "string" },
                             "entity_type": { "type": "string", "enum": ["file", "memory", "symbol", "trajectory_node"], "default": "file" },
                             "entity_id": { "type": "string" },
                             "from": { "type": "string" },

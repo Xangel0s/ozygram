@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 
 use crate::graph_backend::types::{
-    GraphBackend, GraphEntityNode, GraphEntityType, MemoryEdgeRecord, MemoryEdgeType,
+    AutoWireReport, GraphBackend, GraphEntityNode, GraphEntityType, MemoryEdgeRecord, MemoryEdgeType,
     MemoryGraphEdge, MemoryNodeRecord, NeighborhoodResult,
 };
 
@@ -619,5 +619,169 @@ impl GraphBackend {
         }
 
         Ok(invalidated_ids)
+    }
+
+    /// [TASK 4.1] Auto-Wiring Autónomo durante Dream-RSI.
+    ///
+    /// Analiza pares de nodos de memoria activos, calcula su similitud semántica
+    /// e infiere automáticamente aristas tipadas REINFORCES o SUPERSEDES.
+    pub fn auto_wire_memories(&self, similarity_threshold: f64) -> Result<AutoWireReport> {
+        let memories = self.list_memory_nodes(None, false)?;
+        if memories.len() < 2 {
+            return Ok(AutoWireReport {
+                edges_created: 0,
+                reinforces_count: 0,
+                supersedes_count: 0,
+                details: vec!["Menos de 2 memorias registradas, omision de auto-wiring.".to_string()],
+            });
+        }
+
+        let threshold = similarity_threshold.clamp(0.2, 0.99);
+        let mut report = AutoWireReport {
+            edges_created: 0,
+            reinforces_count: 0,
+            supersedes_count: 0,
+            details: Vec::new(),
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
+
+        for i in 0..memories.len() {
+            for j in (i + 1)..memories.len() {
+                let m1 = &memories[i];
+                let m2 = &memories[j];
+
+                let text1 = format!("{} {} {}", m1.title, m1.error_context, m1.solution).to_lowercase();
+                let text2 = format!("{} {} {}", m2.title, m2.error_context, m2.solution).to_lowercase();
+
+                let words1: HashSet<&str> = text1.split_whitespace().filter(|w| w.len() > 3).collect();
+                let words2: HashSet<&str> = text2.split_whitespace().filter(|w| w.len() > 3).collect();
+
+                let intersection = words1.intersection(&words2).count();
+                let union = words1.union(&words2).count();
+
+                let sim = if union > 0 {
+                    intersection as f64 / union as f64
+                } else {
+                    0.0
+                };
+
+                if sim >= threshold {
+                    let text1_has_obsolete = text1.contains("deprecated") || text1.contains("obsoleto") || text1.contains("antiguo") || text1.contains("no usar");
+                    let text2_has_obsolete = text2.contains("deprecated") || text2.contains("obsoleto") || text2.contains("antiguo") || text2.contains("no usar");
+
+                    let (source, target, edge_type, weight, desc) = if text2_has_obsolete && !text1_has_obsolete {
+                        (
+                            m1.id.clone(),
+                            m2.id.clone(),
+                            MemoryEdgeType::Supersedes,
+                            1.0,
+                            format!("[SUPERSEDES] {} reemplaza a {}", m1.id, m2.id)
+                        )
+                    } else if text1_has_obsolete && !text2_has_obsolete {
+                        (
+                            m2.id.clone(),
+                            m1.id.clone(),
+                            MemoryEdgeType::Supersedes,
+                            1.0,
+                            format!("[SUPERSEDES] {} reemplaza a {}", m2.id, m1.id)
+                        )
+                    } else {
+                        (
+                            m1.id.clone(),
+                            m2.id.clone(),
+                            MemoryEdgeType::Reinforces,
+                            sim,
+                            format!("[REINFORCES] {} refuerza a {} (sim: {:.2})", m1.id, m2.id, sim)
+                        )
+                    };
+
+                    let edge = MemoryEdgeRecord {
+                        source_type: GraphEntityType::Memory,
+                        source_id: source,
+                        target_type: GraphEntityType::Memory,
+                        target_id: target,
+                        edge_type: edge_type.clone(),
+                        weight,
+                        created_at: now.clone(),
+                        tenant_id: self.tenant_id.clone(),
+                        workspace_root: m1.workspace_root.clone(),
+                    };
+
+                    if self.insert_memory_edge(&edge).is_ok() {
+                        report.edges_created += 1;
+                        if edge_type == MemoryEdgeType::Reinforces {
+                            report.reinforces_count += 1;
+                        } else if edge_type == MemoryEdgeType::Supersedes {
+                            report.supersedes_count += 1;
+                        }
+                        report.details.push(desc);
+                    }
+                }
+            }
+        }
+
+        Ok(report)
+    }
+
+    /// [TASK 4.3] Renderizado Visual Mermaid del Grafo de Memorias.
+    ///
+    /// Genera un diagrama Mermaid sintacticamente valido sin emojis, utilizando insignias
+    /// textuales ([CONVENTION], [APPLIES_TO], etc.) y filtrado opcional por modulo.
+    pub fn render_mermaid_memory_graph(&self, module_filter: Option<&str>) -> Result<String> {
+        let inner = self.inner.lock().unwrap();
+        let mut mermaid = String::from("graph TD\n");
+        let mut node_mermaid_ids: HashMap<NodeIndex, String> = HashMap::new();
+        let mut counter = 0;
+
+        // 1. Renderizar nodos
+        for idx in inner.memory_graph.node_indices() {
+            if let Some(node) = inner.memory_graph.node_weight(idx) {
+                if let Some(mf) = module_filter {
+                    let needle = mf.to_lowercase();
+                    if !node.id.to_lowercase().contains(&needle)
+                        && !node.title.to_lowercase().contains(&needle) {
+                        continue;
+                    }
+                }
+
+                let safe_id = format!("node_{}", counter);
+                counter += 1;
+                node_mermaid_ids.insert(idx, safe_id.clone());
+
+                let kind_tag = node.kind.to_uppercase();
+                let status_tag = if node.stale { "[STALE] " } else { "" };
+                let sanitized_title = node.title.replace('"', "'").replace(['\n', '\r'], " ");
+                let truncated_title = if sanitized_title.len() > 40 {
+                    format!("{}...", &sanitized_title[..37])
+                } else {
+                    sanitized_title
+                };
+
+                let label = format!("[{}]{} {}", kind_tag, status_tag, truncated_title);
+                mermaid.push_str(&format!("    {}[\"{}\"]\n", safe_id, label));
+            }
+        }
+
+        // 2. Renderizar aristas entre nodos incluidos
+        for edge in inner.memory_graph.edge_references() {
+            let src_idx = edge.source();
+            let dst_idx = edge.target();
+
+            if let (Some(src_id), Some(dst_id)) = (node_mermaid_ids.get(&src_idx), node_mermaid_ids.get(&dst_idx)) {
+                let edge_type_label = edge.weight().edge_type.to_string().to_uppercase();
+                mermaid.push_str(&format!("    {} -->|{}| {}\n", src_id, edge_type_label, dst_id));
+            }
+        }
+
+        if node_mermaid_ids.is_empty() {
+            mermaid.push_str("    empty[\"[EMPTY: No matching graph nodes found]\"]\n");
+        }
+
+        Ok(mermaid)
     }
 }

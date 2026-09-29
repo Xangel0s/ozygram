@@ -46,6 +46,18 @@ pub enum DreamSubcommand {
         #[arg(long)]
         json: bool,
     },
+    /// Export or visualize the memory knowledge graph as a Mermaid diagram
+    Graph {
+        /// Optional module or path filter
+        #[arg(long)]
+        module: Option<String>,
+        /// Optional path to project or database
+        #[arg(long)]
+        path: Option<String>,
+        /// Output raw JSON with mermaid string instead of markdown block
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
@@ -64,25 +76,52 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
             if trajectories.is_empty() {
                 println!("[!] No se encontraron trayectorias registradas en el árbol.");
                 println!("    Inicia una tarea con 'ozy_exploration(action=\"start\")' en el agente.");
-                return Ok(());
-            }
-
-            println!("[*] Cargadas {} trayectoria(s) históricas para simulación contrafactual.", trajectories.len());
-
-            let selected_traj = if let Some(ref tid) = task {
-                trajectories.into_iter().find(|t| &t.id == tid)
             } else {
-                trajectories.into_iter().next()
-            };
+                println!("[*] Cargadas {} trayectoria(s) históricas para simulación contrafactual.", trajectories.len());
 
-            if let Some(traj) = selected_traj {
-                println!("[*] Simulando trayectoria: {} ({})", traj.id, traj.task_description);
-                let tree = backend.get_trajectory_tree(&traj.id)?;
-                println!("    Total de nodos en árbol: {}", tree.len());
-                println!("    Simulación contrafactual completada (Costo: 0 tokens LLM).");
-                println!("[OK] Política MCTS activa evaluada con éxito.");
+                let selected_traj = if let Some(ref tid) = task {
+                    trajectories.into_iter().find(|t| &t.id == tid)
+                } else {
+                    trajectories.into_iter().next()
+                };
+
+                if let Some(traj) = selected_traj {
+                    println!("[*] Simulando trayectoria: {} ({})", traj.id, traj.task_description);
+                    let tree = backend.get_trajectory_tree(&traj.id)?;
+                    println!("    Total de nodos en árbol: {}", tree.len());
+                    println!("    Simulación contrafactual completada (Costo: 0 tokens LLM).");
+                    println!("[OK] Política MCTS activa evaluada con éxito.");
+                }
             }
 
+            // [TASK 4.1] Auto-Wiring Cognitivo de Memorias
+            let wire_report = backend.auto_wire_memories(0.80)?;
+            if wire_report.edges_created > 0 {
+                println!("[*] Auto-Wiring Cognitivo: {} nuevas aristas tejidas ({} REINFORCES, {} SUPERSEDES).",
+                    wire_report.edges_created, wire_report.reinforces_count, wire_report.supersedes_count);
+                for detail in &wire_report.details {
+                    println!("    - {}", detail);
+                }
+            } else {
+                println!("[*] Auto-Wiring Cognitivo: Red de memorias consolidada (0 aristas pendientes).");
+            }
+
+            Ok(())
+        }
+
+        DreamSubcommand::Graph { module, path, json } => {
+            let target_path = path.as_deref().unwrap_or(".");
+            let backend = GraphBackend::open_for_project(Path::new(target_path))
+                .context("No se pudo inicializar GraphBackend para Dream-RSI")?;
+            let mermaid = backend.render_mermaid_memory_graph(module.as_deref())?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&json!({
+                    "mermaid": mermaid,
+                    "module": module,
+                }))?);
+            } else {
+                println!("```mermaid\n{}```", mermaid);
+            }
             Ok(())
         }
 
@@ -237,6 +276,28 @@ mod tests {
             json: true,
         };
         // Diagnosing empty trajectory returns 0 steps cleanly
+        let res = run_dream_command(&cmd);
+        let _ = std::fs::remove_dir_all(&temp_root);
+        assert!(res.is_ok(), "run_dream_command(&cmd) failed: {:?}", res);
+    }
+
+    #[test]
+    fn test_dream_subcommand_graph() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "ozymem-dream-graph-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&temp_root);
+
+        let cmd = DreamSubcommand::Graph {
+            module: None,
+            path: Some(temp_root.to_string_lossy().to_string()),
+            json: true,
+        };
         let res = run_dream_command(&cmd);
         let _ = std::fs::remove_dir_all(&temp_root);
         assert!(res.is_ok(), "run_dream_command(&cmd) failed: {:?}", res);

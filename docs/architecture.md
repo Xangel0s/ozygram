@@ -129,3 +129,53 @@ If the Python process fails to respond, encounters an exception, or exceeds the 
 - The **Circuit Breaker** triggers immediately.
 - Returns a deterministic fallback result computed via **SQLite FTS5 + BM25 local ranking**.
 - The MCP agent receives a valid response without catastrophic crashes or unhandled client exceptions.
+
+---
+
+## 7. Property Graph Memory Architecture (v1.3.0)
+
+Ozygram v1.3.0 transitions from flat, isolated lesson records to a **Property Graph Memory Architecture**. Memories, files, symbols, and exploration milestones are modeled as vertices in a connected knowledge network with typed, directed edges.
+
+```text
+                  ┌────────────────────────┐
+                  │      Memory Node       │
+                  │  [RULE: Campaign Sync] │
+                  └─────┬────────────┬─────┘
+           APPLIES_TO   │            │   COUPLED_WITH
+         (weight: 1.0)  │            │  (weight: 0.9)
+                        ▼            ▼
+   ┌───────────────────────┐      ┌────────────────────────┐
+   │       File Node       │      │       File Node        │
+   │   (Backend Router)    │      │    (Frontend Form)     │
+   │       router.py       │      │     OrdenForm.tsx      │
+   └───────────────────────┘      └────────────────────────┘
+```
+
+### 1. Vertices & Typed Edges
+- **Nodes (`memory_nodes`)**: Persisted in SQLite with FTS5 virtual indexing and mirrored in RAM (`petgraph::DiGraph`).
+- **Edges (`memory_edges`)**:
+  - `APPLIES_TO`: Direct link between a rule/gotcha/convention and target source file or symbol.
+  - `COUPLED_WITH`: Cross-layer dependency between components (e.g. backend endpoint coupled with frontend form).
+  - `CAUSES_REGRESSION`: Flags modifications that triggered regressions or test failures.
+  - `SUPERSEDES`: Directional replacement of deprecated or conflicting directives.
+  - `REINFORCES`: Synergistic consolidation between mutually supporting memories.
+  - `DERIVED_FROM`: Provenance link tracking code generation or refactoring origins.
+
+### 2. Multi-Hop BFS with Distance Decay
+- When querying `ozy_context` or `ozy_graph(action="memory_neighborhood")`, the topological engine traverses in-memory petgraph with depth $\le 2$.
+- Applies an exponential decay factor: $\text{Weight}_{\text{eff}} = \text{Weight}_{\text{base}} \times 0.6^{\text{depth}-1}$. Direct rules remain at full weight (1.0), while secondary coupled components are injected at attenuated weight (~0.54) to reveal blast radius without context bloat.
+
+### 3. Cascade Stale Invalidation
+- When a file modification is detected on disk, `propagate_stale_invalidation` traverses incoming `APPLIES_TO` edges to flag associated memories as `[ALERT: STALE_MEMORY]`.
+- The invalidation cascades recursively through `SUPERSEDES` and `DERIVED_FROM` outgoing edges, halving confidence scores and ensuring the LLM never relies on outdated guidance.
+
+### 4. Autonomous Cognitive Auto-Wiring
+- During offline consolidation (`ozymem dream run`), `auto_wire_memories` calculates semantic distance across memory clusters.
+- If similarity exceeds threshold ($\ge 0.80$), `RiskCriticArbitrator` evaluates timestamps and deprecation keywords:
+  - Mutually compatible memories receive a `REINFORCES` edge.
+  - Contradictory or obsolete rules are resolved with a `SUPERSEDES` edge, automatically suppressing dead conventions from prompt prefill.
+
+### 5. Emoji-Free Mermaid Visualization
+- Interactive visualization available via CLI `ozymem dream graph [--module <name>]` and MCP `ozy_graph(action="render_mermaid")`.
+- Clean, syntax-compliant Markdown output with textual badges (`[CONVENTION]`, `[APPLIES_TO]`, `[COUPLED_WITH]`).
+
