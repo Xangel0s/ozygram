@@ -358,9 +358,38 @@ pub struct ScanProgress {
     pub current_file: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEntityNode {
+    pub entity_type: GraphEntityType,
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    #[serde(default = "default_confidence")]
+    pub confidence_score: f64,
+    #[serde(default)]
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryGraphEdge {
+    pub edge_type: MemoryEdgeType,
+    pub weight: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeighborhoodResult {
+    pub entity: GraphEntityNode,
+    pub edge_type: MemoryEdgeType,
+    pub depth: usize,
+    pub effective_weight: f64,
+    pub direction: String,
+}
+
 pub(crate) struct Inner {
     pub(crate) graph: DiGraph<FileNode, FileEdge>,
     pub(crate) file_index: HashMap<String, NodeIndex>,
+    pub(crate) memory_graph: DiGraph<GraphEntityNode, MemoryGraphEdge>,
+    pub(crate) memory_index: HashMap<String, NodeIndex>,
     pub(crate) sqlite: Connection,
     pub(crate) project_path: Option<String>,
     pub(crate) workspace_root: String,

@@ -37,6 +37,8 @@ impl GraphBackend {
             inner: Mutex::new(Inner {
                 graph: DiGraph::new(),
                 file_index: HashMap::new(),
+                memory_graph: DiGraph::new(),
+                memory_index: HashMap::new(),
                 sqlite,
                 project_path: None,
                 workspace_root: String::new(),
@@ -55,6 +57,7 @@ impl GraphBackend {
             engram_store,
         };
         backend.init_schema()?;
+        backend.load_memory_graph_to_ram()?;
         Ok(backend)
     }
 
