@@ -53,6 +53,11 @@ enum Commands {
         #[arg(long, default_value_t = 2)]
         depth: u32,
     },
+    /// Extraer quirurgicamente el codigo y definicion de un simbolo por AST
+    Symbol {
+        file_path: String,
+        symbol_name: String,
+    },
     /// Analizar el impacto de cambios (quien depende de este archivo en reversa)
     Trace {
         file_path: String,
@@ -259,6 +264,22 @@ async fn main() -> anyhow::Result<()> {
             let connection = build_backend_client().await?;
             return run_query_translator(&connection, input.clone(), *json, *limit, *tokens).await;
         }
+        Commands::Symbol { file_path, symbol_name } => {
+            let cwd = std::env::current_dir()?;
+            let backend = ozymem_core::graph_backend::GraphBackend::open_for_project(&cwd)?;
+            match backend.get_symbol(file_path, symbol_name)? {
+                Some(sym) => {
+                    println!("[SYMBOL: {}] [{}] (lines {}-{}) in {}", sym.name, sym.kind, sym.start_line, sym.end_line, sym.file_path);
+                    println!("--------------------------------------------------");
+                    println!("{}", sym.code);
+                    println!("--------------------------------------------------");
+                }
+                None => {
+                    eprintln!("[ALERT: SYMBOL_NOT_FOUND] Symbol '{}' not found in '{}'", symbol_name, file_path);
+                }
+            }
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -345,6 +366,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Mcp { .. } => unreachable!(),
         Commands::Doctor { .. } => unreachable!(),
         Commands::Query { .. } => unreachable!(),
+        Commands::Symbol { .. } => unreachable!(),
 
         Commands::Parse { file_path } => {
             let path = Path::new(&file_path);
@@ -357,7 +379,8 @@ async fn main() -> anyhow::Result<()> {
                 "go" => SupportedLanguage::Go,
                 "rs" => SupportedLanguage::Rust,
                 "js" => SupportedLanguage::JavaScript,
-                "ts" | "tsx" => SupportedLanguage::TypeScriptReact,
+                "ts" => SupportedLanguage::TypeScript,
+                "tsx" => SupportedLanguage::TypeScriptReact,
                 "sql" => SupportedLanguage::SQL,
                 _ => SupportedLanguage::Unknown,
             };

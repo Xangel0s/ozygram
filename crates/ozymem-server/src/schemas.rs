@@ -994,6 +994,60 @@ pub fn handle_tools_list(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "ozy_get_symbol",
+                    description: "Extracción quirúrgica de un símbolo (función, método, clase, componente React, hook, interface) por AST, devolviendo únicamente su código fuente exacto y metadatos sin abrir el archivo completo.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo (relativa o absoluta)" },
+                            "symbol_name": { "type": "string", "description": "Nombre exacto del símbolo o función a extraer" }
+                        },
+                        "required": ["file_path", "symbol_name"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_file_tree",
+                    description: "Devuelve el árbol jerárquico esquelético de miembros AST (funciones, clases, componentes, hooks, interfaces) y dependencias de un archivo, ahorrando hasta 95% de tokens respecto a leer el archivo completo.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo a inspeccionar" },
+                            "depth": { "type": "integer", "default": 2, "description": "Profundidad máxima de dependencias" },
+                            "format": { "type": "string", "enum": ["text", "json"], "default": "text", "description": "Formato de salida" }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_parse",
+                    description: "Inspecciona el AST completo de un archivo en crudo (definiciones, líneas, imports y exports) de manera nativa sin ejecutar comandos en terminal.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo a analizar" }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_replace_symbol",
+                    description: "Edición quirúrgica de un símbolo basada en AST. Reemplaza el cuerpo de una función, componente o clase preservando formato y validando sintaxis previa con Tree-Sitter antes de escribir en disco.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo a modificar" },
+                            "symbol_name": { "type": "string", "description": "Nombre del símbolo a reemplazar" },
+                            "new_code": { "type": "string", "description": "Nuevo código fuente para el símbolo" },
+                            "dry_run": { "type": "boolean", "default": false, "description": "Si es true, solo genera el diff preview sin modificar el archivo" }
+                        },
+                        "required": ["file_path", "symbol_name", "new_code"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 100;

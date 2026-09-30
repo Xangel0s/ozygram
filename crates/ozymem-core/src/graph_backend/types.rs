@@ -465,3 +465,19 @@ pub struct AutoWireReport {
     pub details: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SymbolReplaceResult {
+    pub success: bool,
+    pub file_path: String,
+    pub symbol_name: String,
+    pub old_start_line: usize,
+    pub old_end_line: usize,
+    pub new_start_line: usize,
+    pub new_end_line: usize,
+    pub lines_diff: i64,
+    pub preview_diff: String,
+    pub dry_run: bool,
+    pub ast_verified: bool,
+    pub error: Option<String>,
+}
+

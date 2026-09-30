@@ -21,6 +21,36 @@ pub struct ParsedSymbol {
 pub enum SymbolKind {
     Function,
     Class,
+    Interface,
+    TypeAlias,
+    ReactComponent,
+    ReactHook,
+}
+
+impl SymbolKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SymbolKind::Function => "Function",
+            SymbolKind::Class => "Class",
+            SymbolKind::Interface => "Interface",
+            SymbolKind::TypeAlias => "TypeAlias",
+            SymbolKind::ReactComponent => "ReactComponent",
+            SymbolKind::ReactHook => "ReactHook",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SymbolExtract {
+    pub file_path: String,
+    pub name: String,
+    pub kind: String,
+    pub language: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub code: String,
+    pub signature: Option<String>,
+    pub doc_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,6 +107,7 @@ pub enum SupportedLanguage {
     Go,
     Rust,
     JavaScript,
+    TypeScript,
     TypeScriptReact,
     SQL,
     Unknown,
@@ -99,9 +130,23 @@ impl SupportedLanguage {
             SupportedLanguage::Go => "Go",
             SupportedLanguage::Rust => "Rust",
             SupportedLanguage::JavaScript => "JavaScript",
+            SupportedLanguage::TypeScript => "TypeScript",
             SupportedLanguage::TypeScriptReact => "TypeScriptReact",
             SupportedLanguage::SQL => "SQL",
             SupportedLanguage::Unknown => "Unknown",
+        }
+    }
+
+    pub fn from_path(path: &std::path::Path) -> Self {
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("py") => SupportedLanguage::Python,
+            Some("go") => SupportedLanguage::Go,
+            Some("rs") => SupportedLanguage::Rust,
+            Some("js") | Some("mjs") | Some("cjs") => SupportedLanguage::JavaScript,
+            Some("ts") => SupportedLanguage::TypeScript,
+            Some("tsx") | Some("jsx") => SupportedLanguage::TypeScriptReact,
+            Some("sql") => SupportedLanguage::SQL,
+            _ => SupportedLanguage::Unknown,
         }
     }
 
@@ -110,9 +155,9 @@ impl SupportedLanguage {
             SupportedLanguage::Python => Some(tree_sitter_python::LANGUAGE.into()),
             SupportedLanguage::Go => Some(tree_sitter_go::LANGUAGE.into()),
             SupportedLanguage::Rust => Some(tree_sitter_rust::LANGUAGE.into()),
-            SupportedLanguage::JavaScript | SupportedLanguage::TypeScriptReact => {
-                Some(tree_sitter_javascript::LANGUAGE.into())
-            }
+            SupportedLanguage::JavaScript => Some(tree_sitter_javascript::LANGUAGE.into()),
+            SupportedLanguage::TypeScript => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            SupportedLanguage::TypeScriptReact => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
             SupportedLanguage::SQL | SupportedLanguage::Unknown => None,
         }
     }
@@ -141,7 +186,7 @@ impl SupportedLanguage {
                 ) @symbol.definition
                 "#,
             ),
-            SupportedLanguage::JavaScript | SupportedLanguage::TypeScriptReact => Some(
+            SupportedLanguage::JavaScript => Some(
                 r#"
                 (function_declaration
                     name: (identifier) @symbol.name
@@ -149,6 +194,43 @@ impl SupportedLanguage {
 
                 (class_declaration
                     name: (identifier) @symbol.name
+                ) @symbol.definition
+
+                (variable_declarator
+                    name: (identifier) @symbol.name
+                    value: [(arrow_function) (function_expression)]
+                ) @symbol.definition
+
+                (method_definition
+                    name: (property_identifier) @symbol.name
+                ) @symbol.definition
+                "#,
+            ),
+            SupportedLanguage::TypeScript | SupportedLanguage::TypeScriptReact => Some(
+                r#"
+                (function_declaration
+                    name: (identifier) @symbol.name
+                ) @symbol.definition
+
+                (class_declaration
+                    name: (type_identifier) @symbol.name
+                ) @symbol.definition
+
+                (interface_declaration
+                    name: (type_identifier) @symbol.name
+                ) @symbol.definition
+
+                (type_alias_declaration
+                    name: (type_identifier) @symbol.name
+                ) @symbol.definition
+
+                (variable_declarator
+                    name: (identifier) @symbol.name
+                    value: [(arrow_function) (function_expression)]
+                ) @symbol.definition
+
+                (method_definition
+                    name: (property_identifier) @symbol.name
                 ) @symbol.definition
                 "#,
             ),
@@ -209,7 +291,7 @@ impl SupportedLanguage {
                 ) @dependency.definition
                 "#,
             ),
-            SupportedLanguage::JavaScript | SupportedLanguage::TypeScriptReact => Some(
+            SupportedLanguage::JavaScript | SupportedLanguage::TypeScript | SupportedLanguage::TypeScriptReact => Some(
                 r#"
                 (import_statement
                     source: (string) @dependency.label
@@ -386,16 +468,20 @@ pub fn parse_with_tree_sitter(
                     }
                 }
                 "symbol.definition" => {
-                    kind = Some(match capture.node.kind() {
-                        "function_definition" | "function_declaration" | "function_item" => {
-                            SymbolKind::Function
-                        }
+                    let node_kind = capture.node.kind();
+                    kind = match node_kind {
+                        "interface_declaration" => Some(SymbolKind::Interface),
+                        "type_alias_declaration" => Some(SymbolKind::TypeAlias),
                         "class_definition" | "class_declaration" | "type_spec" | "struct_item"
                         | "enum_item" | "trait_item" | "type_item" | "union_item" => {
-                            SymbolKind::Class
+                            Some(SymbolKind::Class)
+                        }
+                        "function_definition" | "function_declaration" | "function_item"
+                        | "variable_declarator" | "method_definition" => {
+                            Some(SymbolKind::Function)
                         }
                         _ => continue,
-                    });
+                    };
                     start_line = Some(capture.node.start_position().row + 1);
                     end_line = Some(capture.node.end_position().row + 1);
                 }
@@ -403,9 +489,27 @@ pub fn parse_with_tree_sitter(
             }
         }
 
-        if let (Some(name), Some(kind), Some(start_line), Some(end_line)) =
+        if let (Some(name), Some(mut kind), Some(start_line), Some(end_line)) =
             (name, kind, start_line, end_line)
         {
+            if kind == SymbolKind::Function {
+                if name.starts_with("use")
+                    && name.len() > 3
+                    && name.chars().nth(3).map_or(false, |c| c.is_ascii_uppercase())
+                {
+                    kind = SymbolKind::ReactHook;
+                } else if matches!(
+                    language,
+                    SupportedLanguage::JavaScript
+                        | SupportedLanguage::TypeScript
+                        | SupportedLanguage::TypeScriptReact
+                ) && name.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                    && name.chars().any(|c| c.is_ascii_lowercase())
+                {
+                    kind = SymbolKind::ReactComponent;
+                }
+            }
+
             functions.push(ExtractedFunction {
                 name,
                 kind,
@@ -420,6 +524,46 @@ pub fn parse_with_tree_sitter(
         language: language.as_str().to_string(),
         strategy: ParseStrategy::NativeAst,
         functions,
+    })
+}
+
+pub fn extract_symbol_source(
+    file_path: &str,
+    symbol_name: &str,
+    source_code: &str,
+    language: SupportedLanguage,
+) -> Option<SymbolExtract> {
+    let def_map = parse_source(file_path, language, source_code).ok()?;
+    let func = def_map
+        .functions
+        .iter()
+        .find(|f| f.name == symbol_name)
+        .or_else(|| {
+            def_map
+                .functions
+                .iter()
+                .find(|f| f.name.eq_ignore_ascii_case(symbol_name))
+        })?;
+
+    let lines: Vec<&str> = source_code.lines().collect();
+    if func.start_line == 0 || func.start_line > lines.len() {
+        return None;
+    }
+    let end_idx = func.end_line.min(lines.len());
+    let code_lines = &lines[(func.start_line - 1)..end_idx];
+    let code = code_lines.join("\n");
+    let signature = code_lines.first().map(|s| s.trim().to_string());
+
+    Some(SymbolExtract {
+        file_path: file_path.to_string(),
+        name: func.name.clone(),
+        kind: func.kind.as_str().to_string(),
+        language: def_map.language,
+        start_line: func.start_line,
+        end_line: func.end_line,
+        code,
+        signature,
+        doc_summary: None,
     })
 }
 
@@ -487,8 +631,8 @@ fn parse_declaration(line: &str) -> Option<(String, SymbolKind, HeuristicStyle)>
     let declaration_prefixes = [
         ("class ", SymbolKind::Class),
         ("struct ", SymbolKind::Class),
-        ("interface ", SymbolKind::Class),
-        ("type ", SymbolKind::Class),
+        ("interface ", SymbolKind::Interface),
+        ("type ", SymbolKind::TypeAlias),
         ("def ", SymbolKind::Function),
         ("func ", SymbolKind::Function),
         ("function ", SymbolKind::Function),
@@ -931,6 +1075,48 @@ export { Footer } from './Footer';
         let lines: Vec<&str> = source.lines().collect();
         let end = find_brace_block_end(&lines, 0);
         assert_eq!(end, 5);
+    }
+
+    #[test]
+    fn parses_tsx_react_components_hooks_and_interfaces() {
+        let source = r#"
+interface KanbanCardProps {
+    id: string;
+    title: string;
+}
+
+type CardStatus = 'todo' | 'done';
+
+export const KanbanCardItem: React.FC<KanbanCardProps> = ({ id, title }) => {
+    return <div className="card">{title}</div>;
+};
+
+export const useKanban = () => {
+    const [cards, setCards] = useState([]);
+    return { cards };
+};
+
+export function handleReorder(a: number, b: number) {
+    return a + b;
+}
+"#;
+        let result = parse_source("src/components/Kanban.tsx", SupportedLanguage::TypeScriptReact, source)
+            .expect("tsx parse should succeed");
+
+        assert_eq!(result.strategy, ParseStrategy::NativeAst);
+        let names: Vec<(&str, SymbolKind)> = result.functions.iter().map(|f| (f.name.as_str(), f.kind)).collect();
+        assert!(names.contains(&("KanbanCardProps", SymbolKind::Interface)));
+        assert!(names.contains(&("CardStatus", SymbolKind::TypeAlias)));
+        assert!(names.contains(&("KanbanCardItem", SymbolKind::ReactComponent)));
+        assert!(names.contains(&("useKanban", SymbolKind::ReactHook)));
+        assert!(names.contains(&("handleReorder", SymbolKind::Function)));
+
+        // Test extraction
+        let extract = extract_symbol_source("src/components/Kanban.tsx", "useKanban", source, SupportedLanguage::TypeScriptReact)
+            .expect("extract useKanban should succeed");
+        assert_eq!(extract.name, "useKanban");
+        assert_eq!(extract.kind, "ReactHook");
+        assert!(extract.code.contains("const [cards, setCards] = useState([]);"));
     }
 }
 

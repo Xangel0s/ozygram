@@ -2427,3 +2427,161 @@ pub fn audit_log(event: &str) -> bool {
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
+
+    #[tokio::test]
+    async fn test_tools_symbol_extraction_file_tree_and_ast_replace() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_symbols_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let tsx_code = r#"interface KanbanCardProps {
+    id: string;
+    title: string;
+}
+
+export const KanbanCardItem: React.FC<KanbanCardProps> = ({ id, title }) => {
+    return <div className="card">{title}</div>;
+};
+
+export const useKanban = () => {
+    const [cards, setCards] = useState([]);
+    return { cards };
+};
+
+export function handleReorderCard(a: number, b: number) {
+    return a + b;
+}
+"#;
+        let tsx_path = tmp_root.join("Kanban.tsx");
+        std::fs::write(&tsx_path, tsx_code).unwrap();
+
+        // 1. Initialize MCP backend with directory
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        let _ = handle_request(&backend_ref, init_req, None, None).await.unwrap().unwrap();
+
+        // 2. Test ozy_file_tree
+        let tree_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_file_tree",
+                "arguments": {
+                    "file_path": "Kanban.tsx"
+                }
+            })),
+        };
+        let tree_resp = handle_request(&backend_ref, tree_req, None, None).await.unwrap().unwrap();
+        assert!(tree_resp.error.is_none());
+        let tree_text = tree_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(tree_text.contains("[MEMBER: INTERFACE] KanbanCardProps"));
+        assert!(tree_text.contains("[MEMBER: REACTCOMPONENT] KanbanCardItem") || tree_text.contains("[MEMBER: REACT_COMPONENT] KanbanCardItem"));
+        assert!(tree_text.contains("[MEMBER: REACTHOOK] useKanban") || tree_text.contains("[MEMBER: REACT_HOOK] useKanban"));
+        assert!(tree_text.contains("[MEMBER: FUNCTION] handleReorderCard"));
+
+        // 3. Test ozy_get_symbol (extract only handleReorderCard)
+        let sym_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_get_symbol",
+                "arguments": {
+                    "file_path": "Kanban.tsx",
+                    "symbol_name": "handleReorderCard"
+                }
+            })),
+        };
+        let sym_resp = handle_request(&backend_ref, sym_req, None, None).await.unwrap().unwrap();
+        assert!(sym_resp.error.is_none());
+        let sym_json: Value = serde_json::from_str(sym_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(sym_json["status"], "success");
+        assert_eq!(sym_json["symbol"]["name"], "handleReorderCard");
+        assert_eq!(sym_json["symbol"]["kind"], "Function");
+        let code = sym_json["symbol"]["code"].as_str().unwrap();
+        assert!(code.contains("export function handleReorderCard"));
+        assert!(!code.contains("interface KanbanCardProps"));
+
+        // 4. Test ozy_parse
+        let parse_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_parse",
+                "arguments": {
+                    "file_path": "Kanban.tsx"
+                }
+            })),
+        };
+        let parse_resp = handle_request(&backend_ref, parse_req, None, None).await.unwrap().unwrap();
+        assert!(parse_resp.error.is_none());
+        let parse_json: Value = serde_json::from_str(parse_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(parse_json["status"], "success");
+        assert!(parse_json["functions"].as_array().unwrap().len() >= 4);
+
+        // 5. Test ozy_replace_symbol with syntax error (AST guard must reject)
+        let bad_code = "export function handleReorderCard( { broken syntax !!!";
+        let bad_replace_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_replace_symbol",
+                "arguments": {
+                    "file_path": "Kanban.tsx",
+                    "symbol_name": "handleReorderCard",
+                    "new_code": bad_code,
+                    "dry_run": false
+                }
+            })),
+        };
+        let bad_resp = handle_request(&backend_ref, bad_replace_req, None, None).await.unwrap().unwrap();
+        let bad_json: Value = serde_json::from_str(bad_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(bad_json["success"], false);
+        assert!(bad_json["error"].as_str().unwrap().contains("[ALERT: AST_SYNTAX_ERROR]"));
+        let current_disk = std::fs::read_to_string(&tsx_path).unwrap();
+        assert!(current_disk.contains("return a + b;"));
+
+        // 6. Test ozy_replace_symbol with valid replacement
+        let valid_code = r#"export function handleReorderCard(a: number, b: number) {
+    const updated = a * 2 + b;
+    return updated;
+}"#;
+        let replace_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(6)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_replace_symbol",
+                "arguments": {
+                    "file_path": "Kanban.tsx",
+                    "symbol_name": "handleReorderCard",
+                    "new_code": valid_code,
+                    "dry_run": false
+                }
+            })),
+        };
+        let replace_resp = handle_request(&backend_ref, replace_req, None, None).await.unwrap().unwrap();
+        let replace_json: Value = serde_json::from_str(replace_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(replace_json["success"], true);
+        assert_eq!(replace_json["ast_verified"], true);
+        assert!(replace_json["preview_diff"].as_str().unwrap().contains("+    const updated = a * 2 + b;"));
+
+        let modified_disk = std::fs::read_to_string(&tsx_path).unwrap();
+        assert!(modified_disk.contains("const updated = a * 2 + b;"));
+        assert!(!modified_disk.contains("return a + b;"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

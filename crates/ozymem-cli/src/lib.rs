@@ -35,7 +35,7 @@ mod tests {
         );
         assert_eq!(
             get_language_from_path(Path::new("file.ts")),
-            SupportedLanguage::TypeScriptReact
+            SupportedLanguage::TypeScript
         );
         assert_eq!(
             get_language_from_path(Path::new("file.tsx")),

@@ -208,10 +208,7 @@ impl SqliteBackend {
         )?;
 
         for fn_data in &file_map.functions {
-            let kind_str = match fn_data.kind {
-                ozymem_parser::SymbolKind::Function => "Function",
-                ozymem_parser::SymbolKind::Class => "Class",
-            };
+            let kind_str = fn_data.kind.as_str();
             conn.execute(
                 "INSERT INTO functions (name, kind, start_line, end_line, strategy, file_path, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![fn_data.name, kind_str, fn_data.start_line as i64, fn_data.end_line as i64, file_map.strategy.as_str(), file_map.file_path, tenant_id, workspace_root],

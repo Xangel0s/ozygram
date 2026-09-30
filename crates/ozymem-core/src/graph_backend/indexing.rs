@@ -14,7 +14,7 @@ use std::time::Instant;
 use sha2::{Digest, Sha256};
 use ozymem_parser::{
     extract_dependency_hints, is_internal_dependency_hint,
-    resolve_dependency_target, parse_source, SymbolKind, is_binary_file,
+    resolve_dependency_target, parse_source, is_binary_file,
 };
 use crate::graph_backend::helpers::{detect_language, file_mtime, is_noise_dir, load_ignore_patterns, path_matches_ignore};
 use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend};
@@ -267,10 +267,7 @@ impl GraphBackend {
             )?;
 
             for fn_data in &parsed.functions {
-                let kind_str = match fn_data.kind {
-                    SymbolKind::Function => "Function",
-                    SymbolKind::Class => "Class",
-                };
+                let kind_str = fn_data.kind.as_str();
                 inner.sqlite.execute(
                     "INSERT OR REPLACE INTO functions (name, kind, start_line, end_line, strategy, file_path, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![fn_data.name, kind_str, fn_data.start_line as i64, fn_data.end_line as i64, parsed.strategy.as_str(), abs_path, self.tenant_id, inner.workspace_root],
@@ -511,10 +508,7 @@ impl GraphBackend {
             )?;
 
             for fn_data in &parsed.functions {
-                let kind_str = match fn_data.kind {
-                    SymbolKind::Function => "Function",
-                    SymbolKind::Class => "Class",
-                };
+                let kind_str = fn_data.kind.as_str();
                 inner.sqlite.execute(
                     "INSERT OR REPLACE INTO functions (name, kind, start_line, end_line, strategy, file_path, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![fn_data.name, kind_str, fn_data.start_line as i64, fn_data.end_line as i64, parsed.strategy.as_str(), abs_path, self.tenant_id, inner.workspace_root],

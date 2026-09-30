@@ -133,10 +133,7 @@ pub(crate) async fn handle_learn_from_changes(
         for f in &new_funcs {
             if !old_names.contains(f.name.as_str()) {
                 file_had_changes = true;
-                let kind_str = match f.kind {
-                    ozymem_parser::SymbolKind::Function => "Function",
-                    ozymem_parser::SymbolKind::Class => "Class",
-                };
+                let kind_str = f.kind.as_str();
                 let solution = format!(
                     "New {} `{}` at line {} in {}",
                     kind_str, f.name, f.start_line, file
@@ -157,10 +154,7 @@ pub(crate) async fn handle_learn_from_changes(
         for f in &old_funcs {
             if !new_names.contains(f.name.as_str()) {
                 file_had_changes = true;
-                let kind_str = match f.kind {
-                    ozymem_parser::SymbolKind::Function => "Function",
-                    ozymem_parser::SymbolKind::Class => "Class",
-                };
+                let kind_str = f.kind.as_str();
                 let solution = format!(
                     "{} `{}` was removed from {} (was at line {})",
                     kind_str, f.name, file, f.start_line
@@ -184,10 +178,7 @@ pub(crate) async fn handle_learn_from_changes(
                 o.name == f.name && (o.start_line != f.start_line || o.end_line != f.end_line)
             }) {
                 file_had_changes = true;
-                let kind_str = match f.kind {
-                    ozymem_parser::SymbolKind::Function => "Function",
-                    ozymem_parser::SymbolKind::Class => "Class",
-                };
+                let kind_str = f.kind.as_str();
                 let old_len = old_f.end_line - old_f.start_line;
                 let new_len = f.end_line - f.start_line;
                 let delta = new_len.abs_diff(old_len);

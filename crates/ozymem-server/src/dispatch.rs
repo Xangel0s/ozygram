@@ -263,6 +263,18 @@ pub async fn handle_request(
                         },
                     }
                 }
+                "ozy_get_symbol" | "get_symbol" | "ozymem_get_symbol" => {
+                    crate::symbols::handle_get_symbol(backend, &tool_call)?
+                }
+                "ozy_file_tree" | "file_tree" | "ast_tree" => {
+                    crate::symbols::handle_file_tree(backend, &tool_call)?
+                }
+                "ozy_parse" | "parse_file" | "ozymem_parse" => {
+                    crate::symbols::handle_parse(backend, &tool_call)?
+                }
+                "ozy_replace_symbol" | "replace_symbol" | "ozymem_replace_symbol" => {
+                    crate::symbols::handle_replace_symbol(backend, &tool_call)?
+                }
                 _ => {
                     if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
                         return Ok(Some(res));

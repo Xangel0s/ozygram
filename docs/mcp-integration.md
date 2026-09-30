@@ -49,6 +49,10 @@ Add the following entry to your MCP client configuration file (`claude_desktop_c
 | Tool | Key Parameters | Description |
 | :--- | :--- | :--- |
 | `ozy_context` / `file_context` | `action`, `file_path`, `task` | Predictive prefill, adjacent function contracts, file-level rules, and dependent symbols. |
+| `ozy_get_symbol` | `file_path`, `symbol_name`, `line` | Surgical retrieval of exact symbol source code (function, class, React component, hook, interface) without reading entire files into context. |
+| `ozy_file_tree` | `directory`, `max_depth` | Native zero-process file tree exploration with file sizes and node types, avoiding terminal/PowerShell execution overhead. |
+| `ozy_parse` | `file_path` | Native AST parser exposing definitions, line ranges, and dependency hints directly over JSON-RPC. |
+| `ozy_replace_symbol` | `file_path`, `symbol_name`, `new_code`, `dry_run` | Surgical AST-guided symbol replacement with automatic pre-flight syntax validation and unified diff preview. |
 | `ozy_graph` | `action`, `file_path`, `depth` | Unified architectural navigation: `summary`, `neighbors`, `impact`, `path`, and structural dependency reports. |
 | `analyze_impact` | `target_file` | Maps direct and transitive dependent files, calculating architectural blast radius. |
 | `graph_neighbors` | `file_path`, `direction` | Retrieves immediate incoming, outgoing, or bidirectional AST neighbors. |

@@ -569,8 +569,9 @@ pub(crate) fn detect_lang(path: &str) -> ozymem_parser::SupportedLanguage {
         Some("py") => ozymem_parser::SupportedLanguage::Python,
         Some("go") => ozymem_parser::SupportedLanguage::Go,
         Some("rs") => ozymem_parser::SupportedLanguage::Rust,
-        Some("js") | Some("jsx") => ozymem_parser::SupportedLanguage::JavaScript,
-        Some("ts") | Some("tsx") => ozymem_parser::SupportedLanguage::TypeScriptReact,
+        Some("js") | Some("mjs") | Some("cjs") => ozymem_parser::SupportedLanguage::JavaScript,
+        Some("ts") => ozymem_parser::SupportedLanguage::TypeScript,
+        Some("tsx") | Some("jsx") => ozymem_parser::SupportedLanguage::TypeScriptReact,
         Some("sql") => ozymem_parser::SupportedLanguage::SQL,
         _ => ozymem_parser::SupportedLanguage::Unknown,
     }

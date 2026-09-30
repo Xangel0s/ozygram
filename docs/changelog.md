@@ -2,6 +2,26 @@
 
 This document tracks the chronological evolution, architectural milestones, and key improvements in **Ozygram**.
 
+## Version v1.4.0 — Surgical AST & Symbol-Driven Architecture
+
+### 1. Surgical Symbol Extraction (`ozy_get_symbol` & CLI `ozymem symbol`)
+- **Direct Symbol Boundaries**: Extracted precise source code for functions, classes, interfaces, React components, and hooks directly from AST node spans.
+- **Context Window Optimization**: Eliminates the need to ingest 500-1000 line source files when inspecting a single 20-line method, cutting LLM context token consumption by up to 90%.
+
+### 2. Native Zero-Process Exploration (`ozy_file_tree` & `ozy_parse`)
+- **JSON-RPC File Tree**: Introduced `ozy_file_tree` over MCP stdio, providing recursive file and directory listings with file sizes and depth controls without spawning Windows `cmd.exe` or `powershell.exe`.
+- **In-Memory AST Parsing via MCP**: Introduced `ozy_parse` to directly retrieve symbol maps and dependency hints over MCP stdio without running CLI subprocesses.
+
+### 3. Deep AST Support for TypeScript/TSX & Modern React
+- **Tree-Sitter TypeScript & TSX**: Added native tree-sitter grammars and queries for TypeScript (`.ts`) and TSX (`.tsx`).
+- **Modern React & Type Declarations**: Recognizes functional React components (`const Component = () => ...`, `export default function Component`), React hooks (`use...`), TypeScript `interface`, and `type` aliases.
+
+### 4. Surgical AST Replacement with Pre-Flight Syntax Verification (`ozy_replace_symbol`)
+- **Pre-Flight AST Diagnostics**: Synthesizes proposed modifications and checks AST diagnostics (`extract_ast_diagnostics`) prior to touching files on disk. If syntax is invalid, the operation is safely rejected with actionable compiler error messages.
+- **Unified Diff Generation & Dry-Run**: Outputs a unified diff showing exact modified lines and supports `dry_run: true` mode.
+
+---
+
 ## Version v1.2.0 — Dream-RSI: State Rollback, Action Simulation, Visual Trees & Stale Memory Guard
 
 ### 1. State Rollback and Backtracking with File Snapshots

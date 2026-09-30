@@ -6,7 +6,7 @@ use petgraph::visit::Bfs;
 use rusqlite::params;
 use crate::GraphSummary;
 use crate::mcp_common::McpBackend;
-use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, UnifiedSearchResult};
+use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, SymbolReplaceResult, UnifiedSearchResult};
 
 impl GraphBackend {
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
@@ -520,5 +520,312 @@ impl GraphBackend {
         }
 
         speculative_contracts
+    }
+
+    /// Surgical symbol extraction: returns exact symbol source code slice and metadata.
+    pub fn get_symbol(&self, file_path: &str, symbol_name: &str) -> Result<Option<ozymem_parser::SymbolExtract>> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        
+        let path_obj = std::path::Path::new(&resolved);
+        let effective_path = if path_obj.exists() {
+            path_obj.to_path_buf()
+        } else if let Some(root) = self.project_path() {
+            std::path::Path::new(&root).join(&resolved)
+        } else {
+            std::path::PathBuf::from(&resolved)
+        };
+
+        if !effective_path.exists() {
+            return Ok(None);
+        }
+
+        let source = std::fs::read_to_string(&effective_path)?;
+        let lang = ozymem_parser::SupportedLanguage::from_path(&effective_path);
+
+        Ok(ozymem_parser::extract_symbol_source(&resolved, symbol_name, &source, lang))
+    }
+
+    /// Returns skeletal AST file member tree and outgoing dependencies.
+    pub fn get_file_tree(&self, file_path: &str, depth: u32, format: &str) -> Result<String> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let norm_path = crate::normalize_path(file_path);
+
+        let inner = self.inner.lock().unwrap();
+        let mut functions = Vec::new();
+        if let Ok(mut stmt) = inner.sqlite.prepare(
+            "SELECT name, kind, start_line, end_line, strategy FROM functions WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3 ORDER BY start_line, name"
+        ) {
+            if let Ok(rows) = stmt.query_map(params![resolved, norm_path, self.tenant_id], |r| {
+                Ok(crate::StoredFunction {
+                    name: r.get(0)?,
+                    kind: r.get(1)?,
+                    start_line: r.get(2)?,
+                    end_line: r.get(3)?,
+                    strategy: r.get(4)?,
+                })
+            }) {
+                functions = rows.filter_map(|r| r.ok()).collect();
+            }
+        }
+
+        let mut outgoing = Vec::new();
+        if let Ok(mut stmt) = inner.sqlite.prepare(
+            "SELECT target_path FROM dependencies WHERE (source_path = ?1 OR source_path = ?2) AND tenant_id = ?3 ORDER BY target_path"
+        ) {
+            if let Ok(rows) = stmt.query_map(params![resolved, norm_path, self.tenant_id], |r| r.get::<_, String>(0)) {
+                outgoing = rows.filter_map(|r| r.ok()).collect();
+            }
+        }
+        drop(inner);
+
+        // Fallback: If not yet indexed in database, parse source on the fly
+        if functions.is_empty() {
+            let path_obj = std::path::Path::new(&resolved);
+            let effective = if path_obj.exists() {
+                path_obj.to_path_buf()
+            } else if let Some(root) = self.project_path() {
+                std::path::Path::new(&root).join(&resolved)
+            } else {
+                std::path::PathBuf::from(&resolved)
+            };
+            if effective.exists() {
+                if let Ok(source) = std::fs::read_to_string(&effective) {
+                    let lang = ozymem_parser::SupportedLanguage::from_path(&effective);
+                    if let Ok(map) = ozymem_parser::parse_source(&resolved, lang, &source) {
+                        for f in map.functions {
+                            functions.push(crate::StoredFunction {
+                                name: f.name,
+                                kind: f.kind.as_str().to_string(),
+                                start_line: f.start_line as i64,
+                                end_line: f.end_line as i64,
+                                strategy: map.strategy.as_str().to_string(),
+                            });
+                        }
+                    }
+                    if let Ok(hints) = ozymem_parser::extract_dependency_hints(&resolved, lang, &source) {
+                        for h in hints {
+                            if ozymem_parser::is_internal_dependency_hint(&h) {
+                                if let Some(target) = ozymem_parser::resolve_dependency_target(&h, &resolved) {
+                                    outgoing.push(target.to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if format == "json" {
+            return Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "file_path": resolved,
+                "functions": functions,
+                "dependencies": outgoing,
+                "depth": depth
+            }))?);
+        }
+
+        let mut out = String::new();
+        out.push_str(&format!("File: {}\n", resolved));
+        let has_deps = !outgoing.is_empty();
+        let fn_branch = if has_deps { "├──" } else { "└──" };
+        out.push_str(&format!("{} Functions\n", fn_branch));
+
+        let fn_prefix = if has_deps { "│   " } else { "    " };
+        if functions.is_empty() {
+            out.push_str(&format!("{}└── (none)\n", fn_prefix));
+        } else {
+            for (idx, f) in functions.iter().enumerate() {
+                let branch = if idx + 1 == functions.len() { "└──" } else { "├──" };
+                out.push_str(&format!(
+                    "{}{} [MEMBER: {}] {} (lines {}-{}) via {}\n",
+                    fn_prefix,
+                    branch,
+                    f.kind.to_uppercase(),
+                    f.name,
+                    f.start_line,
+                    f.end_line,
+                    f.strategy
+                ));
+            }
+        }
+
+        out.push_str("└── Dependencies\n");
+        if outgoing.is_empty() {
+            out.push_str("    └── (none)\n");
+        } else {
+            for (idx, dep) in outgoing.iter().enumerate() {
+                let branch = if idx + 1 == outgoing.len() { "└──" } else { "├──" };
+                out.push_str(&format!("    {} [DEPENDS_ON] File: {}\n", branch, dep));
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Surgical AST symbol replacement with pre-flight syntax verification and auto-reindexing.
+    pub fn replace_symbol(
+        &self,
+        file_path: &str,
+        symbol_name: &str,
+        new_code: &str,
+        dry_run: bool,
+    ) -> Result<SymbolReplaceResult> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let path_obj = std::path::Path::new(&resolved);
+        let effective_path = if path_obj.exists() {
+            path_obj.to_path_buf()
+        } else if let Some(root) = self.project_path() {
+            std::path::Path::new(&root).join(&resolved)
+        } else {
+            std::path::PathBuf::from(&resolved)
+        };
+
+        if !effective_path.exists() {
+            return Ok(SymbolReplaceResult {
+                success: false,
+                file_path: resolved.clone(),
+                symbol_name: symbol_name.to_string(),
+                old_start_line: 0,
+                old_end_line: 0,
+                new_start_line: 0,
+                new_end_line: 0,
+                lines_diff: 0,
+                preview_diff: String::new(),
+                dry_run,
+                ast_verified: false,
+                error: Some(format!("[ALERT: FILE_NOT_FOUND] File `{}` does not exist", effective_path.display())),
+            });
+        }
+
+        let source = std::fs::read_to_string(&effective_path)?;
+        let lang = ozymem_parser::SupportedLanguage::from_path(&effective_path);
+
+        let is_crlf = source.contains("\r\n");
+        let newline = if is_crlf { "\r\n" } else { "\n" };
+
+        let map = ozymem_parser::parse_source(&resolved, lang, &source)?;
+        let Some(target_fn) = map.functions.iter().find(|f| f.name == symbol_name || f.name.eq_ignore_ascii_case(symbol_name)) else {
+            let available: Vec<String> = map.functions.iter().map(|f| format!("{} ({})", f.name, f.kind.as_str())).collect();
+            return Ok(SymbolReplaceResult {
+                success: false,
+                file_path: resolved.clone(),
+                symbol_name: symbol_name.to_string(),
+                old_start_line: 0,
+                old_end_line: 0,
+                new_start_line: 0,
+                new_end_line: 0,
+                lines_diff: 0,
+                preview_diff: String::new(),
+                dry_run,
+                ast_verified: false,
+                error: Some(format!("[ALERT: SYMBOL_NOT_FOUND] Symbol `{}` not found in `{}`. Available symbols: [{}]", symbol_name, resolved, available.join(", "))),
+            });
+        };
+
+        let old_start_line = target_fn.start_line;
+        let old_end_line = target_fn.end_line;
+
+        let raw_lines: Vec<&str> = if is_crlf {
+            source.split("\r\n").collect()
+        } else {
+            source.split('\n').collect()
+        };
+
+        if old_start_line == 0 || old_start_line > raw_lines.len() || old_end_line > raw_lines.len() {
+            return Ok(SymbolReplaceResult {
+                success: false,
+                file_path: resolved.clone(),
+                symbol_name: symbol_name.to_string(),
+                old_start_line,
+                old_end_line,
+                new_start_line: 0,
+                new_end_line: 0,
+                lines_diff: 0,
+                preview_diff: String::new(),
+                dry_run,
+                ast_verified: false,
+                error: Some(format!("[ALERT: INVALID_LINE_RANGE] Lines {}-{} are out of bounds (total lines: {})", old_start_line, old_end_line, raw_lines.len())),
+            });
+        }
+
+        let before_lines = &raw_lines[..(old_start_line - 1)];
+        let old_symbol_lines = &raw_lines[(old_start_line - 1)..old_end_line];
+        let after_lines = &raw_lines[old_end_line..];
+
+        let new_code_lines: Vec<&str> = if is_crlf {
+            new_code.split("\r\n").collect()
+        } else {
+            new_code.split('\n').collect()
+        };
+
+        let new_lines_count = new_code_lines.len();
+        let old_lines_count = old_symbol_lines.len();
+        let lines_diff = new_lines_count as i64 - old_lines_count as i64;
+        let new_start_line = old_start_line;
+        let new_end_line = old_start_line + new_lines_count.saturating_sub(1);
+
+        let mut final_lines: Vec<&str> = Vec::with_capacity(before_lines.len() + new_lines_count + after_lines.len());
+        final_lines.extend_from_slice(before_lines);
+        final_lines.extend_from_slice(&new_code_lines);
+        final_lines.extend_from_slice(after_lines);
+
+        let candidate_source = final_lines.join(newline);
+
+        // Pre-flight AST syntax verification
+        let diagnostics = ozymem_parser::extract_ast_diagnostics(&resolved, lang, &candidate_source);
+        if !diagnostics.is_empty() {
+            let diag_messages: Vec<String> = diagnostics
+                .iter()
+                .map(|d| format!("line {}: {}", d.line_number, d.message))
+                .collect();
+            return Ok(SymbolReplaceResult {
+                success: false,
+                file_path: resolved.clone(),
+                symbol_name: symbol_name.to_string(),
+                old_start_line,
+                old_end_line,
+                new_start_line,
+                new_end_line,
+                lines_diff,
+                preview_diff: String::new(),
+                dry_run,
+                ast_verified: false,
+                error: Some(format!(
+                    "[ALERT: AST_SYNTAX_ERROR] The proposed code introduces syntax errors in `{}`: {}. File unmodified.",
+                    resolved,
+                    diag_messages.join("; ")
+                )),
+            });
+        }
+
+        let mut diff_preview = format!("--- {}\n+++ {}\n@@ -{},{} +{},{} @@ [SYMBOL: {}]\n", resolved, resolved, old_start_line, old_lines_count, new_start_line, new_lines_count, symbol_name);
+        for line in old_symbol_lines {
+            diff_preview.push_str(&format!("-{}\n", line));
+        }
+        for line in &new_code_lines {
+            diff_preview.push_str(&format!("+{}\n", line));
+        }
+
+        if !dry_run {
+            std::fs::write(&effective_path, &candidate_source)?;
+            if let Some(root) = self.project_path() {
+                let _ = self.index_file_delta(&effective_path, std::path::Path::new(&root));
+            }
+        }
+
+        Ok(SymbolReplaceResult {
+            success: true,
+            file_path: resolved,
+            symbol_name: symbol_name.to_string(),
+            old_start_line,
+            old_end_line,
+            new_start_line,
+            new_end_line,
+            lines_diff,
+            preview_diff: diff_preview,
+            dry_run,
+            ast_verified: true,
+            error: None,
+        })
     }
 }

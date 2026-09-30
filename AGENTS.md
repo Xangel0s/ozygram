@@ -78,6 +78,11 @@
   - **Cascade Stale Invalidation**: File modifications propagate `[ALERT: STALE_MEMORY]` through `APPLIES_TO` edges and cascade down `SUPERSEDES` and `DERIVED_FROM` chains, halving confidence and protecting against stale hallucinations.
   - **Autonomous Cognitive Auto-Wiring (`ozymem dream run`)**: Analyzes memory clusters ($\text{sim} \ge 0.80$), weaving `REINFORCES` relationships for synergistic lessons and arbitrating contradictions into directional `SUPERSEDES` edges.
   - **Emoji-Free Mermaid Visualization (`ozymem dream graph` & `ozy_graph`)**: Renders clean Markdown architecture diagrams with standardized textual tags (`[CONVENTION]`, `[APPLIES_TO]`, `[COUPLED_WITH]`).
+- **Surgical AST & Symbol-Driven Architecture (v1.4.0)**:
+  - **Surgical Symbol Extraction (`ozy_get_symbol` & `ozymem symbol`)**: Token-efficient retrieval of exact symbol implementation bounds (functions, classes, interfaces, React components/hooks) directly from AST offsets, cutting context window usage by up to 90%.
+  - **Native Zero-Process MCP Exploration (`ozy_file_tree` & `ozy_parse`)**: Directly queries directory structure and AST definition maps over JSON-RPC without spawning subshells (`cmd.exe`/PowerShell).
+  - **Deep AST for TypeScript/TSX & React**: Native `tree-sitter-typescript` indexing detecting `Interface`, `TypeAlias`, `ReactComponent`, and `ReactHook` declarations with accurate line spans and parameter signatures.
+  - **Surgical AST Replacement (`ozy_replace_symbol`)**: Replaces code at AST symbol granularity with pre-flight AST diagnostic syntax audits, diff generation, and write safeguards.
 
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).

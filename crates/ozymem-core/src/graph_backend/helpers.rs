@@ -278,8 +278,9 @@ pub fn detect_language(path: &Path) -> SupportedLanguage {
         Some("py") => SupportedLanguage::Python,
         Some("go") => SupportedLanguage::Go,
         Some("rs") => SupportedLanguage::Rust,
-        Some("js") | Some("jsx") => SupportedLanguage::JavaScript,
-        Some("ts") | Some("tsx") => SupportedLanguage::TypeScriptReact,
+        Some("js") | Some("mjs") | Some("cjs") => SupportedLanguage::JavaScript,
+        Some("ts") => SupportedLanguage::TypeScript,
+        Some("tsx") | Some("jsx") => SupportedLanguage::TypeScriptReact,
         Some("sql") => SupportedLanguage::SQL,
         _ => SupportedLanguage::Unknown,
     }

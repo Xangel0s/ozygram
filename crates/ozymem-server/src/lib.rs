@@ -16,6 +16,7 @@ pub mod tools;
 pub mod verifier;
 pub mod exploration;
 pub mod dispatch;
+pub mod symbols;
 
 use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common;

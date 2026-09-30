@@ -823,7 +823,8 @@ pub fn get_language_from_path(path: &Path) -> SupportedLanguage {
         "go" => SupportedLanguage::Go,
         "rs" => SupportedLanguage::Rust,
         "js" => SupportedLanguage::JavaScript,
-        "ts" | "tsx" | "jsx" => SupportedLanguage::TypeScriptReact,
+        "ts" => SupportedLanguage::TypeScript,
+        "tsx" | "jsx" => SupportedLanguage::TypeScriptReact,
         "sql" => SupportedLanguage::SQL,
         _ => SupportedLanguage::Unknown,
     }

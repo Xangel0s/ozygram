@@ -137,7 +137,7 @@ pub fn parse_axum_routes(source: &str, file_path: &str) -> Vec<ApiRouteDefinitio
 pub fn parse_api_routes(source: &str, file_path: &str, lang: SupportedLanguage) -> Vec<ApiRouteDefinition> {
     match lang {
         SupportedLanguage::Python => parse_fastapi_routes(source, file_path),
-        SupportedLanguage::JavaScript | SupportedLanguage::TypeScriptReact => parse_express_routes(source, file_path),
+        SupportedLanguage::JavaScript | SupportedLanguage::TypeScript | SupportedLanguage::TypeScriptReact => parse_express_routes(source, file_path),
         SupportedLanguage::Rust => parse_axum_routes(source, file_path),
         _ => {
             // Fallback heuristics: try fastapi then express
