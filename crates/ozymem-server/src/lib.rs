@@ -32,29 +32,32 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
     let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
     let (notifier, rx) = Notifier::new();
     let subscribed: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-    notifier.log(
-        "info",
-        "[ozymem-server] MCP server ready (petgraph + SQLite, per-project DB)".into(),
-    );
 
     let mut stdin = BufReader::new(io::stdin());
-    let mut stdout = io::stdout();
 
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    let stop_flag_clone = stop_flag.clone();
+    let (stdout_tx, mut stdout_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let stdout_tx_notifier = stdout_tx.clone();
+
     let writer_handle = tokio::spawn(async move {
-        let mut rx = rx;
         let mut stdout = io::stdout();
-        while !stop_flag_clone.load(Ordering::Relaxed) {
+        while let Some(msg) = stdout_rx.recv().await {
+            let _ = stdout.write_all(msg.as_bytes()).await;
+            let _ = stdout.write_all(b"\n").await;
+            let _ = stdout.flush().await;
+        }
+    });
+
+    let stop_notifier = Arc::new(AtomicBool::new(false));
+    let stop_notifier_clone = stop_notifier.clone();
+    let notifier_handle = tokio::spawn(async move {
+        let mut rx = rx;
+        while !stop_notifier_clone.load(Ordering::Relaxed) {
             match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
                 Ok(Some(payload)) => {
-                    let _ = stdout.write_all(payload.as_bytes()).await;
-                    let _ = stdout.write_all(b"
-").await;
-                    let _ = stdout.flush().await;
+                    let _ = stdout_tx_notifier.send(payload);
                 }
                 Ok(None) => break,
-                Err(_) => { /* timeout, loop and check flag */ }
+                Err(_) => {}
             }
         }
     });
@@ -71,24 +74,31 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
         }
 
         if let Ok(request) = serde_json::from_str::<mcp_common::JsonRpcRequest>(trimmed) {
-            if let Some(response) =
-                handle_request(&backend, request, Some(&notifier), Some(&subscribed)).await?
-            {
-                let payload = serde_json::to_string(&response)?;
-                stdout.write_all(payload.as_bytes()).await?;
-                stdout.write_all(b"
-").await?;
-                stdout.flush().await?;
+            let req_id = request.id.clone();
+            match handle_request(&backend, request, Some(&notifier), Some(&subscribed)).await {
+                Ok(Some(response)) => {
+                    if let Ok(payload) = serde_json::to_string(&response) {
+                        let _ = stdout_tx.send(payload);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    if let Some(id) = req_id {
+                        let err_resp = state::error_response(id, -32603, &e.to_string());
+                        if let Ok(payload) = serde_json::to_string(&err_resp) {
+                            let _ = stdout_tx.send(payload);
+                        }
+                    }
+                }
             }
         } else {
-            notifier.log(
-                "error",
-                format!("[ozymem-server] invalid JSON-RPC: {trimmed}"),
-            );
+            eprintln!("[ozymem-server] invalid JSON-RPC: {trimmed}");
         }
     }
 
-    stop_flag.store(true, Ordering::Relaxed);
+    stop_notifier.store(true, Ordering::Relaxed);
+    let _ = notifier_handle.await;
+    drop(stdout_tx);
     let _ = writer_handle.await;
 
     Ok(())

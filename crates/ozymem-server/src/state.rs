@@ -218,7 +218,7 @@ pub fn resolve_workspace_from_params(params: Option<&Value>) -> Option<PathBuf> 
         }
     }
     // 5. Variables de entorno comunes
-    for var in &["WORKSPACE_ROOT", "INIT_CWD", "PROJECT_ROOT"] {
+    for var in &["OZYGRAM_PROJECT_ROOT", "OZY_PROJECT_ROOT", "WORKSPACE_ROOT", "INIT_CWD", "PROJECT_ROOT"] {
         if let Ok(env_path) = std::env::var(var) {
             if !env_path.trim().is_empty() {
                 let path = PathBuf::from(env_path);

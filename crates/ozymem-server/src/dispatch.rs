@@ -86,13 +86,10 @@ pub async fn handle_request(
             if legacy_db.exists() && legacy_db.is_file() {
                 let project_db = project_path.join(".ozymem").join("memory.db");
                 if project_db.exists() {
-                    log(
-                        "warn",
-                        format!(
-                            "[ozymem] Legacy global DB detected at {}. OzyMem now uses per-project DB at {}. Run 'ozymem migrate' to copy lessons, or delete the old file.",
-                            legacy_db.display(),
-                            project_db.display()
-                        ),
+                    eprintln!(
+                        "[ozymem] Legacy global DB detected at {}. OzyMem now uses per-project DB at {}. Run 'ozymem migrate' to copy lessons, or delete the old file.",
+                        legacy_db.display(),
+                        project_db.display()
                     );
                 }
             }
@@ -264,16 +261,52 @@ pub async fn handle_request(
                     }
                 }
                 "ozy_get_symbol" | "get_symbol" | "ozymem_get_symbol" => {
-                    crate::symbols::handle_get_symbol(backend, &tool_call)?
+                    match crate::symbols::handle_get_symbol(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
                 }
                 "ozy_file_tree" | "file_tree" | "ast_tree" => {
-                    crate::symbols::handle_file_tree(backend, &tool_call)?
+                    match crate::symbols::handle_file_tree(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
                 }
                 "ozy_parse" | "parse_file" | "ozymem_parse" => {
-                    crate::symbols::handle_parse(backend, &tool_call)?
+                    match crate::symbols::handle_parse(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
                 }
                 "ozy_replace_symbol" | "replace_symbol" | "ozymem_replace_symbol" => {
-                    crate::symbols::handle_replace_symbol(backend, &tool_call)?
+                    match crate::symbols::handle_replace_symbol(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
                 }
                 _ => {
                     if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
