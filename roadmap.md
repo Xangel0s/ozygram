@@ -103,7 +103,7 @@ graph TD
   - **Descripción**: Crear analizador estático para sentencias SQL de migración que verifique la presencia de cláusulas idempotentes (`IF NOT EXISTS`, `IF EXISTS`) y bloquee sentencias destructivas (`DROP TABLE`, `TRUNCATE`) sin indicador explícito de override.
   - **Criterio de Aceptación**: Integración en `ozy_doctor(action="audit_migrations")` detecta scripts no idempotentes y emite advertencia `[ALERT: NON_IDEMPOTENT_SQL]`.
 
-- [ ] **Task 3.2: Generalización del Módulo Universal Outbox Pattern**
+- [x] **Task 3.2: Generalización del Módulo Universal Outbox Pattern**
   - **Componentes afectados**: `python/ozy-brain/ozy_brain/outbox_consumer.py`.
   - **Descripción**: Extraer la arquitectura transaccional de `outbox_consumer.py` hacia un módulo genérico con tabla `outbox_events` (columnas: `id`, `event_type`, `aggregate_id`, `payload`, `status`, `retry_count`, `created_at`, `processed_at`), configurable para SQLite y PostgreSQL.
   - **Criterio de Aceptación**: Pruebas de inserción y drenaje en cola demuestran desacoplamiento total y reintentos con backoff exponencial.
