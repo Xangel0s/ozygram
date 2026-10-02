@@ -333,6 +333,23 @@ pub struct IncomingDependencyDetail {
     pub function_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SymbolReference {
+    pub file_path: String,
+    pub line_number: usize,
+    pub snippet: String,
+    pub reference_kind: String, // "definition", "import", "call_or_usage"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SymbolReferencesResult {
+    pub symbol_name: String,
+    pub defining_file: Option<String>,
+    pub references_count: usize,
+    pub estimated_tokens: usize,
+    pub references: Vec<SymbolReference>,
+}
+
 impl fmt::Display for LessonEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let warning_tag = if let Some(ref warn) = self.freshness_warning {

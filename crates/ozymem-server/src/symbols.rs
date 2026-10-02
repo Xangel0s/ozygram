@@ -306,3 +306,43 @@ pub fn handle_search_literal(
         is_error: None,
     })
 }
+
+pub fn handle_find_references(
+    backend: &GraphBackend,
+    tool_call: &ToolCallParams,
+) -> Result<ToolCallResult> {
+    let symbol_name = tool_call
+        .arguments
+        .get("symbol_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing 'symbol_name'"))?;
+    let file_path = tool_call
+        .arguments
+        .get("file_path")
+        .and_then(Value::as_str);
+    let max_references = tool_call
+        .arguments
+        .get("max_references")
+        .and_then(Value::as_u64)
+        .unwrap_or(50) as usize;
+    let token_budget = tool_call
+        .arguments
+        .get("token_budget")
+        .and_then(Value::as_u64)
+        .unwrap_or(1000) as usize;
+
+    let res = backend.find_symbol_references(
+        symbol_name,
+        file_path,
+        max_references,
+        token_budget,
+    )?;
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: serde_json::to_string_pretty(&res)?,
+        }],
+        is_error: None,
+    })
+}

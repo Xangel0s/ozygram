@@ -2909,3 +2909,65 @@ export function handleReorderCard(a: number, b: number) {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_tools_find_references_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_find_refs_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 1. Write TypeScript files with symbol definition, import, and call
+        let db_ts = tmp_root.join("database.ts");
+        std::fs::write(&db_ts, "export function initializeConnection(): string {\n    return 'connected';\n}\n").unwrap();
+
+        let api_ts = tmp_root.join("api.ts");
+        std::fs::write(&api_ts, "import { initializeConnection } from './database';\n\nexport function bootstrap() {\n    const conn = initializeConnection();\n    console.log(conn);\n}\n").unwrap();
+
+        // 2. Initialize MCP
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        {
+            let guard = backend_ref.lock().unwrap();
+            if let Some(ref gb) = *guard {
+                let _ = gb.full_scan(&tmp_root.to_string_lossy(), None);
+            }
+        }
+
+        // 3. Call ozy_find_references
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_find_references",
+                "arguments": {
+                    "symbol_name": "initializeConnection",
+                    "file_path": "database.ts",
+                    "max_references": 50,
+                    "token_budget": 1000
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, req, None, None).await.unwrap().unwrap();
+        let body: Value = serde_json::from_str(resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["symbol_name"], "initializeConnection");
+        assert!(body["references_count"].as_u64().unwrap() >= 2);
+
+        let refs = body["references"].as_array().unwrap();
+        assert!(refs.iter().any(|r| r["reference_kind"] == "definition"));
+        assert!(refs.iter().any(|r| r["reference_kind"] == "import"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

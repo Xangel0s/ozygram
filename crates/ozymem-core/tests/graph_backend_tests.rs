@@ -2677,4 +2677,44 @@ fn test_incoming_dependencies_detailed_multi_hop_and_suffix() {
     assert!(service_incoming[0].file_path.replace('\\', "/").ends_with("controllers/user_controller.py"));
 }
 
+#[test]
+fn test_find_symbol_references_python_and_ts() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    // 1. Python files
+    let models_py = root.join("models.py");
+    std::fs::write(&models_py, "class UserModel:\n    id: int\n    name: str\n\nclass UserModelExtended(UserModel):\n    role: str\n").unwrap();
+
+    let service_py = root.join("service.py");
+    std::fs::write(&service_py, "from models import UserModel\n\ndef create_user() -> UserModel:\n    return UserModel()\n").unwrap();
+
+    let main_py = root.join("main.py");
+    std::fs::write(&main_py, "from service import create_user\n\nu = create_user()\nprint(u)\n").unwrap();
+
+    let backend = GraphBackend::open_for_project(root).unwrap();
+    let root_str = root.to_string_lossy().to_string();
+    backend.full_scan(&root_str, None).unwrap();
+
+    // 2. Search references for "UserModel"
+    let res = backend.find_symbol_references("UserModel", Some("models.py"), 50, 2000).unwrap();
+    assert_eq!(res.symbol_name, "UserModel");
+    assert!(res.references_count >= 3, "Should find at least definition, import, and usages");
+
+    // Definition in models.py
+    let defs: Vec<_> = res.references.iter().filter(|r| r.reference_kind == "definition").collect();
+    assert!(!defs.is_empty(), "Should classify definition");
+    assert!(defs[0].file_path.replace('\\', "/").ends_with("models.py"));
+    assert_eq!(defs[0].line_number, 1);
+
+    // Import in service.py
+    let imports: Vec<_> = res.references.iter().filter(|r| r.reference_kind == "import").collect();
+    assert!(!imports.is_empty(), "Should classify import");
+    assert!(imports[0].file_path.replace('\\', "/").ends_with("service.py"));
+
+    // Usages
+    let usages: Vec<_> = res.references.iter().filter(|r| r.reference_kind == "call_or_usage").collect();
+    assert!(!usages.is_empty(), "Should classify usage in service.py");
+}
+
 

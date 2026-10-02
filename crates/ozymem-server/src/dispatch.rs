@@ -332,6 +332,18 @@ pub async fn handle_request(
                         },
                     }
                 }
+                "ozy_find_references" | "find_references" => {
+                    match crate::symbols::handle_find_references(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
+                }
                 _ => {
                     if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
                         return Ok(Some(res));

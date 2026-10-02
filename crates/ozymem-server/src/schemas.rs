@@ -1095,6 +1095,21 @@ pub fn handle_tools_list(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "ozy_find_references",
+                    description: "Localiza todas las referencias, definiciones, importaciones y llamadas de un símbolo en el workspace con límites de token y clasificación de uso.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "symbol_name": { "type": "string", "description": "Nombre exacto del símbolo a buscar (función, clase, constante o tipo)" },
+                            "file_path": { "type": "string", "description": "Ruta opcional del archivo donde se define el símbolo para precisión de definición" },
+                            "max_references": { "type": "integer", "default": 50, "description": "Cantidad máxima de referencias a devolver" },
+                            "token_budget": { "type": "integer", "default": 1000, "description": "Presupuesto máximo de tokens en snippets devueltos" }
+                        },
+                        "required": ["symbol_name"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 100;

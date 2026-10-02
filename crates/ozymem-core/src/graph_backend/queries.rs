@@ -6,7 +6,7 @@ use petgraph::visit::Bfs;
 use rusqlite::params;
 use crate::GraphSummary;
 use crate::mcp_common::McpBackend;
-use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, IncomingDependencyDetail, LiteralMatch, LiteralSearchResult, SymbolReplaceResult, UnifiedSearchResult};
+use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, IncomingDependencyDetail, LiteralMatch, LiteralSearchResult, SymbolReference, SymbolReferencesResult, SymbolReplaceResult, UnifiedSearchResult};
 
 impl GraphBackend {
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
@@ -1150,6 +1150,187 @@ impl GraphBackend {
             total_scanned_files: total_scanned,
             estimated_tokens,
             matches,
+        })
+    }
+
+    pub fn find_symbol_references(
+        &self,
+        symbol_name: &str,
+        file_path: Option<&str>,
+        max_references: usize,
+        token_budget: usize,
+    ) -> Result<SymbolReferencesResult> {
+        let max_refs = if max_references == 0 { 50 } else { max_references };
+        let budget = if token_budget == 0 { 1000 } else { token_budget };
+
+        let mut defining_file_path: Option<String> = None;
+        let mut def_start_line: Option<i64> = None;
+        let mut def_end_line: Option<i64> = None;
+
+        if let Some(fp) = file_path {
+            if let Some(resolved) = self.resolve_target_path(fp) {
+                defining_file_path = Some(resolved.clone());
+                let norm = crate::normalize_path(&resolved);
+                let inner = self.inner.lock().unwrap();
+                let res = inner.sqlite.query_row(
+                    "SELECT start_line, end_line FROM functions 
+                     WHERE name = ?1 AND (file_path = ?2 OR file_path = ?3) AND tenant_id = ?4 LIMIT 1",
+                    params![symbol_name, &resolved, &norm, self.tenant_id],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+                );
+                if let Ok(row) = res {
+                    def_start_line = Some(row.0);
+                    def_end_line = Some(row.1);
+                }
+            }
+        }
+
+        if defining_file_path.is_none() {
+            let inner = self.inner.lock().unwrap();
+            let res = inner.sqlite.query_row(
+                "SELECT file_path, start_line, end_line FROM functions 
+                 WHERE name = ?1 AND tenant_id = ?2 ORDER BY length(file_path) ASC LIMIT 1",
+                params![symbol_name, self.tenant_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+            );
+            if let Ok(row) = res {
+                defining_file_path = Some(row.0);
+                def_start_line = Some(row.1);
+                def_end_line = Some(row.2);
+            }
+        }
+
+        let escaped = regex::escape(symbol_name);
+        let pattern = format!(r"\b{}\b", escaped);
+        let re = regex::Regex::new(&pattern)
+            .with_context(|| format!("Failed to build regex for symbol '{}'", symbol_name))?;
+
+        let root_dir = if let Some(root) = self.project_path() {
+            std::path::PathBuf::from(root)
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        };
+
+        let mut references = Vec::new();
+        let mut estimated_tokens = 0;
+
+        let walker = walkdir::WalkDir::new(&root_dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    !crate::graph_backend::helpers::is_noise_dir(e.path())
+                } else {
+                    true
+                }
+            });
+
+        for entry in walker {
+            let Ok(entry) = entry else { continue };
+            if !entry.file_type().is_file() { continue };
+            let path = entry.path();
+
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                if matches!(
+                    ext_lower.as_str(),
+                    "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico"
+                        | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock"
+                        | "onnx" | "bin" | "pyc"
+                ) {
+                    continue;
+                }
+            }
+
+            if let Ok(meta) = entry.metadata() {
+                if meta.len() > 10 * 1024 * 1024 {
+                    continue;
+                }
+            }
+
+            let Ok(content) = std::fs::read_to_string(path) else { continue };
+            if !re.is_match(&content) { continue };
+
+            let normalized_file_path = crate::normalize_path(&path.to_string_lossy());
+            let is_defining_file = defining_file_path.as_deref().map(|def| {
+                let norm_def = crate::normalize_path(def);
+                norm_def == normalized_file_path || norm_def.ends_with(&normalized_file_path) || normalized_file_path.ends_with(&norm_def)
+            }).unwrap_or(false);
+
+            for (idx, line) in content.lines().enumerate() {
+                let line_num = idx + 1;
+                if re.is_match(line) {
+                    let trimmed = line.trim();
+                    let trimmed_lower = trimmed.to_lowercase();
+
+                    let kind = if is_defining_file
+                        && def_start_line.map(|s| line_num as i64 >= s && def_end_line.map(|e| (line_num as i64) <= e).unwrap_or(true)).unwrap_or(false)
+                        && (trimmed_lower.starts_with("def ")
+                            || trimmed_lower.starts_with("fn ")
+                            || trimmed_lower.starts_with("function ")
+                            || trimmed_lower.starts_with("export function ")
+                            || trimmed_lower.starts_with("class ")
+                            || trimmed_lower.starts_with("export class ")
+                            || trimmed_lower.starts_with("interface ")
+                            || trimmed_lower.starts_with("export interface ")
+                            || trimmed_lower.starts_with("export const ")
+                            || trimmed_lower.starts_with("const "))
+                    {
+                        "definition".to_string()
+                    } else if trimmed_lower.starts_with("import ")
+                        || trimmed_lower.starts_with("from ")
+                        || trimmed_lower.contains("require(")
+                        || trimmed_lower.starts_with("use ")
+                        || (trimmed_lower.starts_with("export ") && (trimmed_lower.contains(" from ") || trimmed_lower.contains('{')))
+                    {
+                        "import".to_string()
+                    } else {
+                        "call_or_usage".to_string()
+                    };
+
+                    let token_cost = (trimmed.len() / 4) + 12;
+                    if estimated_tokens + token_cost > budget {
+                        break;
+                    }
+                    estimated_tokens += token_cost;
+
+                    references.push(SymbolReference {
+                        file_path: normalized_file_path.clone(),
+                        line_number: line_num,
+                        snippet: trimmed.to_string(),
+                        reference_kind: kind,
+                    });
+
+                    if references.len() >= max_refs {
+                        break;
+                    }
+                }
+            }
+
+            if references.len() >= max_refs || estimated_tokens >= budget {
+                break;
+            }
+        }
+
+        references.sort_by(|a, b| {
+            let rank = |k: &str| match k {
+                "definition" => 0,
+                "import" => 1,
+                _ => 2,
+            };
+            rank(&a.reference_kind)
+                .cmp(&rank(&b.reference_kind))
+                .then_with(|| a.file_path.cmp(&b.file_path))
+                .then_with(|| a.line_number.cmp(&b.line_number))
+        });
+
+        let total_count = references.len();
+        Ok(SymbolReferencesResult {
+            symbol_name: symbol_name.to_string(),
+            defining_file: defining_file_path,
+            references_count: total_count,
+            estimated_tokens,
+            references,
         })
     }
 }

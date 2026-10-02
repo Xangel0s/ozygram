@@ -78,10 +78,10 @@ graph TD
   - **Descripción**: Añadir a `GraphBackend` y al grafo `petgraph` la capacidad de consultar dependencias entrantes (`who imports this file?`). Indexar imports y exports bidireccionalmente durante el escaneo del workspace.
   - **Criterio de Aceptación**: Consulta a un módulo base (ej. `database.py` o `types.ts`) lista con precisión todos los archivos dependientes en el workspace. [STATUS: COMPLETED]
 
-- [ ] **Task 2.2: Herramienta MCP `ozy_find_references`**
-  - **Componentes afectados**: `crates/ozymem-server` (`src/symbols.rs`, `src/schemas.rs`, `src/dispatch.rs`).
+- [x] **Task 2.2: Herramienta MCP `ozy_find_references`**
+  - **Componentes afectados**: `crates/ozymem-core`, `crates/ozymem-server` (`src/symbols.rs`, `src/schemas.rs`, `src/dispatch.rs`).
   - **Descripción**: Exponer endpoint MCP que recibe `symbol_name` y `file_path` opcional, devolviendo todas las referencias, llamadas e importaciones del símbolo a lo largo del repositorio con snippet y número de línea.
-  - **Criterio de Aceptación**: Pruebas unitarias confirman la resolución de referencias cruzadas entre archivos de Python y TypeScript.
+  - **Criterio de Aceptación**: Pruebas unitarias confirman la resolución de referencias cruzadas entre archivos de Python y TypeScript. [STATUS: COMPLETED]
 
 - [ ] **Task 2.3: Integración de Blast Radius en `RiskCriticAgent` y `simulate_action`**
   - **Componentes afectados**: `python/ozy-brain/ozy_brain/risk.py`, `python/ozy-brain/ozy_brain/brain.py`.
