@@ -101,7 +101,7 @@ class UniversalOutbox:
         if self.connection is not None:
             return self.connection, False
         if self.db_path is not None and self.dialect == "sqlite":
-            conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
             conn.row_factory = sqlite3.Row
             return conn, True
         raise ValueError("[ERROR: OUTBOX_NO_CONNECTION] No database connection or path configured.")
@@ -112,6 +112,10 @@ class UniversalOutbox:
         try:
             cursor = active_conn.cursor()
             if self.dialect == "sqlite":
+                try:
+                    cursor.execute("PRAGMA journal_mode=WAL;")
+                except Exception:
+                    pass
                 cursor.executescript(self.SQLITE_DDL)
             else:
                 cursor.execute(self.POSTGRES_DDL)
@@ -214,7 +218,7 @@ class UniversalOutbox:
         max_retries: int = 5,
         conn: Any = None,
     ) -> list[OutboxEvent]:
-        """Fetches pending or retryable failed events."""
+        """Fetches pending or retryable failed events without claiming."""
         active_conn, should_close = self._get_conn(conn)
         try:
             cursor = active_conn.cursor()
@@ -264,6 +268,103 @@ class UniversalOutbox:
             if should_close:
                 active_conn.close()
 
+    def claim_pending(
+        self,
+        limit: int = 100,
+        max_retries: int = 5,
+        conn: Any = None,
+    ) -> list[OutboxEvent]:
+        """Atomically claims pending/retryable events, transitioning them to PROCESSING."""
+        active_conn, should_close = self._get_conn(conn)
+        try:
+            cursor = active_conn.cursor()
+            if self.dialect == "sqlite":
+                cursor.execute("BEGIN IMMEDIATE")
+                cursor.execute(
+                    """
+                    SELECT id FROM outbox_events
+                    WHERE (status = 'PENDING' OR (status = 'FAILED' AND retry_count < ?))
+                    ORDER BY id ASC
+                    LIMIT ?
+                    """,
+                    (max_retries, limit),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    active_conn.commit()
+                    return []
+
+                ids = [r[0] if isinstance(r, (tuple, list)) else r["id"] for r in rows]
+                placeholders = ",".join("?" for _ in ids)
+                cursor.execute(
+                    f"UPDATE outbox_events SET status = 'PROCESSING' WHERE id IN ({placeholders})",
+                    ids,
+                )
+                active_conn.commit()
+
+                cursor.execute(
+                    f"""
+                    SELECT id, event_type, aggregate_id, payload, status, retry_count, created_at, processed_at, error_message
+                    FROM outbox_events
+                    WHERE id IN ({placeholders})
+                    ORDER BY id ASC
+                    """,
+                    ids,
+                )
+                full_rows = cursor.fetchall()
+            else:
+                cursor.execute(
+                    """
+                    UPDATE outbox_events
+                    SET status = 'PROCESSING'
+                    WHERE id IN (
+                        SELECT id FROM outbox_events
+                        WHERE (status = 'PENDING' OR (status = 'FAILED' AND retry_count < %s))
+                        ORDER BY id ASC
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT %s
+                    )
+                    RETURNING id, event_type, aggregate_id, payload, status, retry_count, created_at, processed_at, error_message
+                    """,
+                    (max_retries, limit),
+                )
+                full_rows = cursor.fetchall()
+                if hasattr(active_conn, "commit"):
+                    active_conn.commit()
+
+            events = []
+            for r in full_rows:
+                raw_payload = r[3] if isinstance(r, (tuple, list)) else r["payload"]
+                try:
+                    payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+                except Exception:
+                    payload = {}
+
+                events.append(
+                    OutboxEvent(
+                        id=r[0] if isinstance(r, (tuple, list)) else r["id"],
+                        event_type=r[1] if isinstance(r, (tuple, list)) else r["event_type"],
+                        aggregate_id=r[2] if isinstance(r, (tuple, list)) else r["aggregate_id"],
+                        payload=payload,
+                        status="PROCESSING",
+                        retry_count=r[5] if isinstance(r, (tuple, list)) else r["retry_count"],
+                        created_at=str(r[6] if isinstance(r, (tuple, list)) else r["created_at"]),
+                        processed_at=str(r[7]) if (r[7] if isinstance(r, (tuple, list)) else r["processed_at"]) else None,
+                        error_message=r[8] if isinstance(r, (tuple, list)) else r["error_message"],
+                    )
+                )
+            return events
+        except Exception:
+            if hasattr(active_conn, "rollback"):
+                try:
+                    active_conn.rollback()
+                except Exception:
+                    pass
+            return []
+        finally:
+            if should_close:
+                active_conn.close()
+
     def drain(
         self,
         handler: Callable[[OutboxEvent], bool | None],
@@ -273,13 +374,13 @@ class UniversalOutbox:
         enforce_backoff: bool = True,
         conn: Any = None,
     ) -> dict[str, int]:
-        """Drains pending events using exponential backoff.
+        """Drains pending events using competing-consumers claiming and exponential backoff.
 
         handler returns True (or None) on success, False or raises Exception on failure.
         Backoff formula: delay = backoff_base ** retry_count (seconds).
         """
         stats = {"processed": 0, "failed": 0, "retried": 0, "total": 0}
-        events = self.fetch_pending(limit=limit, max_retries=max_retries, conn=conn)
+        events = self.claim_pending(limit=limit, max_retries=max_retries, conn=conn)
         if not events:
             return stats
 
@@ -300,6 +401,16 @@ class UniversalOutbox:
                         elapsed_secs = (now_dt - event_dt).total_seconds()
                         backoff_delay = backoff_base ** event.retry_count
                         if elapsed_secs < backoff_delay:
+                            if self.dialect == "sqlite":
+                                cursor.execute(
+                                    "UPDATE outbox_events SET status = 'PENDING' WHERE id = ?",
+                                    (event.id,),
+                                )
+                            else:
+                                cursor.execute(
+                                    "UPDATE outbox_events SET status = 'PENDING' WHERE id = %s",
+                                    (event.id,),
+                                )
                             continue
                     except Exception:
                         pass

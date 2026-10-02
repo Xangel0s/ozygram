@@ -113,7 +113,7 @@ graph TD
   - **Descripción**: Incorporar el consumidor de eventos en background para despacho asíncrono de correos, webhooks y notificaciones WebSocket, garantizando que el endpoint HTTP principal responda en menos de 50 ms.
   - **Criterio de Aceptación**: Pruebas de carga demuestran latencia de endpoint < 50 ms con despacho garantizado de eventos en segundo plano.
 
-- [ ] **Task 3.4: Suite de Pruebas de Concurrencia e Idempotencia**
+- [x] **Task 3.4: Suite de Pruebas de Concurrencia e Idempotencia**
   - **Componentes afectados**: Tests de backend en Python.
   - **Descripción**: Diseñar suite de tests automatizados simulando fallos de red, reinicios de proceso y entregas duplicadas para certificar semántica *at-least-once* e idempotencia en receptores.
   - **Criterio de Aceptación**: Cobertura de pruebas superior al 85% con cero pérdida de eventos en simulación de interrupción abrupta.
