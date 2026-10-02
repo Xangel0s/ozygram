@@ -63,10 +63,10 @@ graph TD
   - **Descripción**: Extender las queries de Tree-Sitter para TypeScript/TSX capturando pares clave-valor de objetos literales con funciones (`pair key: ... value: [(arrow_function) (function_expression)]`) y funciones de celda en TanStack Table (`columns: [ { cell: ({ row }) => ... } ]`). Asignar nombres jerárquicos estructurados (ej. `columns[accessorKey].cell`).
   - **Criterio de Aceptación**: `ozy_get_symbol` y `ozy_parse` sobre archivos como `ingenieria-columns.tsx` extraen exitosamente las subfunciones de celda sin fallar. [STATUS: COMPLETED]
 
-- [ ] **Task 1.4: Reemplazo estructural con tolerancia de whitespace e indentación (`ozy_ast_patch`)**
+- [x] **Task 1.4: Reemplazo estructural con tolerancia de whitespace e indentación (`ozy_ast_patch`)**
   - **Componentes afectados**: `crates/ozymem-core/src/graph_backend/queries.rs`.
   - **Descripción**: Mejorar la lógica de `replace_symbol` para calcular automáticamente la indentación base del bloque de código original y reajustar los niveles de espaciado o tabulación del código propuesto. Manejar de forma transparente discrepancias entre saltos de línea CRLF y LF.
-  - **Criterio de Aceptación**: Reemplazo de un método con indentación inconsistente se inyecta con la alineación exacta del archivo destino y pasa la verificación pre-vuelo de AST.
+  - **Criterio de Aceptación**: Reemplazo de un método con indentación inconsistente se inyecta con la alineación exacta del archivo destino y pasa la verificación pre-vuelo de AST. [STATUS: COMPLETED]
 
 ---
 

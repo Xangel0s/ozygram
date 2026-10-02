@@ -761,13 +761,51 @@ impl GraphBackend {
         let old_symbol_lines = &raw_lines[(old_start_line - 1)..old_end_line];
         let after_lines = &raw_lines[old_end_line..];
 
-        let new_code_lines: Vec<&str> = if is_crlf {
+        // Calculate target base indentation from old symbol lines
+        let target_indent = old_symbol_lines
+            .iter()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| {
+                let non_ws = line.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+                &line[..non_ws]
+            })
+            .unwrap_or("");
+
+        let raw_new_lines: Vec<&str> = if new_code.contains("\r\n") {
             new_code.split("\r\n").collect()
         } else {
             new_code.split('\n').collect()
         };
 
-        let new_lines_count = new_code_lines.len();
+        // Calculate source base indentation from first non-empty line of new_code
+        let source_indent = raw_new_lines
+            .iter()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| {
+                let non_ws = line.find(|c: char| !c.is_whitespace()).unwrap_or(0);
+                &line[..non_ws]
+            })
+            .unwrap_or("");
+
+        // Auto-align indentation if different
+        let aligned_new_lines: Vec<String> = if source_indent != target_indent {
+            raw_new_lines
+                .iter()
+                .map(|line| {
+                    if line.trim().is_empty() {
+                        String::new()
+                    } else if let Some(stripped) = line.strip_prefix(source_indent) {
+                        format!("{}{}", target_indent, stripped)
+                    } else {
+                        format!("{}{}", target_indent, line.trim_start())
+                    }
+                })
+                .collect()
+        } else {
+            raw_new_lines.iter().map(|s| s.to_string()).collect()
+        };
+
+        let new_lines_count = aligned_new_lines.len();
         let old_lines_count = old_symbol_lines.len();
         let lines_diff = new_lines_count as i64 - old_lines_count as i64;
         let new_start_line = old_start_line;
@@ -775,7 +813,9 @@ impl GraphBackend {
 
         let mut final_lines: Vec<&str> = Vec::with_capacity(before_lines.len() + new_lines_count + after_lines.len());
         final_lines.extend_from_slice(before_lines);
-        final_lines.extend_from_slice(&new_code_lines);
+        for l in &aligned_new_lines {
+            final_lines.push(l.as_str());
+        }
         final_lines.extend_from_slice(after_lines);
 
         let candidate_source = final_lines.join(newline);
@@ -811,7 +851,7 @@ impl GraphBackend {
         for line in old_symbol_lines {
             diff_preview.push_str(&format!("-{}\n", line));
         }
-        for line in &new_code_lines {
+        for line in &aligned_new_lines {
             diff_preview.push_str(&format!("+{}\n", line));
         }
 

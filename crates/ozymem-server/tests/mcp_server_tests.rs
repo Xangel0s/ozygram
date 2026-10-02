@@ -2792,3 +2792,58 @@ export function handleReorderCard(a: number, b: number) {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_tools_ast_patch_indent_alignment_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_patch_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // Initialize MCP backend
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // Create Python class with indented method (4 spaces)
+        let py_code = "class Calculator:\n    def calculate(self, x: int) -> int:\n        return x * 2\n\n    def other(self):\n        pass\n";
+        let py_path = tmp_root.join("calc.py");
+        std::fs::write(&py_path, py_code).unwrap();
+
+        // Agent sends unindented new_code (0 spaces at root level)
+        let unindented_new_code = "def calculate(self, x: int) -> int:\n    result = x * 10\n    return result\n";
+
+        let patch_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_ast_patch",
+                "arguments": {
+                    "file_path": "calc.py",
+                    "symbol_name": "calculate",
+                    "new_code": unindented_new_code,
+                    "dry_run": false
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, patch_req, None, None).await.unwrap().unwrap();
+        let patch_json: Value = serde_json::from_str(resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(patch_json["success"], true);
+        assert_eq!(patch_json["ast_verified"], true);
+
+        // Verify disk content has auto-aligned 4 spaces indentation
+        let disk_content = std::fs::read_to_string(&py_path).unwrap();
+        assert!(disk_content.contains("    def calculate(self, x: int) -> int:\n        result = x * 10\n        return result"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

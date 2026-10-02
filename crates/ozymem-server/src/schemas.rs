@@ -1080,6 +1080,21 @@ pub fn handle_tools_list(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "ozy_ast_patch",
+                    description: "Reemplazo estructural AST a prueba de whitespace e indentación. Auto-alinea la sangría del código inyectado según el contexto circundante del archivo y valida la sintaxis con Tree-Sitter antes de escribir.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo a modificar" },
+                            "symbol_name": { "type": "string", "description": "Nombre o sub-propiedad del símbolo a reemplazar (ej. 'cotizacion.cell' o 'prefill')" },
+                            "new_code": { "type": "string", "description": "Nuevo código fuente para el símbolo (se auto-alineará a la indentación del archivo)" },
+                            "dry_run": { "type": "boolean", "default": false, "description": "Si es true, solo genera el diff preview sin modificar el archivo" }
+                        },
+                        "required": ["file_path", "symbol_name", "new_code"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 100;

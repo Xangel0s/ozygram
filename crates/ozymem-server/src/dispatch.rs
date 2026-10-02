@@ -296,7 +296,7 @@ pub async fn handle_request(
                         },
                     }
                 }
-                "ozy_replace_symbol" | "replace_symbol" | "ozymem_replace_symbol" => {
+                "ozy_replace_symbol" | "replace_symbol" | "ozymem_replace_symbol" | "ozy_ast_patch" | "ast_patch" => {
                     match crate::symbols::handle_replace_symbol(backend, &tool_call) {
                         Ok(res) => res,
                         Err(e) => ToolCallResult {
