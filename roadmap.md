@@ -123,22 +123,22 @@ graph TD
 ### [FASE 4: Frontend UI Sandbox & Verificación Visual]
 *Objetivo: Erradicar la iteración a ciegas en dimensiones de columnas, layouts y componentes complejos.*
 
-- [ ] **Task 4.1: Micro-Runner Headless de Playwright Local**
+- [x] **Task 4.1: Micro-Runner Headless de Playwright Local**
   - **Componentes afectados**: Directorio de testing y scripts de automatización frontend.
   - **Descripción**: Implementar script ligero en Node.js para renderizar páginas o componentes de forma aislada en segundo plano (`headless: true`) y capturar snapshots o métricas del DOM en milisegundos.
   - **Criterio de Aceptación**: El script arranca, captura snapshot y finaliza en menos de 3 segundos reportando estado de salida 0.
 
-- [ ] **Task 4.2: Fixtures Universales de Datos Mock para TanStack Table**
+- [x] **Task 4.2: Fixtures Universales de Datos Mock para TanStack Table**
   - **Componentes afectados**: Suites de prueba frontend.
   - **Descripción**: Crear generadores de datos ficticios con longitudes de texto extremas (nombres muy largos, códigos vacíos, números grandes) para estresar los layouts de tabla y detectar desbordamientos o solapamientos.
   - **Criterio de Aceptación**: Generación determinista de fixtures para pruebas de estrés de columnas de datos.
 
-- [ ] **Task 4.3: Utilidad de Verificación de Anchos y Layout para Agentes**
+- [x] **Task 4.3: Utilidad de Verificación de Anchos y Layout para Agentes**
   - **Componentes afectados**: Herramientas de soporte para agentes.
   - **Descripción**: Proveer utilidad para inspeccionar las dimensiones calculadas (`getBoundingClientRect`) de celdas de encabezado y datos, permitiendo al agente verificar visualmente y cuantitativamente el ajuste *pixel-perfect* antes de comitear cambios de CSS.
   - **Criterio de Aceptación**: Retorna anchos en píxeles de cada columna renderizada sin requerir abrir el navegador manualmente.
 
-- [ ] **Task 4.4: Actualización de Guías en `AGENTS.md` y Documentación de Arquitectura**
+- [x] **Task 4.4: Actualización de Guías en `AGENTS.md` y Documentación de Arquitectura**
   - **Componentes afectados**: `AGENTS.md`, `docs/architecture.md`.
   - **Descripción**: Actualizar los manuales para agentes reflejando las nuevas herramientas MCP, directrices de búsqueda literal, protocolo de verificación visual y estándares de calidad.
   - **Criterio de Aceptación**: Documentación validada y conforme a los lineamientos de arquitectura y el estándar Zero-Emoji.

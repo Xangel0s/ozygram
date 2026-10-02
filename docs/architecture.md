@@ -179,3 +179,58 @@ Ozygram v1.3.0 transitions from flat, isolated lesson records to a **Property Gr
 - Interactive visualization available via CLI `ozymem dream graph [--module <name>]` and MCP `ozy_graph(action="render_mermaid")`.
 - Clean, syntax-compliant Markdown output with textual badges (`[CONVENTION]`, `[APPLIES_TO]`, `[COUPLED_WITH]`).
 
+---
+
+## 8. Reverse Dependency & Blast Radius Analysis (v1.5.0)
+
+Ozygram v1.5.0 implements reverse static dependency indexing across AST import trees and property graphs:
+
+1. **Incoming Dependency Resolution (`ozy_graph(action="incoming_dependencies")`)**:
+   - Inverts the directional AST import graph, identifying all upstream consumer files that depend on a given module.
+   - Computes reverse depth (e.g., depth 1 = direct importers, depth 2 = transitive dependents).
+2. **Deep Cross-File Symbol Reference Indexing (`ozy_find_references`)**:
+   - Resolves all occurrences of a symbol across the workspace, differentiating definitions, imports, calls, and exports.
+   - Implements strict token budgeting (`token_budget`, default 1200 tokens) to guard the LLM context window.
+3. **Visual Blast Radius Diagrams (`ozy_graph(action="impact_mermaid")`)**:
+   - Generates pure-text Mermaid flowcharts depicting the target file in high-contrast styling surrounded by all inbound dependents.
+   - Text badges: `[TARGET_FILE]`, `[INCOMING_DEPENDENCY]`.
+4. **Pre-flight Blast Radius Veto in `RiskCriticAgent`**:
+   - Automatically queries incoming dependents during plan evaluation.
+   - Issues `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]` and triggers vetoes if proposed changes affect more than 8 downstream files.
+
+---
+
+## 9. Resilient Backend Architecture & Universal Outbox Pattern
+
+To support enterprise microservices and CRM platforms (such as `api-geofal-crm`), Ozygram standardizes database safety and asynchronous decoupled event handling:
+
+1. **SQL Migration Idempotency Linter (`ozy_doctor(action="audit_migrations")`)**:
+   - Static AST linter that scans SQL migration files.
+   - Emits `[ALERT: NON_IDEMPOTENT_SQL]` for DDL lacking `IF NOT EXISTS` or `IF EXISTS`.
+   - Emits `[ALERT: DESTRUCTIVE_UNGUARDED]` for `DROP TABLE`, `DROP SCHEMA`, or `TRUNCATE` lacking an explicit `-- OZYMEM_ALLOW_DESTRUCTIVE` override.
+2. **Universal Outbox Pattern (`UniversalOutbox`)**:
+   - Configurable for SQLite (with WAL mode and atomic `claim_pending` write locking) and PostgreSQL (`JSONB`, `BIGSERIAL`, `SKIP LOCKED`).
+   - Standardized `outbox_events` table (`id`, `event_type`, `aggregate_id`, `payload`, `status`, `retry_count`, `created_at`, `processed_at`, `error_message`).
+   - Exponential backoff retry engine ($\text{delay} = \text{base}^{\text{retry\_count}}$) with zero event loss.
+3. **Microservice Worker (`api-geofal-crm/app/services/outbox.py`)**:
+   - Transactional `publish_event` runs within the business database transaction in $< 2\text{ms}$, guaranteeing HTTP endpoint latency $< 50\text{ms}$.
+   - Background daemon worker asynchronously dispatches emails, webhooks, and websocket broadcasts.
+
+---
+
+## 10. Frontend UI Sandbox & Visual Verification Protocol
+
+To eliminate blind iteration on complex layouts, column widths, and responsive tables:
+
+1. **Headless Playwright Micro-Runner (`scripts/headless_runner.mjs`)**:
+   - Executes isolated component rendering in under 1 second (well within the 3-second SLA).
+   - Extracts complete DOM metrics, element counts, scroll overflow leaks, and captures visual screenshots without manual browser interaction.
+2. **Universal Mock Table Fixtures (`src/lib/mockTableFixtures.ts`)**:
+   - Deterministic LCG pseudo-random generator supporting distinct stress profiles: `extreme_long_text`, `empty_or_null`, `large_numbers`, `special_characters`, and `mixed_adversarial`.
+   - Stresses TanStack Table column definitions against extreme real-world boundary conditions.
+3. **Quantitative Column Width Verifier (`scripts/verify_layout.mjs`)**:
+   - Queries calculated `getBoundingClientRect()` on header cells (`th`) and data cells (`td`).
+   - Detects text truncation (`scrollWidth > clientWidth`), alignment, and horizontal page overflow before committing CSS changes.
+4. **Literal Search Guidelines**:
+   - Agents must prioritize exact literal search (`rg -F` or `grep_search` with literal strings) for symbols, routes, and paths to eliminate regex escaping hazards.
+

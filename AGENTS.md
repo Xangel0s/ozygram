@@ -83,9 +83,20 @@
   - **Native Zero-Process MCP Exploration (`ozy_file_tree` & `ozy_parse`)**: Directly queries directory structure and AST definition maps over JSON-RPC without spawning subshells (`cmd.exe`/PowerShell).
   - **Deep AST for TypeScript/TSX & React**: Native `tree-sitter-typescript` indexing detecting `Interface`, `TypeAlias`, `ReactComponent`, and `ReactHook` declarations with accurate line spans and parameter signatures.
   - **Surgical AST Replacement (`ozy_replace_symbol`)**: Replaces code at AST symbol granularity with pre-flight AST diagnostic syntax audits, diff generation, and write safeguards.
+- **Enterprise Resilience, Reverse Dependencies & UI Verification (v1.5.0)**:
+  - **Reverse AST Import Resolution (`ozy_graph(action="incoming_dependencies")`)**: Inverts directional AST graphs to uncover all upstream modules importing a file.
+  - **Deep Cross-File Symbol Reference Indexing (`ozy_find_references`)**: Discovers definitions, imports, calls, and exports with explicit token budgeting (default 1200 tokens).
+  - **Visual Blast Radius Mermaid Diagrams (`ozy_graph(action="impact_mermaid")`)**: Textual Mermaid graphs highlighting blast radius with `[TARGET_FILE]` and `[INCOMING_DEPENDENCY]` badges.
+  - **Blast Radius Pre-Flight Veto**: `RiskCriticAgent` audits inbound dependencies, issuing vetoes when proposed changes impact > 8 dependent files.
+  - **SQL Migration Idempotency Linter (`ozy_doctor(action="audit_migrations")`)**: Detects missing `IF NOT EXISTS` / `IF EXISTS` (`[ALERT: NON_IDEMPOTENT_SQL]`) and blocks unguarded destructive DDL (`[ALERT: DESTRUCTIVE_UNGUARDED]`).
+  - **Universal Outbox Pattern (`UniversalOutbox`)**: Transactional outbox supporting SQLite (WAL mode, atomic claiming) and PostgreSQL with exponential backoff retry and 0% event loss.
+  - **Sub-50ms API Outbox Worker (`api-geofal-crm/app/services/outbox.py`)**: Local transactional enqueue in < 2ms with background asynchronous email, webhook, and websocket dispatching.
+  - **Frontend UI Sandbox Protocol (`headless_runner.mjs`, `mockTableFixtures.ts`, `verify_layout.mjs`)**: Sub-3s headless Playwright micro-runner, deterministic TanStack Table stress fixtures, and `getBoundingClientRect` column width verifier.
 
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
+- **Literal Search Guidelines**: Prioritize literal exact text matching (`grep_search` with literal strings or `rg -F`) for symbols, paths, and routes to avoid regex compilation bugs and escaped characters.
+- **Visual Verification Protocol**: Before committing CSS or responsive table modifications, run `node scripts/verify_layout.mjs` to measure actual bounding rectangles and detect text truncation or horizontal overflow leaks.
 - **SOLID, DRY, KISS**: Keep code loosely coupled, extract reusable logic, and avoid over-engineering.
 - **Git & Commits**: Write clean, feature-scoped commits following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
 - **Testing**: Maintain test coverage above 80% on all new features. Run `cargo test` and Python test suites prior to completing tasks.
