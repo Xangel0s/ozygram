@@ -108,7 +108,7 @@ graph TD
   - **Descripción**: Extraer la arquitectura transaccional de `outbox_consumer.py` hacia un módulo genérico con tabla `outbox_events` (columnas: `id`, `event_type`, `aggregate_id`, `payload`, `status`, `retry_count`, `created_at`, `processed_at`), configurable para SQLite y PostgreSQL.
   - **Criterio de Aceptación**: Pruebas de inserción y drenaje en cola demuestran desacoplamiento total y reintentos con backoff exponencial.
 
-- [ ] **Task 3.3: Implementación del Worker Outbox en `api-geofal-crm`**
+- [x] **Task 3.3: Implementación del Worker Outbox en `api-geofal-crm`**
   - **Componentes afectados**: `crmnew/api-geofal-crm/app/services/outbox.py`.
   - **Descripción**: Incorporar el consumidor de eventos en background para despacho asíncrono de correos, webhooks y notificaciones WebSocket, garantizando que el endpoint HTTP principal responda en menos de 50 ms.
   - **Criterio de Aceptación**: Pruebas de carga demuestran latencia de endpoint < 50 ms con despacho garantizado de eventos en segundo plano.
