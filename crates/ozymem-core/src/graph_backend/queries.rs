@@ -1,12 +1,12 @@
 use std::collections::HashMap;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use petgraph::algo::all_simple_paths;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::Bfs;
 use rusqlite::params;
 use crate::GraphSummary;
 use crate::mcp_common::McpBackend;
-use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, SymbolReplaceResult, UnifiedSearchResult};
+use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, LiteralMatch, LiteralSearchResult, SymbolReplaceResult, UnifiedSearchResult};
 
 impl GraphBackend {
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
@@ -826,6 +826,143 @@ impl GraphBackend {
             dry_run,
             ast_verified: true,
             error: None,
+        })
+    }
+
+    /// High-performance literal/regex search across workspace with token budgeting.
+    pub fn search_literal(
+        &self,
+        query: &str,
+        path_prefix: Option<&str>,
+        is_regex: bool,
+        case_sensitive: bool,
+        token_budget: usize,
+        max_matches: usize,
+        context_lines: usize,
+    ) -> Result<LiteralSearchResult> {
+        let root_dir = if let Some(p) = path_prefix {
+            let resolved = self.resolve_target_path(p).unwrap_or_else(|| p.to_string());
+            std::path::PathBuf::from(resolved)
+        } else if let Some(root) = self.project_path() {
+            std::path::PathBuf::from(root)
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        };
+
+        let re = if is_regex {
+            regex::RegexBuilder::new(query)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .with_context(|| format!("Invalid regex pattern: '{query}'"))?
+        } else {
+            let escaped = regex::escape(query);
+            regex::RegexBuilder::new(&escaped)
+                .case_insensitive(!case_sensitive)
+                .build()
+                .with_context(|| format!("Failed to build literal matcher for '{query}'"))?
+        };
+
+        let mut matches = Vec::new();
+        let mut estimated_tokens: usize = 0;
+        let mut status = "success".to_string();
+        let mut total_scanned = 0;
+
+        let walker = walkdir::WalkDir::new(&root_dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    !crate::graph_backend::helpers::is_noise_dir(e.path())
+                } else {
+                    true
+                }
+            });
+
+        for entry in walker {
+            let Ok(entry) = entry else { continue };
+            if !entry.file_type().is_file() { continue };
+            let path = entry.path();
+
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc") {
+                    continue;
+                }
+            }
+
+            if let Ok(meta) = entry.metadata() {
+                if meta.len() > 512 * 1024 {
+                    continue;
+                }
+            }
+
+            total_scanned += 1;
+            let Ok(content) = std::fs::read_to_string(path) else { continue };
+            let lines: Vec<&str> = content.lines().collect();
+
+            for (idx, line) in lines.iter().enumerate() {
+                if re.is_match(line) {
+                    let line_number = idx + 1;
+                    let trimmed = line.trim();
+                    let snippet = if trimmed.len() > 250 {
+                        format!("{}...", &trimmed[..247])
+                    } else {
+                        trimmed.to_string()
+                    };
+                    let before_ctx = if context_lines > 0 {
+                        let s = idx.saturating_sub(context_lines);
+                        lines[s..idx].iter().map(|l| l.trim().to_string()).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let after_ctx = if context_lines > 0 {
+                        let e = (idx + 1 + context_lines).min(lines.len());
+                        lines[(idx + 1)..e].iter().map(|l| l.trim().to_string()).collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let snippet_token_cost = (snippet.len() + 10) / 4 + 1
+                        + before_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>()
+                        + after_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>();
+
+                    if estimated_tokens + snippet_token_cost > token_budget && !matches.is_empty() {
+                        status = "budget_reached".to_string();
+                        break;
+                    }
+
+                    estimated_tokens += snippet_token_cost;
+                    let rel_path = path
+                        .strip_prefix(&root_dir)
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+
+                    matches.push(LiteralMatch {
+                        file_path: rel_path,
+                        line_number,
+                        line_content: snippet,
+                        before_context: before_ctx,
+                        after_context: after_ctx,
+                    });
+
+                    if matches.len() >= max_matches {
+                        status = "max_matches_reached".to_string();
+                        break;
+                    }
+                }
+            }
+            if status != "success" {
+                break;
+            }
+        }
+
+        Ok(LiteralSearchResult {
+            status,
+            query: query.to_string(),
+            matches_count: matches.len(),
+            total_scanned_files: total_scanned,
+            estimated_tokens,
+            matches,
         })
     }
 }

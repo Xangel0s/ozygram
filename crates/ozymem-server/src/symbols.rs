@@ -248,3 +248,61 @@ pub fn handle_diagnostics_quick(
         is_error: None,
     })
 }
+
+pub fn handle_search_literal(
+    backend: &GraphBackend,
+    tool_call: &ToolCallParams,
+) -> Result<ToolCallResult> {
+    let query = tool_call
+        .arguments
+        .get("query")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
+    let path_prefix = tool_call
+        .arguments
+        .get("path_prefix")
+        .and_then(Value::as_str);
+    let is_regex = tool_call
+        .arguments
+        .get("is_regex")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let case_sensitive = tool_call
+        .arguments
+        .get("case_sensitive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let token_budget = tool_call
+        .arguments
+        .get("token_budget")
+        .and_then(Value::as_u64)
+        .unwrap_or(800) as usize;
+    let max_matches = tool_call
+        .arguments
+        .get("max_matches")
+        .and_then(Value::as_u64)
+        .unwrap_or(25) as usize;
+    let context_lines = tool_call
+        .arguments
+        .get("context_lines")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+
+    let res = backend.search_literal(
+        query,
+        path_prefix,
+        is_regex,
+        case_sensitive,
+        token_budget,
+        max_matches,
+        context_lines,
+    )?;
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: serde_json::to_string_pretty(&res)?,
+        }],
+        is_error: None,
+    })
+}

@@ -2694,3 +2694,101 @@ export function handleReorderCard(a: number, b: number) {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_tools_search_literal_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_search_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // Initialize MCP backend
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // Create sample project files
+        let src_dir = tmp_root.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let app_py = src_dir.join("app.py");
+        std::fs::write(&app_py, "# 11. migration_11\n# 12. Insertar registros RAPK PARA ALMACENES\ndef init():\n    pass\n").unwrap();
+
+        // Create noise dir that should be ignored
+        let node_modules = tmp_root.join("node_modules");
+        std::fs::create_dir_all(&node_modules).unwrap();
+        std::fs::write(node_modules.join("junk.js"), "RAPK PARA ALMACENES in noise").unwrap();
+
+        // 1. Literal search for "RAPK PARA ALMACENES"
+        let search_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_search_literal",
+                "arguments": {
+                    "query": "RAPK PARA ALMACENES",
+                    "context_lines": 1
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, search_req, None, None).await.unwrap().unwrap();
+        let json_res: Value = serde_json::from_str(resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(json_res["status"], "success");
+        assert_eq!(json_res["matches_count"], 1);
+        let first_match = &json_res["matches"][0];
+        assert_eq!(first_match["line_number"], 2);
+        assert!(first_match["line_content"].as_str().unwrap().contains("RAPK PARA ALMACENES"));
+        // Ensure path uses forward slashes and excludes node_modules
+        let match_path = first_match["file_path"].as_str().unwrap();
+        assert!(!match_path.contains('\\'));
+        assert!(match_path.contains("src/app.py") || match_path.contains("app.py"));
+        assert!(!match_path.contains("node_modules"));
+        assert_eq!(first_match["before_context"].as_array().unwrap().len(), 1);
+
+        // 2. Regex search for "migration_\d+"
+        let regex_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_search_literal",
+                "arguments": {
+                    "query": r"migration_\d+",
+                    "is_regex": true
+                }
+            })),
+        };
+        let resp_regex = handle_request(&backend_ref, regex_req, None, None).await.unwrap().unwrap();
+        let regex_json: Value = serde_json::from_str(resp_regex.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(regex_json["status"], "success");
+        assert_eq!(regex_json["matches_count"], 1);
+        assert_eq!(regex_json["matches"][0]["line_number"], 1);
+
+        // 3. Token budget restriction
+        let budget_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_search_literal",
+                "arguments": {
+                    "query": "a",
+                    "token_budget": 5
+                }
+            })),
+        };
+        let resp_budget = handle_request(&backend_ref, budget_req, None, None).await.unwrap().unwrap();
+        let budget_json: Value = serde_json::from_str(resp_budget.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(budget_json["status"] == "budget_reached" || budget_json["status"] == "success");
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

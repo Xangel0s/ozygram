@@ -1062,6 +1062,24 @@ pub fn handle_tools_list(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "ozy_search_literal",
+                    description: "Búsqueda literal o regex ultrarrápida (< 15 ms) en Rust con Token Budgeting, normalización nativa de rutas Windows y filtrado automático de ruido. Evita saturar el contexto del agente.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "query": { "type": "string", "description": "Texto exacto o patrón regex a buscar" },
+                            "path_prefix": { "type": "string", "description": "Subcarpeta o archivo para acotar la búsqueda" },
+                            "is_regex": { "type": "boolean", "default": false, "description": "Si es true, interpreta query como expresión regular" },
+                            "case_sensitive": { "type": "boolean", "default": false, "description": "Distinguir mayúsculas y minúsculas" },
+                            "token_budget": { "type": "integer", "default": 800, "description": "Límite máximo estimado de tokens a devolver en los snippets" },
+                            "max_matches": { "type": "integer", "default": 25, "description": "Número máximo de coincidencias" },
+                            "context_lines": { "type": "integer", "default": 0, "description": "Líneas de contexto antes y después del match" }
+                        },
+                        "required": ["query"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 100;

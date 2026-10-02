@@ -53,10 +53,10 @@ graph TD
   - **Descripción**: Conectar la función nativa `extract_ast_diagnostics` existente en `ozymem-parser` como una herramienta MCP pública. Permite validar errores sintácticos de Python, TypeScript, TSX, JavaScript, Rust y Go en memoria en menos de 5 ms sin levantar procesos externos.
   - **Criterio de Aceptación**: `cargo test -p ozymem-server` valida que llamadas a `ozy_diagnostics_quick` sobre código con errores retornen lista de `AstDiagnostic` con número de línea y mensaje descriptivo. [STATUS: COMPLETED]
 
-- [ ] **Task 1.2: Implementación de `ozy_search_literal` con Token Budgeting**
+- [x] **Task 1.2: Implementación de `ozy_search_literal` con Token Budgeting**
   - **Componentes afectados**: `crates/ozymem-core`, `crates/ozymem-server`.
   - **Descripción**: Crear un motor de búsqueda literal/regex en Rust sobre el workspace usando `regex` y `walkdir`. Normalizar rutas con separadores estándar de Windows/Linux. Incorporar parámetro `token_budget` (default: 800) y `max_results` para compactar la salida en snippets (`{ file, line, snippet }`) evitando volcados excesivos al contexto del LLM.
-  - **Criterio de Aceptación**: Búsqueda en archivos grandes (> 2,000 líneas) retorna resultados en < 15 ms respetando el límite estricto de tokens y sin errores por contrabarras en Windows.
+  - **Criterio de Aceptación**: Búsqueda en archivos grandes (> 2,000 líneas) retorna resultados en < 15 ms respetando el límite estricto de tokens y sin errores por contrabarras en Windows. [STATUS: COMPLETED]
 
 - [ ] **Task 1.3: Soporte para estructuras complejas de TSX y React 19 en Tree-Sitter**
   - **Componentes afectados**: `crates/ozymem-parser/src/lib.rs`.

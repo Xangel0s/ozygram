@@ -481,3 +481,22 @@ pub struct SymbolReplaceResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiteralMatch {
+    pub file_path: String,
+    pub line_number: usize,
+    pub line_content: String,
+    pub before_context: Vec<String>,
+    pub after_context: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiteralSearchResult {
+    pub status: String,
+    pub query: String,
+    pub matches_count: usize,
+    pub total_scanned_files: usize,
+    pub estimated_tokens: usize,
+    pub matches: Vec<LiteralMatch>,
+}
+
