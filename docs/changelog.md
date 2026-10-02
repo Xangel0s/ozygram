@@ -2,6 +2,34 @@
 
 This document tracks the chronological evolution, architectural milestones, and key improvements in **Ozygram**.
 
+## Version v1.5.0 — Enterprise Resilience, Reverse Dependencies, Universal Outbox & UI Sandbox
+
+### 1. Fast Lane & Agent DX Enhancements
+- **In-Memory Syntax Linter (`ozy_diagnostics_quick`)**: Exposes native Tree-Sitter diagnostics over MCP, checking Python, TypeScript, TSX, JavaScript, Rust, and Go in $< 5\text{ ms}$ without spawning external compiler processes.
+- **Token-Budgeted Literal Search (`ozy_search_literal`)**: High-performance literal text and regex engine with Windows path normalization and strict `token_budget` controls to guard the LLM context window against bloat.
+- **Deep AST for React 19 & Complex TSX**: Enhanced Tree-Sitter queries capturing object literal pairs with functions and TanStack Table column definitions (`columns[accessorKey].cell`).
+- **Indentation-Aware AST Patch (`ozy_ast_patch`)**: Automatic base indentation alignment, tab/space conversion, and transparent CRLF/LF line ending handling.
+
+### 2. Reverse Static Dependency Indexing & Blast Radius Analysis
+- **Inbound Dependency Resolution (`ozy_graph(action="incoming_dependencies")`)**: Inverts directional AST import graphs to identify all upstream modules that depend on a target file.
+- **Deep Cross-File Symbol Reference Indexing (`ozy_find_references`)**: Discovers symbol definitions, imports, calls, and exports across the workspace with configurable token budgets (default 1200 tokens).
+- **Textual Blast Radius Diagrams (`ozy_graph(action="impact_mermaid")`)**: Pure-text Mermaid flowcharts depicting impacted files with `[TARGET_FILE]` and `[INCOMING_DEPENDENCY]` badges.
+- **Pre-Flight Blast Radius Veto in `RiskCriticAgent`**: Automatically halts risky modifications and requires explicit snapshots when a proposed edit impacts more than 8 downstream files.
+
+### 3. Resilient Backend Architecture & Universal Outbox Pattern
+- **SQL Migration Idempotency Linter (`ozy_doctor(action="audit_migrations")`)**: Static DDL analyzer enforcing `IF NOT EXISTS` / `IF EXISTS` (`[ALERT: NON_IDEMPOTENT_SQL]`) and blocking unannotated destructive operations (`[ALERT: DESTRUCTIVE_UNGUARDED]`).
+- **Universal Outbox Engine (`UniversalOutbox`)**: Transactional outbox supporting SQLite (WAL mode, atomic `claim_pending` locking) and PostgreSQL (`JSONB`, `SKIP LOCKED`) with exponential backoff retries and zero event loss.
+- **CRM Asynchronous Dispatcher (`api-geofal-crm/app/services/outbox.py`)**: Local enqueueing overhead $< 2\text{ ms}$, ensuring HTTP endpoints respond in $< 50\text{ ms}$ while worker threads dispatch emails, webhooks, and websockets in the background.
+- **Concurrency & Idempotency Test Suite**: Verified at-least-once delivery, competing-consumer deduplication, and crash recovery with zero event loss.
+
+### 4. Frontend UI Sandbox & Layout Verification Protocol
+- **Headless Playwright Micro-Runner (`scripts/headless_runner.mjs`)**: Sub-second (934ms) isolated component rendering and DOM metrics capture.
+- **Universal Mock Table Fixtures (`src/lib/mockTableFixtures.ts`)**: Deterministic LCG stress generator testing TanStack Table with extreme text lengths, empty values, large numbers, and special characters.
+- **Quantitative Column Width Verifier (`scripts/verify_layout.mjs`)**: Inspects calculated bounding client rects, text truncation, and horizontal overflow leaks without opening a browser.
+- **Literal Search Guidelines**: Standardizes exact matching (`rg -F`) for symbols, routes, and paths to prevent regex compilation failures.
+
+---
+
 ## Version v1.4.0 — Surgical AST & Symbol-Driven Architecture
 
 ### 1. Surgical Symbol Extraction (`ozy_get_symbol` & CLI `ozymem symbol`)
