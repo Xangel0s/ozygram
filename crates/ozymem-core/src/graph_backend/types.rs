@@ -325,6 +325,14 @@ pub struct NeighborInfo {
     pub outgoing: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncomingDependencyDetail {
+    pub file_path: String,
+    pub depth: usize,
+    pub language: String,
+    pub function_count: i64,
+}
+
 impl fmt::Display for LessonEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let warning_tag = if let Some(ref warn) = self.freshness_warning {

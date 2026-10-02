@@ -145,6 +145,8 @@ fn resolve_python_target(
             if ancestor.join(".git").exists()
                 || ancestor.join("pyproject.toml").is_file()
                 || ancestor.join("setup.py").is_file()
+                || ancestor.join("requirements.txt").is_file()
+                || ancestor.join("Pipfile").is_file()
             {
                 break;
             }

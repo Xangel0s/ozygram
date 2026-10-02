@@ -54,11 +54,11 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_graph",
-                    description: "Unified architecture graph tool: summary, neighbors, impact, paths, and architecture report. Replaces graph_summary, graph_neighbors, analyze_impact, graph_path.",
+                    description: "Unified architecture graph tool: summary, neighbors, incoming (reverse dependencies), impact, paths, and architecture report. Replaces graph_summary, graph_neighbors, analyze_impact, graph_path.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["summary", "neighbors", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid"], "default": "summary" },
+                            "action": { "type": "string", "enum": ["summary", "neighbors", "incoming", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid"], "default": "summary" },
                             "file_path": { "type": "string" },
                             "module": { "type": "string" },
                             "entity_type": { "type": "string", "enum": ["file", "memory", "symbol", "trajectory_node"], "default": "file" },

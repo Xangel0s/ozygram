@@ -2847,3 +2847,65 @@ export function handleReorderCard(a: number, b: number) {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_ozy_graph_incoming_dependencies_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_incoming_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // Write database.py and service.py
+        let db_path = tmp_root.join("database.py");
+        std::fs::write(&db_path, "def get_db():\n    return 'conn'\n").unwrap();
+
+        let srv_path = tmp_root.join("service.py");
+        std::fs::write(&srv_path, "from database import get_db\n\ndef run():\n    return get_db()\n").unwrap();
+
+        // Initialize MCP backend (triggers full scan)
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // Ensure full_scan has completed synchronously for this test
+        {
+            let guard = backend_ref.lock().unwrap();
+            if let Some(ref gb) = *guard {
+                let _ = gb.full_scan(&tmp_root.to_string_lossy(), None);
+            }
+        }
+
+        // Call ozy_graph with action: "incoming"
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_graph",
+                "arguments": {
+                    "action": "incoming",
+                    "file_path": "database.py",
+                    "depth": 1
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, req, None, None).await.unwrap().unwrap();
+        let body: Value = serde_json::from_str(resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(body.is_array());
+        let arr = body.as_array().unwrap();
+        assert!(!arr.is_empty(), "Should find at least 1 incoming dependency for database.py");
+        assert!(arr.iter().any(|item| {
+            item["file_path"].as_str().unwrap().replace('\\', "/").ends_with("service.py") && item["depth"] == 1
+        }));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

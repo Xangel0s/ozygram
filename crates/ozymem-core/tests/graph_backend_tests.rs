@@ -2616,4 +2616,65 @@ fn test_exploration_node_rollback_file_snapshot() {
     assert!(!mermaid.contains("⚠️"));
 }
 
+#[test]
+fn test_incoming_dependencies_detailed_multi_hop_and_suffix() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    // Create a 3-tier Python dependency hierarchy:
+    // database.py <- user_service.py <- user_controller.py
+    let db_path = root.join("database.py");
+    std::fs::write(&db_path, "def get_db():\n    return 'db_conn'\n").unwrap();
+
+    let service_dir = root.join("services");
+    std::fs::create_dir_all(&service_dir).unwrap();
+    let service_path = service_dir.join("user_service.py");
+    std::fs::write(
+        &service_path,
+        "from database import get_db\n\ndef get_user():\n    db = get_db()\n    return {'user': 'test'}\n",
+    )
+    .unwrap();
+
+    let ctrl_dir = root.join("controllers");
+    std::fs::create_dir_all(&ctrl_dir).unwrap();
+    let ctrl_path = ctrl_dir.join("user_controller.py");
+    std::fs::write(
+        &ctrl_path,
+        "from services.user_service import get_user\n\ndef handle_request():\n    return get_user()\n",
+    )
+    .unwrap();
+
+    let backend = GraphBackend::open_for_project(root).unwrap();
+    let root_str = root.to_string_lossy().to_string();
+    backend.full_scan(&root_str, None).unwrap();
+
+    // 1. Query by base module name (database.py) using get_incoming_deps
+    let direct_incoming = backend.get_incoming_deps("database.py");
+    assert!(!direct_incoming.is_empty(), "get_incoming_deps('database.py') should find callers");
+    assert!(
+        direct_incoming.iter().any(|p| p.replace('\\', "/").ends_with("services/user_service.py")),
+        "services/user_service.py should be an incoming dependency of database.py"
+    );
+
+    // 2. Query multi-hop reverse dependencies (depth=2) on database.py
+    let multi_hop = backend.get_incoming_dependencies_detailed("database.py", 2);
+    assert!(
+        multi_hop.len() >= 2,
+        "Multi-hop incoming dependencies should find both direct and indirect callers: {:?}",
+        multi_hop
+    );
+
+    let depth1: Vec<_> = multi_hop.iter().filter(|d| d.depth == 1).collect();
+    let depth2: Vec<_> = multi_hop.iter().filter(|d| d.depth == 2).collect();
+    assert_eq!(depth1.len(), 1, "Expected 1 direct caller at depth 1");
+    assert!(depth1[0].file_path.replace('\\', "/").ends_with("services/user_service.py"));
+    assert_eq!(depth2.len(), 1, "Expected 1 transitive caller at depth 2");
+    assert!(depth2[0].file_path.replace('\\', "/").ends_with("controllers/user_controller.py"));
+
+    // 3. Query direct caller on user_service.py
+    let service_incoming = backend.get_incoming_dependencies_detailed("user_service.py", 1);
+    assert_eq!(service_incoming.len(), 1);
+    assert!(service_incoming[0].file_path.replace('\\', "/").ends_with("controllers/user_controller.py"));
+}
+
 

@@ -6,7 +6,7 @@ use petgraph::visit::Bfs;
 use rusqlite::params;
 use crate::GraphSummary;
 use crate::mcp_common::McpBackend;
-use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, LiteralMatch, LiteralSearchResult, SymbolReplaceResult, UnifiedSearchResult};
+use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, IncomingDependencyDetail, LiteralMatch, LiteralSearchResult, SymbolReplaceResult, UnifiedSearchResult};
 
 impl GraphBackend {
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
@@ -151,14 +151,152 @@ impl GraphBackend {
             .get(&resolved)
             .or_else(|| inner.file_index.get(&norm_path))
             .or_else(|| inner.file_index.get(file_path));
-        let Some(&idx) = start_opt else {
-            return vec![];
+
+        let mut results: Vec<String> = if let Some(&idx) = start_opt {
+            inner
+                .graph
+                .neighbors_directed(idx, petgraph::Direction::Incoming)
+                .filter_map(|n| inner.graph.node_weight(n).map(|w| w.path.clone()))
+                .collect()
+        } else {
+            vec![]
         };
-        inner
-            .graph
-            .neighbors_directed(idx, petgraph::Direction::Incoming)
-            .filter_map(|n| inner.graph.node_weight(n).map(|w| w.path.clone()))
-            .collect()
+
+        if results.is_empty() {
+            let file_name = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file_path);
+            let suffix_fwd = format!("%/{}", file_name.replace('\\', "/"));
+            let suffix_bwd = format!("%\\{}", file_name.replace('/', "\\"));
+
+            if let Ok(mut stmt) = inner.sqlite.prepare(
+                "SELECT DISTINCT origin_path FROM file_dependencies
+                 WHERE (destination_path = ?1 OR destination_path = ?2
+                        OR destination_path LIKE ?3 OR destination_path LIKE ?4)
+                   AND tenant_id = ?5 ORDER BY origin_path ASC",
+            ) {
+                if let Ok(rows) = stmt.query_map(
+                    params![&resolved, &norm_path, suffix_fwd, suffix_bwd, self.tenant_id],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    for r in rows.flatten() {
+                        if !results.contains(&r) {
+                            results.push(r);
+                        }
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    pub fn get_incoming_dependencies_detailed(
+        &self,
+        file_path: &str,
+        max_depth: usize,
+    ) -> Vec<IncomingDependencyDetail> {
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
+        let norm_path = crate::normalize_path(file_path);
+        let inner = self.inner.lock().unwrap();
+        let start_opt = inner
+            .file_index
+            .get(&resolved)
+            .or_else(|| inner.file_index.get(&norm_path))
+            .or_else(|| inner.file_index.get(file_path));
+
+        let Some(&start_idx) = start_opt else {
+            let mut fallback = Vec::new();
+            let file_name = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file_path);
+            let suffix_fwd = format!("%/{}", file_name.replace('\\', "/"));
+            let suffix_bwd = format!("%\\{}", file_name.replace('/', "\\"));
+
+            if let Ok(mut stmt) = inner.sqlite.prepare(
+                "SELECT DISTINCT origin_path FROM file_dependencies
+                 WHERE (destination_path = ?1 OR destination_path = ?2
+                        OR destination_path LIKE ?3 OR destination_path LIKE ?4)
+                   AND tenant_id = ?5 ORDER BY origin_path ASC",
+            ) {
+                if let Ok(rows) = stmt.query_map(
+                    params![&resolved, &norm_path, suffix_fwd, suffix_bwd, self.tenant_id],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    for r in rows.flatten() {
+                        fallback.push(IncomingDependencyDetail {
+                            file_path: r,
+                            depth: 1,
+                            language: "".to_string(),
+                            function_count: 0,
+                        });
+                    }
+                }
+            }
+            return fallback;
+        };
+
+        let mut results = Vec::new();
+        let mut visited: HashMap<NodeIndex, usize> = HashMap::new();
+        let mut queue = std::collections::VecDeque::new();
+        visited.insert(start_idx, 0);
+        queue.push_back((start_idx, 0));
+
+        while let Some((curr, d)) = queue.pop_front() {
+            if d >= max_depth {
+                continue;
+            }
+            for neighbor in inner.graph.neighbors_directed(curr, petgraph::Direction::Incoming) {
+                if !visited.contains_key(&neighbor) {
+                    visited.insert(neighbor, d + 1);
+                    queue.push_back((neighbor, d + 1));
+                    if let Some(w) = inner.graph.node_weight(neighbor) {
+                        results.push(IncomingDependencyDetail {
+                            file_path: w.path.clone(),
+                            depth: d + 1,
+                            language: w.language.clone(),
+                            function_count: w.function_count,
+                        });
+                    }
+                }
+            }
+        }
+
+        if results.is_empty() {
+            let file_name = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file_path);
+            let suffix_fwd = format!("%/{}", file_name.replace('\\', "/"));
+            let suffix_bwd = format!("%\\{}", file_name.replace('/', "\\"));
+
+            if let Ok(mut stmt) = inner.sqlite.prepare(
+                "SELECT DISTINCT origin_path FROM file_dependencies
+                 WHERE (destination_path = ?1 OR destination_path = ?2
+                        OR destination_path LIKE ?3 OR destination_path LIKE ?4)
+                   AND tenant_id = ?5 ORDER BY origin_path ASC",
+            ) {
+                if let Ok(rows) = stmt.query_map(
+                    params![&resolved, &norm_path, suffix_fwd, suffix_bwd, self.tenant_id],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    for r in rows.flatten() {
+                        results.push(IncomingDependencyDetail {
+                            file_path: r,
+                            depth: 1,
+                            language: "".to_string(),
+                            function_count: 0,
+                        });
+                    }
+                }
+            }
+        }
+
+        results
     }
 
     pub fn get_outgoing_deps(&self, file_path: &str) -> Vec<String> {

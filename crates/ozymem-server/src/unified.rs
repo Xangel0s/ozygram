@@ -248,6 +248,20 @@ pub async fn handle_unified_tool(
                             let info = backend.get_graph_neighbors(file_path).await?;
                             serde_json::to_string_pretty(&info)?
                         }
+                        "incoming" | "incoming_dependencies" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            let depth = tool_call
+                                .arguments
+                                .get("depth")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(1) as usize;
+                            let deps = backend.get_incoming_dependencies_detailed(file_path, depth);
+                            serde_json::to_string_pretty(&deps)?
+                        }
                         "impact" => {
                             let file_path = tool_call
                                 .arguments

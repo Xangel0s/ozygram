@@ -104,6 +104,9 @@ impl GraphBackend {
                 PRIMARY KEY (origin_path, destination_path, tenant_id)
             );
 
+            CREATE INDEX IF NOT EXISTS idx_file_deps_destination ON file_dependencies(destination_path, tenant_id);
+            CREATE INDEX IF NOT EXISTS idx_file_deps_origin ON file_dependencies(origin_path, tenant_id);
+
             CREATE TABLE IF NOT EXISTS lessons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL,

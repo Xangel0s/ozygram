@@ -73,10 +73,10 @@ graph TD
 ### [FASE 2: Grafo de Dependencias e Impacto (Blast Radius Analysis)]
 *Objetivo: Dotar al agente de capacidad predictiva para conocer qué archivos o símbolos se verán afectados antes de realizar una refactorización.*
 
-- [ ] **Task 2.1: Indexación de Grafo Inverso de Dependencias (`INCOMING_DEPENDENCY`)**
-  - **Componentes afectados**: `crates/ozymem-parser/src/dependency_resolution.rs`, `crates/ozymem-core/src/graph_backend`.
+- [x] **Task 2.1: Indexación de Grafo Inverso de Dependencias (`INCOMING_DEPENDENCY`)**
+  - **Componentes afectados**: `crates/ozymem-parser/src/dependency_resolution.rs`, `crates/ozymem-core/src/graph_backend`, `crates/ozymem-server`.
   - **Descripción**: Añadir a `GraphBackend` y al grafo `petgraph` la capacidad de consultar dependencias entrantes (`who imports this file?`). Indexar imports y exports bidireccionalmente durante el escaneo del workspace.
-  - **Criterio de Aceptación**: Consulta a un módulo base (ej. `database.py` o `types.ts`) lista con precisión todos los archivos dependientes en el workspace.
+  - **Criterio de Aceptación**: Consulta a un módulo base (ej. `database.py` o `types.ts`) lista con precisión todos los archivos dependientes en el workspace. [STATUS: COMPLETED]
 
 - [ ] **Task 2.2: Herramienta MCP `ozy_find_references`**
   - **Componentes afectados**: `crates/ozymem-server` (`src/symbols.rs`, `src/schemas.rs`, `src/dispatch.rs`).
