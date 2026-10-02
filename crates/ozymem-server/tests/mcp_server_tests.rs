@@ -2585,3 +2585,112 @@ export function handleReorderCard(a: number, b: number) {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_tools_diagnostics_quick_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_diag_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // Initialize MCP backend
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // 1. Test clean Python file on disk
+        let clean_py_path = tmp_root.join("clean.py");
+        std::fs::write(&clean_py_path, "def add(a: int, b: int) -> int:\n    return a + b\n").unwrap();
+
+        let diag_clean_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_diagnostics_quick",
+                "arguments": {
+                    "file_path": "clean.py"
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, diag_clean_req, None, None).await.unwrap().unwrap();
+        let diag_json: Value = serde_json::from_str(resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(diag_json["status"], "clean");
+        assert_eq!(diag_json["is_valid"], true);
+        assert_eq!(diag_json["error_count"], 0);
+
+        // 2. Test broken Python file on disk
+        let broken_py_path = tmp_root.join("broken.py");
+        std::fs::write(&broken_py_path, "def broken_func(:\n    return\n").unwrap();
+
+        let diag_broken_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_diagnostics_quick",
+                "arguments": {
+                    "file_path": "broken.py"
+                }
+            })),
+        };
+        let resp_broken = handle_request(&backend_ref, diag_broken_req, None, None).await.unwrap().unwrap();
+        let broken_json: Value = serde_json::from_str(resp_broken.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(broken_json["status"], "has_errors");
+        assert_eq!(broken_json["is_valid"], false);
+        assert!(broken_json["error_count"].as_u64().unwrap() > 0);
+        let diags = broken_json["diagnostics"].as_array().unwrap();
+        assert!(!diags.is_empty());
+        assert_eq!(diags[0]["line_number"], 1);
+
+        // 3. Test in-memory TSX syntax check (source_code without file on disk)
+        let in_memory_tsx = "export const Component = () => {\n    const x: number = 42;\n    return <div>{x}</div>;\n};\n";
+        let diag_mem_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_diagnostics_quick",
+                "arguments": {
+                    "file_path": "virtual_component.tsx",
+                    "source_code": in_memory_tsx
+                }
+            })),
+        };
+        let resp_mem = handle_request(&backend_ref, diag_mem_req, None, None).await.unwrap().unwrap();
+        let mem_json: Value = serde_json::from_str(resp_mem.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(mem_json["status"], "clean");
+        assert_eq!(mem_json["is_valid"], true);
+        assert_eq!(mem_json["error_count"], 0);
+
+        // 4. Test in-memory TSX broken syntax
+        let in_memory_broken_tsx = "export const BadComponent = () => {\n    const = ; \n};\n";
+        let diag_mem_broken = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_diagnostics_quick",
+                "arguments": {
+                    "file_path": "bad.tsx",
+                    "source_code": in_memory_broken_tsx
+                }
+            })),
+        };
+        let resp_mem_broken = handle_request(&backend_ref, diag_mem_broken, None, None).await.unwrap().unwrap();
+        let broken_mem_json: Value = serde_json::from_str(resp_mem_broken.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(broken_mem_json["status"], "has_errors");
+        assert_eq!(broken_mem_json["is_valid"], false);
+        assert!(broken_mem_json["error_count"].as_u64().unwrap() > 0);
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

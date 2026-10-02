@@ -1048,6 +1048,20 @@ pub fn handle_tools_list(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "ozy_diagnostics_quick",
+                    description: "Validación sintáctica ultra-rápida (< 5 ms) en memoria con Tree-Sitter para Python, TypeScript, TSX, JavaScript, Rust y Go. Detecta errores sintácticos y tokens inválidos directamente en un archivo o sobre código en memoria antes de escribir en disco.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo (usada para leer de disco o inferir el lenguaje)" },
+                            "source_code": { "type": "string", "description": "Opcional: código fuente en memoria para validar previo a guardar en disco" },
+                            "language": { "type": "string", "enum": ["python", "typescript", "tsx", "javascript", "rust", "go"], "description": "Opcional: lenguaje explícito si difiere de la extensión" }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 100;

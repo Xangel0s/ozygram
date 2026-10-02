@@ -308,6 +308,18 @@ pub async fn handle_request(
                         },
                     }
                 }
+                "ozy_diagnostics_quick" | "diagnostics_quick" | "check_syntax" => {
+                    match crate::symbols::handle_diagnostics_quick(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
+                }
                 _ => {
                     if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
                         return Ok(Some(res));
