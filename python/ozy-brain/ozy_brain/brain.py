@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from ozy_brain.agents.risk_critic import compute_blast_radius
 from ozy_brain.agents.supervisor import SupervisorAgent
 from ozy_brain.memory import consolidate_engrams, rank_memories, recall_deep
 from ozy_brain.patterns import detect_patterns, suggest_next_steps
@@ -149,19 +150,35 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
     impact = payload.get("impact") or []
     blast_radius = int(payload.get("blast_radius") or len(impact))
 
+    # --- Semantic blast radius via ozy_find_references ---
+    symbol = str(payload.get("symbol") or payload.get("target_symbol") or "")
+    impact_references: list[dict[str, Any]] = list(
+        payload.get("impact_references") or payload.get("references") or []
+    )
+    blast_report = compute_blast_radius(symbol, impact_references) if (symbol or impact_references) else None
+
+    # Merge semantic blast radius into the file-count blast radius
+    if blast_report:
+        blast_radius = max(blast_radius, blast_report.total_references)
+
     critical_keywords = ["schema", "auth", "migration", "core", "token", "secret", "config", "backend"]
     is_critical = any(kw in target_file.lower() for kw in critical_keywords) or any(
         isinstance(item, dict) and any(kw in str(item.get("file_path", "")).lower() for kw in critical_keywords)
         for item in impact
     )
+    # A high-blast-radius symbol alert also makes the change critical.
+    if blast_report and blast_report.alert_required:
+        is_critical = True
 
     snapshot_required = blast_radius >= 3 or is_critical
 
     plan_steps = [
-        f"[SIMULATION: ACTION PREVIEW] Simulación de acción sobre '{target_file or 'workspace'}'.",
+        f"[SIMULATION: ACTION PREVIEW] Simulacion de accion sobre '{target_file or 'workspace'}'.",
         f"[BLAST RADIUS] Radio de impacto calculado: {blast_radius} archivo(s) dependiente(s).",
     ]
-    if snapshot_required:
+    if blast_report and blast_report.alert_required:
+        plan_steps.append(blast_report.alert_text)
+    elif snapshot_required:
         plan_steps.append(
             "[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED] Se requiere snapshot previo en ozy_exploration para rollback seguro."
         )
@@ -180,32 +197,42 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
 
     risks = []
     if snapshot_required:
-        risks.append(f"Riesgo de regresión en cascada sobre {blast_radius} dependientes.")
+        risks.append(f"Riesgo de regresion en cascada sobre {blast_radius} dependientes.")
     if is_critical:
-        risks.append("Modificación directa sobre módulos críticos o contratos del sistema.")
+        risks.append("Modificacion directa sobre modulos criticos o contratos del sistema.")
+    if blast_report and blast_report.alert_required:
+        risks.append(
+            f"Simbolo '{symbol}' referenciado por {blast_report.critical_module_hits} "
+            "modulos criticos: riesgo de regresion arquitectural."
+        )
 
     recommendations = [
-        "Registrar nodo de exploración con rollback_snapshot antes de aplicar diffs."
+        "Registrar nodo de exploracion con rollback_snapshot antes de aplicar diffs."
         if snapshot_required
         else "Aplicar cambios de manera incremental.",
         "Verificar suite de pruebas sobre componentes dependientes.",
     ]
 
+    # Build semantic blast radius payload for structured_plan
+    blast_radius_analysis: dict[str, Any] = {
+        "total_blast_radius": blast_radius,
+        "risk_tier": "critical" if (blast_radius > 6 or is_critical) else ("high" if blast_radius >= 3 else "low"),
+        "high_severity_files": [i.get("file_path") for i in impact if isinstance(i, dict)][:5],
+    }
+    if blast_report:
+        blast_radius_analysis["symbol_blast_radius"] = blast_report.to_dict()
+
     return BrainResponse(
         action="simulate_action",
-        summary=f"Simulación de acción: blast radius {blast_radius} | Snapshot {'REQUERIDO' if snapshot_required else 'OPCIONAL'}.",
+        summary=f"Simulacion de accion: blast radius {blast_radius} | Snapshot {'REQUERIDO' if snapshot_required else 'OPCIONAL'}.",
         plan=plan_steps,
-        risks=risks or ["Riesgo mínimo bajo alcance actual."],
+        risks=risks or ["Riesgo minimo bajo alcance actual."],
         recommendations=recommendations,
         memory_updates=[f"Blast radius: {blast_radius}", f"Snapshot required: {snapshot_required}"],
         confidence=0.88,
         structured_plan={
             "target_file": target_file,
-            "blast_radius_analysis": {
-                "total_blast_radius": blast_radius,
-                "risk_tier": "critical" if (blast_radius > 6 or is_critical) else ("high" if blast_radius >= 3 else "low"),
-                "high_severity_files": [i.get("file_path") for i in impact if isinstance(i, dict)][:5],
-            },
+            "blast_radius_analysis": blast_radius_analysis,
             "exploration_guidance": {
                 "snapshot_required": snapshot_required,
                 "snapshot_alert": "[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]" if snapshot_required else "[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT]",

@@ -83,7 +83,7 @@ graph TD
   - **Descripción**: Exponer endpoint MCP que recibe `symbol_name` y `file_path` opcional, devolviendo todas las referencias, llamadas e importaciones del símbolo a lo largo del repositorio con snippet y número de línea.
   - **Criterio de Aceptación**: Pruebas unitarias confirman la resolución de referencias cruzadas entre archivos de Python y TypeScript. [STATUS: COMPLETED]
 
-- [ ] **Task 2.3: Integración de Blast Radius en `RiskCriticAgent` y `simulate_action`**
+- [x] **Task 2.3: Integración de Blast Radius en `RiskCriticAgent` y `simulate_action`**
   - **Componentes afectados**: `python/ozy-brain/ozy_brain/risk.py`, `python/ozy-brain/ozy_brain/brain.py`.
   - **Descripción**: Enlazar el cálculo de referencias con el motor de evaluación de riesgos. Si una modificación proyectada toca una función importada por más de 5 módulos críticos, emitir advertencia obligatoria `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]`.
   - **Criterio de Aceptación**: `pytest tests/test_risk.py` verifica la detección de alto radio de impacto y la recomendación de punto de restauración.
