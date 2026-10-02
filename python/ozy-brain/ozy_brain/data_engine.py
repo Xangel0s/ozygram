@@ -388,3 +388,146 @@ class DataEngine:
                     "risk_level": row[6],
                 }
         return None
+
+    @staticmethod
+    def audit_sql_content(sql_content: str, file_path: str = "") -> list[dict[str, Any]]:
+        """Static AST-like heuristic analyzer for SQL migration idempotency and safety.
+        
+        Rules:
+          1. DDL without IF NOT EXISTS / IF EXISTS -> [ALERT: NON_IDEMPOTENT_SQL]
+          2. Destructive DDL without '-- OZYMEM_ALLOW_DESTRUCTIVE' -> [ALERT: DESTRUCTIVE_UNGUARDED]
+        """
+        non_idempotent_verbs = [
+            "CREATE TABLE", "CREATE INDEX", "CREATE UNIQUE INDEX", "CREATE VIEW",
+            "CREATE SEQUENCE", "CREATE TYPE", "CREATE SCHEMA",
+            "DROP TABLE", "DROP INDEX", "DROP VIEW", "DROP SEQUENCE", "DROP TYPE", "DROP SCHEMA",
+        ]
+        destructive_verbs = ["DROP TABLE", "DROP SCHEMA", "TRUNCATE"]
+        override_token = "OZYMEM_ALLOW_DESTRUCTIVE"
+
+        lines = sql_content.splitlines()
+        findings: list[dict[str, Any]] = []
+        stmt_tokens: list[str] = []
+        stmt_first_line = 1
+        statements: list[tuple[int, str, str]] = []
+
+        for idx, raw in enumerate(lines):
+            line_no = idx + 1
+            comment_idx = raw.find("--")
+            effective = raw[:comment_idx].strip() if comment_idx != -1 else raw.strip()
+            if not effective:
+                continue
+            has_semi = ";" in effective
+            token = effective.rstrip(";").strip()
+            if not stmt_tokens and token:
+                stmt_first_line = line_no
+            if token:
+                stmt_tokens.append(token)
+            if has_semi and stmt_tokens:
+                raw_joined = " ".join(stmt_tokens)
+                upper = raw_joined.upper()
+                preview = raw_joined[:120]
+                statements.append((stmt_first_line, upper, preview))
+                stmt_tokens.clear()
+
+        if stmt_tokens:
+            raw_joined = " ".join(stmt_tokens)
+            upper = raw_joined.upper()
+            preview = raw_joined[:120]
+            statements.append((stmt_first_line, upper, preview))
+
+        for first_line, upper, preview in statements:
+            for verb in non_idempotent_verbs:
+                if verb in upper:
+                    guarded = "IF NOT EXISTS" in upper or "IF EXISTS" in upper
+                    if not guarded:
+                        findings.append({
+                            "file_path": file_path,
+                            "line_number": first_line,
+                            "statement_preview": preview,
+                            "severity": "NON_IDEMPOTENT_SQL",
+                            "badge": "[ALERT: NON_IDEMPOTENT_SQL]",
+                            "suggestion": "Add IF NOT EXISTS / IF EXISTS guard to make this statement safe to re-run.",
+                        })
+                        break
+
+            for verb in destructive_verbs:
+                if verb in upper:
+                    lookback_start = max(0, first_line - 4)
+                    lookback_end = min(len(lines), first_line)
+                    has_override = any(override_token in lines[i] for i in range(lookback_start, lookback_end))
+                    if not has_override:
+                        findings.append({
+                            "file_path": file_path,
+                            "line_number": first_line,
+                            "statement_preview": preview,
+                            "severity": "DESTRUCTIVE_UNGUARDED",
+                            "badge": "[ALERT: DESTRUCTIVE_UNGUARDED]",
+                            "suggestion": f"Destructive DDL requires '-- {override_token}' on the preceding line.",
+                        })
+                    break
+
+        return findings
+
+    def audit_migrations(self, migrations_dir: str | Path | None = None) -> dict[str, Any]:
+        """Audits SQL migration files in the project or given directory."""
+        target_dir = Path(migrations_dir) if migrations_dir else self.project_path
+        if not target_dir.exists():
+            return {
+                "status": "[STATUS: CLEAN]",
+                "files_scanned": 0,
+                "findings": [],
+                "report": "[STATUS: IDEMPOTENT] No files scanned.",
+            }
+
+        sql_files: list[Path] = []
+        for p in target_dir.rglob("*.sql"):
+            parts = p.parts
+            if any(part.startswith(".") or part in ("node_modules", "target", "__pycache__") for part in parts):
+                continue
+            sql_files.append(p)
+
+        all_findings: list[dict[str, Any]] = []
+        for sql_file in sql_files:
+            try:
+                content = sql_file.read_text(encoding="utf-8", errors="replace")
+                fp = str(sql_file).replace("\\", "/")
+                all_findings.extend(self.audit_sql_content(content, fp))
+            except Exception:
+                continue
+
+        non_idempotent = [f for f in all_findings if f["severity"] == "NON_IDEMPOTENT_SQL"]
+        destructive = [f for f in all_findings if f["severity"] == "DESTRUCTIVE_UNGUARDED"]
+
+        lines = [
+            "# [AUDIT: SQL_MIGRATIONS]",
+            "",
+            "Mode: preview_safe (no files modified)",
+            f"Files scanned: {len(sql_files)}",
+            "",
+        ]
+        if not all_findings:
+            lines.append("[STATUS: IDEMPOTENT] All scanned SQL migration files are idempotent and contain no unguarded destructive statements.")
+        else:
+            lines.append(f"[STATS] non_idempotent={len(non_idempotent)} destructive_unguarded={len(destructive)}")
+            lines.append("")
+            if non_idempotent:
+                lines.append("## [ALERT: NON_IDEMPOTENT_SQL] Missing IF NOT EXISTS / IF EXISTS\n")
+                for f in non_idempotent:
+                    lines.append(f"- {f['file_path']}:L{f['line_number']}")
+                    lines.append(f"  Statement: {f['statement_preview']}")
+                    lines.append(f"  Suggestion: {f['suggestion']}\n")
+            if destructive:
+                lines.append("## [ALERT: DESTRUCTIVE_UNGUARDED] Destructive Statements Without Override\n")
+                for f in destructive:
+                    lines.append(f"- {f['file_path']}:L{f['line_number']}")
+                    lines.append(f"  Statement: {f['statement_preview']}")
+                    lines.append(f"  Suggestion: {f['suggestion']}")
+                    lines.append(f"  Override: Add '-- OZYMEM_ALLOW_DESTRUCTIVE' on the preceding line.\n")
+
+        return {
+            "status": "[STATUS: ALERT]" if all_findings else "[STATUS: IDEMPOTENT]",
+            "files_scanned": len(sql_files),
+            "findings": all_findings,
+            "report": "\n".join(lines),
+        }

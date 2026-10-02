@@ -90,12 +90,14 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_doctor",
-                    description: "Ozymem/Ozygram system doctor: DB, registry, projects, memories, embeddings, watchers, indexes, and preview-safe repair suggestions.",
+                    description: "Ozymem/Ozygram system doctor: DB, registry, projects, memories, embeddings, watchers, indexes, and preview-safe repair suggestions. Use action='audit_migrations' to lint SQL migration files for idempotency ([ALERT: NON_IDEMPOTENT_SQL]) and unguarded destructive statements ([ALERT: DESTRUCTIVE_UNGUARDED]).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
+                            "action": { "type": "string", "enum": ["status", "audit_migrations"], "default": "status", "description": "audit_migrations: lint .sql files for idempotency and destructive statement guards" },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
-                            "include_projects": { "type": "boolean", "default": true }
+                            "include_projects": { "type": "boolean", "default": true },
+                            "migrations_path": { "type": "string", "description": "Optional directory to scan for .sql files (default: project root)" }
                         },
                         "additionalProperties": false
                     }),

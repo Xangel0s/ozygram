@@ -1,6 +1,7 @@
 pub mod state;
 pub mod formatters;
 pub mod doctor;
+pub mod sql_linter;
 pub mod skills;
 pub mod brain;
 pub mod projects;

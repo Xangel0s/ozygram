@@ -98,7 +98,7 @@ graph TD
 ### [FASE 3: Resiliencia de Backend (Migraciones SQL y Outbox Pattern Reutilizable)]
 *Objetivo: Estandarizar la seguridad de base de datos y la gestión de eventos asíncronos para cualquier backend de microservicios o CRM.*
 
-- [ ] **Task 3.1: Linter AST de Migraciones SQL Idempotentes**
+- [x] **Task 3.1: Linter AST de Migraciones SQL Idempotentes**
   - **Componentes afectados**: `crates/ozymem-server/src/doctor.rs`, `python/ozy-brain/ozy_brain/data_engine.py`.
   - **Descripción**: Crear analizador estático para sentencias SQL de migración que verifique la presencia de cláusulas idempotentes (`IF NOT EXISTS`, `IF EXISTS`) y bloquee sentencias destructivas (`DROP TABLE`, `TRUNCATE`) sin indicador explícito de override.
   - **Criterio de Aceptación**: Integración en `ozy_doctor(action="audit_migrations")` detecta scripts no idempotentes y emite advertencia `[ALERT: NON_IDEMPOTENT_SQL]`.

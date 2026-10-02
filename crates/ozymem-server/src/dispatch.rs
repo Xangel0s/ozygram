@@ -219,7 +219,29 @@ pub async fn handle_request(
                 "ozy_verify_diff" | "verify_diff" => {
                     handle_verify_diff(backend, &tool_call)?
                 }
-                "ozy_doctor" => handle_ozy_doctor(Some(backend), &tool_call).await?,
+                "ozy_doctor" => {
+                    let action = tool_call
+                        .arguments
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("status");
+                    if action == "audit_migrations" {
+                        let migrations_path = tool_call
+                            .arguments
+                            .get("migrations_path")
+                            .and_then(Value::as_str);
+                        let report = crate::sql_linter::handle_audit_migrations(
+                            Some(backend),
+                            migrations_path,
+                        )?;
+                        ToolCallResult {
+                            content: vec![ContentBlock { kind: "text", text: report }],
+                            is_error: None,
+                        }
+                    } else {
+                        handle_ozy_doctor(Some(backend), &tool_call).await?
+                    }
+                }
                 "ozy_brain" => {
                     let action = tool_call
                         .arguments

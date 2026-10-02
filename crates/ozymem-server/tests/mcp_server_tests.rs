@@ -2971,3 +2971,49 @@ export function handleReorderCard(a: number, b: number) {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_ozy_doctor_audit_migrations_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_doctor_sql_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let mig_dir = tmp_root.join("migrations");
+        std::fs::create_dir_all(&mig_dir).unwrap();
+
+        let mig_bad = mig_dir.join("001_bad.sql");
+        std::fs::write(&mig_bad, "CREATE TABLE users (id INT PRIMARY KEY);\n").unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "audit_migrations",
+                    "migrations_path": mig_dir.to_string_lossy()
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, req, None, None).await.unwrap().unwrap();
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text.contains("[AUDIT: SQL_MIGRATIONS]"));
+        assert!(text.contains("[ALERT: NON_IDEMPOTENT_SQL]"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
