@@ -341,6 +341,21 @@ pub async fn handle_unified_tool(
                             let module = tool_call.arguments.get("module").and_then(Value::as_str);
                             backend.render_mermaid_memory_graph(module)?
                         }
+                        "impact_mermaid" => {
+                            let file_path = tool_call
+                                .arguments
+                                .get("file_path")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing file_path for impact_mermaid"))?;
+                            let max_hops = tool_call
+                                .arguments
+                                .get("max_hops")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(2) as usize;
+                            let diagram = backend.render_mermaid_impact_graph(file_path, max_hops)?;
+                            // Wrap in markdown fences for immediate rendering in MCP clients
+                            format!("```mermaid\n{}\n```", diagram)
+                        }
                         _ => {
                             let subpath = tool_call
                                 .arguments

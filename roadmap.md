@@ -88,7 +88,7 @@ graph TD
   - **Descripción**: Enlazar el cálculo de referencias con el motor de evaluación de riesgos. Si una modificación proyectada toca una función importada por más de 5 módulos críticos, emitir advertencia obligatoria `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]`.
   - **Criterio de Aceptación**: `pytest tests/test_risk.py` verifica la detección de alto radio de impacto y la recomendación de punto de restauración.
 
-- [ ] **Task 2.4: Renderizado de Diagramas de Impacto en Mermaid Textual**
+- [x] **Task 2.4: Renderizado de Diagramas de Impacto en Mermaid Textual**
   - **Componentes afectados**: `crates/ozymem-server/src/graph.rs`.
   - **Descripción**: Generar diagramas Mermaid de impacto con etiquetas textuales conformes al estándar Zero-Emoji (`[CALLS]`, `[IMPACTED]`, `[STATUS: ACTIVE]`) mostrando el subgrafo de dependencias hasta 2 saltos.
   - **Criterio de Aceptación**: Salida formateada en Markdown renderizable en clientes compatibles sin caracteres especiales ni emojis.

@@ -2718,3 +2718,118 @@ fn test_find_symbol_references_python_and_ts() {
 }
 
 
+// ---------------------------------------------------------------------------
+// Task 2.4: render_mermaid_impact_graph tests
+// ---------------------------------------------------------------------------
+
+/// Helper: create a minimal indexed project with three files:
+///   core.py -> utils.py -> helper.py  (outgoing)
+///   consumer.py -> core.py            (incoming)
+fn setup_impact_graph_project() -> (TempDir, GraphBackend) {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+
+    let core     = root.join("core.py");
+    let utils    = root.join("utils.py");
+    let helper   = root.join("helper.py");
+    let consumer = root.join("consumer.py");
+
+    std::fs::write(&core,     "from utils import parse\nclass Core: pass\n").unwrap();
+    std::fs::write(&utils,    "from helper import fmt\ndef parse(): pass\n").unwrap();
+    std::fs::write(&helper,   "def fmt(): pass\n").unwrap();
+    std::fs::write(&consumer, "from core import Core\nobj = Core()\n").unwrap();
+
+    let backend = GraphBackend::open_for_project(root).unwrap();
+    backend.full_scan(&root.to_string_lossy(), None).unwrap();
+    (dir, backend)
+}
+
+#[test]
+fn test_render_mermaid_impact_graph_structure() {
+    let (_dir, backend) = setup_impact_graph_project();
+    let root = _dir.path().to_string_lossy().to_string();
+    let core_path = format!("{}/core.py", root).replace('\\', "/");
+
+    let result = backend.render_mermaid_impact_graph(&core_path, 2);
+    assert!(result.is_ok(), "render_mermaid_impact_graph must not fail");
+    let diagram = result.unwrap();
+
+    // Header
+    assert!(diagram.starts_with("graph TD\n"), "Must start with 'graph TD\\n'");
+
+    // Focal node badge
+    assert!(diagram.contains("[FOCAL]"), "Must contain [FOCAL] label");
+
+    // Stats footer
+    assert!(diagram.contains("%% [STATS]"), "Must contain %% [STATS] footer comment");
+
+    // Zero-Emoji: check common emoji unicode ranges
+    let has_emoji = diagram.chars().any(|c| {
+        let cp = c as u32;
+        (0x1F600..=0x1F64F).contains(&cp)
+            || (0x1F300..=0x1F5FF).contains(&cp)
+            || (0x1F680..=0x1F6FF).contains(&cp)
+            || (0x2600..=0x26FF).contains(&cp)
+    });
+    assert!(!has_emoji, "Zero-Emoji: no emoji characters allowed in diagram");
+
+    // At least one Mermaid edge arrow present
+    assert!(diagram.contains("-->"), "Must contain at least one edge arrow '-->'");
+}
+
+#[test]
+fn test_render_mermaid_impact_graph_unknown_file_is_valid_mermaid() {
+    let dir = TempDir::new().unwrap();
+    let backend = GraphBackend::open_for_project(dir.path()).unwrap();
+
+    let result = backend.render_mermaid_impact_graph("nonexistent/module.py", 2);
+    assert!(result.is_ok(), "Must not error on unindexed file");
+    let diagram = result.unwrap();
+    assert!(diagram.starts_with("graph TD\n"), "Must always produce valid Mermaid header");
+    assert!(
+        diagram.contains("[INFO: NO_DEPENDENCIES_INDEXED]") || diagram.contains("[FOCAL]"),
+        "Must include NO_DEPENDENCIES_INDEXED or FOCAL badge"
+    );
+}
+
+#[test]
+fn test_render_mermaid_impact_graph_node_ids_have_no_path_separators() {
+    let (_dir, backend) = setup_impact_graph_project();
+    let root = _dir.path().to_string_lossy().to_string();
+    let core_path = format!("{}/core.py", root).replace('\\', "/");
+
+    let diagram = backend.render_mermaid_impact_graph(&core_path, 2).unwrap();
+
+    for line in diagram.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("%%") || trimmed.contains("-->") || trimmed.is_empty() {
+            continue;
+        }
+        // Extract node ID (text before first '[' or '{')
+        let id_end = trimmed.find(|c| c == '[' || c == '{').unwrap_or(trimmed.len());
+        let node_id = trimmed[..id_end].trim();
+        if node_id.is_empty() { continue; }
+        assert!(
+            !node_id.contains('/') && !node_id.contains('\\') && !node_id.contains('.'),
+            "Node ID '{}' must not contain path separators or dots", node_id
+        );
+    }
+}
+
+#[test]
+fn test_render_mermaid_impact_graph_max_hops_1_is_valid() {
+    let (_dir, backend) = setup_impact_graph_project();
+    let root = _dir.path().to_string_lossy().to_string();
+    let core_path = format!("{}/core.py", root).replace('\\', "/");
+
+    let result = backend.render_mermaid_impact_graph(&core_path, 1);
+    assert!(result.is_ok(), "max_hops=1 must not fail");
+    let diagram = result.unwrap();
+    assert!(diagram.starts_with("graph TD\n"));
+    assert!(diagram.contains("%% [STATS]"));
+    // Indirect edges only appear when max_hops >= 2
+    assert!(
+        !diagram.contains("[IMPORTS_INDIRECT]"),
+        "With max_hops=1 no [IMPORTS_INDIRECT] edges expected"
+    );
+}

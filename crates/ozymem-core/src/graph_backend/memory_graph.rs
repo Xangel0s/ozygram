@@ -784,4 +784,160 @@ impl GraphBackend {
 
         Ok(mermaid)
     }
+
+    /// Render a dependency-impact Mermaid diagram for `file_path`.
+    ///
+    /// Produces a Zero-Emoji compliant textual `graph TD` showing:
+    /// - The **focal file** (hexagon node, labelled `[FOCAL]`)
+    /// - **Outgoing deps** (files the focal imports) up to `max_hops` — labelled `[IMPORTS]`
+    /// - **Incoming deps** (files that import the focal) up to `max_hops` — labelled `[IMPACTED]`
+    ///
+    /// Severity badges on impacted nodes: `[STATUS: BREAKING]`, `[STATUS: WARNING]`,
+    /// `[STATUS: ACTIVE]` — determined from `ImpactEntry.severity`.
+    ///
+    /// All node labels are capped at 50 chars and stripped of quotes/newlines to
+    /// remain valid Mermaid syntax.  No emojis are used anywhere (Zero-Emoji standard).
+    pub fn render_mermaid_impact_graph(
+        &self,
+        file_path: &str,
+        max_hops: usize,
+    ) -> Result<String> {
+        // ---------------------------------------------------------------
+        // 1. Collect outgoing (what file_path imports) via analyze_impact
+        // ---------------------------------------------------------------
+        let outgoing: Vec<crate::graph_backend::types::ImpactEntry> =
+            self.analyze_impact(file_path, max_hops as u32);
+
+        // ---------------------------------------------------------------
+        // 2. Collect incoming (who imports file_path) via BFS reverse
+        // ---------------------------------------------------------------
+        let incoming: Vec<crate::graph_backend::types::IncomingDependencyDetail> =
+            self.get_incoming_dependencies_detailed(file_path, max_hops);
+
+        // ---------------------------------------------------------------
+        // 3. Build safe node IDs (Mermaid does not accept slashes / dots)
+        // ---------------------------------------------------------------
+        let sanitize_id = |s: &str| -> String {
+            s.replace(['/', '\\', '.', '-', ' ', ':'], "_")
+                .trim_matches('_')
+                .to_string()
+        };
+
+        let sanitize_label = |s: &str, max: usize| -> String {
+            let cleaned = s.replace('"', "'").replace(['\n', '\r'], " ");
+            if cleaned.len() > max {
+                format!("{}...", &cleaned[..max.saturating_sub(3)])
+            } else {
+                cleaned
+            }
+        };
+
+        // Derive a short display name from the full path (last 2 path segments)
+        let short_name = |path: &str| -> String {
+            let segs: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+            match segs.len() {
+                0 => path.to_string(),
+                1 => segs[0].to_string(),
+                n => format!("{}/{}", segs[n - 2], segs[n - 1]),
+            }
+        };
+
+        let focal_id = format!("focal_{}", sanitize_id(file_path));
+        let focal_label = sanitize_label(&short_name(file_path), 50);
+
+        let mut mermaid = String::from("graph TD\n");
+        let mut declared: HashSet<String> = HashSet::new();
+        let mut edges: Vec<String> = Vec::new();
+
+        // ---------------------------------------------------------------
+        // 4. Focal node — hexagon shape {{...}}
+        // ---------------------------------------------------------------
+        mermaid.push_str(&format!(
+            "    {}{{\"[FOCAL] {}\"}}\n",
+            focal_id, focal_label
+        ));
+        declared.insert(focal_id.clone());
+
+        // ---------------------------------------------------------------
+        // 5. Outgoing nodes (what focal imports) — rectangle shape [...]
+        //    Edge: focal -->[IMPORTS]--> dep
+        // ---------------------------------------------------------------
+        for entry in &outgoing {
+            let dep_id = format!("out_{}", sanitize_id(&entry.file_path));
+            let dep_label = sanitize_label(&short_name(&entry.file_path), 50);
+
+            let severity_badge = match entry.severity.as_str() {
+                "breaking" => "[STATUS: BREAKING]",
+                "warning"  => "[STATUS: WARNING]",
+                _          => "[STATUS: ACTIVE]",
+            };
+
+            if !declared.contains(&dep_id) {
+                mermaid.push_str(&format!(
+                    "    {}[\"{} {}\"]\n",
+                    dep_id, severity_badge, dep_label
+                ));
+                declared.insert(dep_id.clone());
+            }
+
+            let hop_tag = if entry.depth <= 1 { "[IMPORTS]" } else { "[IMPORTS_INDIRECT]" };
+            edges.push(format!(
+                "    {} -->|{}| {}\n",
+                focal_id, hop_tag, dep_id
+            ));
+        }
+
+        // ---------------------------------------------------------------
+        // 6. Incoming nodes (who imports focal) — diamond shape{...}
+        //    Edge: importer -->[IMPACTED]--> focal
+        // ---------------------------------------------------------------
+        for dep in &incoming {
+            let dep_id = format!("in_{}", sanitize_id(&dep.file_path));
+            let dep_label = sanitize_label(&short_name(&dep.file_path), 50);
+
+            if !declared.contains(&dep_id) {
+                mermaid.push_str(&format!(
+                    "    {}{{\"[IMPORTER] {}\"}}\n",
+                    dep_id, dep_label
+                ));
+                declared.insert(dep_id.clone());
+            }
+
+            let hop_tag = if dep.depth <= 1 { "[IMPACTED]" } else { "[IMPACTED_INDIRECT]" };
+            edges.push(format!(
+                "    {} -->|{}| {}\n",
+                dep_id, hop_tag, focal_id
+            ));
+        }
+
+        // ---------------------------------------------------------------
+        // 7. Write edges (after all nodes so Mermaid parses cleanly)
+        // ---------------------------------------------------------------
+        for edge in &edges {
+            mermaid.push_str(edge);
+        }
+
+        // ---------------------------------------------------------------
+        // 8. Empty guard
+        // ---------------------------------------------------------------
+        if declared.len() <= 1 {
+            mermaid.push_str(&format!(
+                "    {}[\"[INFO: NO_DEPENDENCIES_INDEXED] No dependency data found for this file.\"]\n",
+                format!("empty_{}", sanitize_id(file_path))
+            ));
+        }
+
+        // ---------------------------------------------------------------
+        // 9. Stats footer as a Mermaid comment
+        // ---------------------------------------------------------------
+        mermaid.push_str(&format!(
+            "%% [STATS] focal=1 outgoing={} incoming={} max_hops={}\n",
+            outgoing.len(),
+            incoming.len(),
+            max_hops,
+        ));
+
+        Ok(mermaid)
+    }
 }
+

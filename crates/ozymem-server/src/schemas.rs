@@ -54,11 +54,11 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_graph",
-                    description: "Unified architecture graph tool: summary, neighbors, incoming (reverse dependencies), impact, paths, and architecture report. Replaces graph_summary, graph_neighbors, analyze_impact, graph_path.",
+                    description: "Unified architecture graph tool: summary, neighbors, incoming (reverse dependencies), impact, paths, impact_mermaid (dependency impact diagram in Mermaid), and architecture report. Replaces graph_summary, graph_neighbors, analyze_impact, graph_path.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["summary", "neighbors", "incoming", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid"], "default": "summary" },
+                            "action": { "type": "string", "enum": ["summary", "neighbors", "incoming", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid", "impact_mermaid"], "default": "summary" },
                             "file_path": { "type": "string" },
                             "module": { "type": "string" },
                             "entity_type": { "type": "string", "enum": ["file", "memory", "symbol", "trajectory_node"], "default": "file" },
@@ -67,9 +67,9 @@ pub fn handle_tools_list(
                             "to": { "type": "string" },
                             "depth": { "type": "integer", "default": 2 },
                             "max_depth": { "type": "integer", "default": 2 },
+                            "max_hops": { "type": "integer", "default": 2, "description": "Max dependency hops for impact_mermaid diagram (1 or 2 recommended)" },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
                             "max_paths": { "type": "integer", "default": 1 },
-                            "max_hops": { "type": "integer", "default": 10 }
                         },
                         "additionalProperties": false
                     }),
