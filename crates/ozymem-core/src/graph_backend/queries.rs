@@ -704,7 +704,16 @@ impl GraphBackend {
         let newline = if is_crlf { "\r\n" } else { "\n" };
 
         let map = ozymem_parser::parse_source(&resolved, lang, &source)?;
-        let Some(target_fn) = map.functions.iter().find(|f| f.name == symbol_name || f.name.eq_ignore_ascii_case(symbol_name)) else {
+        let Some(target_fn) = map
+            .functions
+            .iter()
+            .find(|f| f.name == symbol_name || f.name.eq_ignore_ascii_case(symbol_name))
+            .or_else(|| {
+                map.functions.iter().find(|f| {
+                    f.name.ends_with(&format!(".{symbol_name}"))
+                        || (f.name.starts_with(&format!("{symbol_name}.")) && symbol_name != "cell")
+                })
+            }) else {
             let available: Vec<String> = map.functions.iter().map(|f| format!("{} ({})", f.name, f.kind.as_str())).collect();
             return Ok(SymbolReplaceResult {
                 success: false,

@@ -204,6 +204,16 @@ impl SupportedLanguage {
                 (method_definition
                     name: (property_identifier) @symbol.name
                 ) @symbol.definition
+
+                (pair
+                    key: (property_identifier) @symbol.name
+                    value: [(arrow_function) (function_expression)]
+                ) @symbol.definition
+
+                (pair
+                    key: (string) @symbol.name
+                    value: [(arrow_function) (function_expression)]
+                ) @symbol.definition
                 "#,
             ),
             SupportedLanguage::TypeScript | SupportedLanguage::TypeScriptReact => Some(
@@ -231,6 +241,16 @@ impl SupportedLanguage {
 
                 (method_definition
                     name: (property_identifier) @symbol.name
+                ) @symbol.definition
+
+                (pair
+                    key: (property_identifier) @symbol.name
+                    value: [(arrow_function) (function_expression)]
+                ) @symbol.definition
+
+                (pair
+                    key: (string) @symbol.name
+                    value: [(arrow_function) (function_expression)]
                 ) @symbol.definition
                 "#,
             ),
@@ -430,6 +450,44 @@ pub fn parse_python_source(
     parse_source(file_path, SupportedLanguage::Python, source_code)
 }
 
+fn resolve_symbol_name_with_context(
+    name: &str,
+    def_node: &tree_sitter::Node,
+    source_bytes: &[u8],
+) -> String {
+    let clean_name = name.trim_matches(|c| c == '\'' || c == '"');
+    if def_node.kind() != "pair" {
+        return clean_name.to_string();
+    }
+
+    if let Some(parent) = def_node.parent() {
+        if parent.kind() == "object" {
+            let mut cursor = parent.walk();
+            for child in parent.children(&mut cursor) {
+                if child.kind() == "pair" && child.id() != def_node.id() {
+                    if let Some(key_node) = child.child_by_field_name("key") {
+                        if let Ok(key_str) = key_node.utf8_text(source_bytes) {
+                            let k = key_str.trim_matches(|c| c == '\'' || c == '"');
+                            if matches!(k, "accessorKey" | "id" | "header" | "name") {
+                                if let Some(val_node) = child.child_by_field_name("value") {
+                                    if let Ok(val_str) = val_node.utf8_text(source_bytes) {
+                                        let v = val_str.trim_matches(|c| c == '\'' || c == '"').trim();
+                                        if !v.is_empty() && v.len() < 50 {
+                                            return format!("{v}.{clean_name}");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    clean_name.to_string()
+}
+
 pub fn parse_with_tree_sitter(
     file_path: &str,
     language: SupportedLanguage,
@@ -457,6 +515,7 @@ pub fn parse_with_tree_sitter(
         let mut kind = None;
         let mut start_line = None;
         let mut end_line = None;
+        let mut def_node_opt = None;
 
         for capture in match_result.captures.iter() {
             let capture_name = query.capture_names()[capture.index as usize];
@@ -469,6 +528,7 @@ pub fn parse_with_tree_sitter(
                 }
                 "symbol.definition" => {
                     let node_kind = capture.node.kind();
+                    def_node_opt = Some(capture.node);
                     kind = match node_kind {
                         "interface_declaration" => Some(SymbolKind::Interface),
                         "type_alias_declaration" => Some(SymbolKind::TypeAlias),
@@ -477,7 +537,7 @@ pub fn parse_with_tree_sitter(
                             Some(SymbolKind::Class)
                         }
                         "function_definition" | "function_declaration" | "function_item"
-                        | "variable_declarator" | "method_definition" => {
+                        | "variable_declarator" | "method_definition" | "pair" => {
                             Some(SymbolKind::Function)
                         }
                         _ => continue,
@@ -489,22 +549,34 @@ pub fn parse_with_tree_sitter(
             }
         }
 
-        if let (Some(name), Some(mut kind), Some(start_line), Some(end_line)) =
+        if let (Some(raw_name), Some(mut kind), Some(start_line), Some(end_line)) =
             (name, kind, start_line, end_line)
         {
+            let name = if let Some(def_node) = def_node_opt {
+                resolve_symbol_name_with_context(&raw_name, &def_node, source_code.as_bytes())
+            } else {
+                raw_name.trim_matches(|c| c == '\'' || c == '"').to_string()
+            };
+
             if kind == SymbolKind::Function {
+                let node_text = def_node_opt
+                    .and_then(|n| n.utf8_text(source_code.as_bytes()).ok())
+                    .unwrap_or("");
+                let has_jsx = node_text.contains("<") && (node_text.contains("/>") || node_text.contains("</"));
+
                 if name.starts_with("use")
                     && name.len() > 3
                     && name.chars().nth(3).map_or(false, |c| c.is_ascii_uppercase())
                 {
                     kind = SymbolKind::ReactHook;
-                } else if matches!(
-                    language,
-                    SupportedLanguage::JavaScript
-                        | SupportedLanguage::TypeScript
-                        | SupportedLanguage::TypeScriptReact
-                ) && name.chars().next().map_or(false, |c| c.is_ascii_uppercase())
-                    && name.chars().any(|c| c.is_ascii_lowercase())
+                } else if has_jsx
+                    || (matches!(
+                        language,
+                        SupportedLanguage::JavaScript
+                            | SupportedLanguage::TypeScript
+                            | SupportedLanguage::TypeScriptReact
+                    ) && name.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                        && name.chars().any(|c| c.is_ascii_lowercase()))
                 {
                     kind = SymbolKind::ReactComponent;
                 }
@@ -543,6 +615,12 @@ pub fn extract_symbol_source(
                 .functions
                 .iter()
                 .find(|f| f.name.eq_ignore_ascii_case(symbol_name))
+        })
+        .or_else(|| {
+            def_map.functions.iter().find(|f| {
+                f.name.ends_with(&format!(".{symbol_name}"))
+                    || (f.name.starts_with(&format!("{symbol_name}.")) && symbol_name != "cell")
+            })
         })?;
 
     let lines: Vec<&str> = source_code.lines().collect();
@@ -1099,6 +1177,20 @@ export const useKanban = () => {
 export function handleReorder(a: number, b: number) {
     return a + b;
 }
+
+export const columns = [
+    {
+        accessorKey: "cotizacion",
+        header: "Cotización",
+        cell: ({ row }: any) => {
+            return <div className="badge">{row.original.code}</div>;
+        }
+    },
+    {
+        id: "actions",
+        cell: () => <button>Eliminar</button>
+    }
+];
 "#;
         let result = parse_source("src/components/Kanban.tsx", SupportedLanguage::TypeScriptReact, source)
             .expect("tsx parse should succeed");
@@ -1110,6 +1202,8 @@ export function handleReorder(a: number, b: number) {
         assert!(names.contains(&("KanbanCardItem", SymbolKind::ReactComponent)));
         assert!(names.contains(&("useKanban", SymbolKind::ReactHook)));
         assert!(names.contains(&("handleReorder", SymbolKind::Function)));
+        assert!(names.contains(&("cotizacion.cell", SymbolKind::ReactComponent)));
+        assert!(names.contains(&("actions.cell", SymbolKind::ReactComponent)));
 
         // Test extraction
         let extract = extract_symbol_source("src/components/Kanban.tsx", "useKanban", source, SupportedLanguage::TypeScriptReact)
@@ -1117,6 +1211,17 @@ export function handleReorder(a: number, b: number) {
         assert_eq!(extract.name, "useKanban");
         assert_eq!(extract.kind, "ReactHook");
         assert!(extract.code.contains("const [cards, setCards] = useState([]);"));
+
+        // Test extraction of TanStack column cell
+        let extract_cell = extract_symbol_source("src/components/Kanban.tsx", "cotizacion.cell", source, SupportedLanguage::TypeScriptReact)
+            .expect("extract cotizacion.cell should succeed");
+        assert_eq!(extract_cell.name, "cotizacion.cell");
+        assert!(extract_cell.code.contains("row.original.code"));
+
+        // Test flexible lookup by accessorKey without .cell suffix
+        let extract_flex = extract_symbol_source("src/components/Kanban.tsx", "cotizacion", source, SupportedLanguage::TypeScriptReact)
+            .expect("flexible extract cotizacion should succeed");
+        assert_eq!(extract_flex.name, "cotizacion.cell");
     }
 }
 

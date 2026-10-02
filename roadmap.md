@@ -58,10 +58,10 @@ graph TD
   - **Descripción**: Crear un motor de búsqueda literal/regex en Rust sobre el workspace usando `regex` y `walkdir`. Normalizar rutas con separadores estándar de Windows/Linux. Incorporar parámetro `token_budget` (default: 800) y `max_results` para compactar la salida en snippets (`{ file, line, snippet }`) evitando volcados excesivos al contexto del LLM.
   - **Criterio de Aceptación**: Búsqueda en archivos grandes (> 2,000 líneas) retorna resultados en < 15 ms respetando el límite estricto de tokens y sin errores por contrabarras en Windows. [STATUS: COMPLETED]
 
-- [ ] **Task 1.3: Soporte para estructuras complejas de TSX y React 19 en Tree-Sitter**
+- [x] **Task 1.3: Soporte para estructuras complejas de TSX y React 19 en Tree-Sitter**
   - **Componentes afectados**: `crates/ozymem-parser/src/lib.rs`.
   - **Descripción**: Extender las queries de Tree-Sitter para TypeScript/TSX capturando pares clave-valor de objetos literales con funciones (`pair key: ... value: [(arrow_function) (function_expression)]`) y funciones de celda en TanStack Table (`columns: [ { cell: ({ row }) => ... } ]`). Asignar nombres jerárquicos estructurados (ej. `columns[accessorKey].cell`).
-  - **Criterio de Aceptación**: `ozy_get_symbol` y `ozy_parse` sobre archivos como `ingenieria-columns.tsx` extraen exitosamente las subfunciones de celda sin fallar.
+  - **Criterio de Aceptación**: `ozy_get_symbol` y `ozy_parse` sobre archivos como `ingenieria-columns.tsx` extraen exitosamente las subfunciones de celda sin fallar. [STATUS: COMPLETED]
 
 - [ ] **Task 1.4: Reemplazo estructural con tolerancia de whitespace e indentación (`ozy_ast_patch`)**
   - **Componentes afectados**: `crates/ozymem-core/src/graph_backend/queries.rs`.
