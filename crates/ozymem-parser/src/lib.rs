@@ -4,7 +4,10 @@ pub mod engram;
 
 pub use engram::{extract_engram_contracts, EngramContract, EngramTable, ArchivedEngramContract, ArchivedEngramTable};
 
-pub use api_routes::{parse_api_routes, parse_axum_routes, parse_express_routes, parse_fastapi_routes, ApiRouteDefinition};
+pub use api_routes::{
+    canonicalize_endpoint_path, parse_api_routes, parse_axum_routes, parse_express_routes,
+    parse_fastapi_routes, parse_frontend_endpoint_consumers, ApiRouteDefinition, EndpointConsumer,
+};
 pub use dependency_resolution::{is_internal_dependency_hint, resolve_dependency_target};
 
 use serde::{Deserialize, Serialize};

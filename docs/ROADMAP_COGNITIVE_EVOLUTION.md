@@ -230,10 +230,10 @@ sequenceDiagram
 ### [FASE 6: Frontera Cross-Language & Unificación Políglota]
 *Objetivo: Conectar semánticamente FastAPI, Next.js y bases de datos SQL eliminando la necesidad de búsquedas ciegas.*
 
-- [ ] **Task 6.1: Extractor de Consumidores de Endpoints en Next.js/TSX**
-  - **Componentes**: `crates/ozymem-parser/src/api_routes.rs`.
+- [x] **Task 6.1: Extractor de Consumidores de Endpoints en Next.js/TSX**
+  - **Componentes**: `crates/ozymem-parser/src/api_routes.rs`, `crates/ozymem-parser/src/lib.rs`.
   - **Descripción**: Implementar `parse_frontend_endpoint_consumers` para detectar llamadas a endpoints vía `fetch("/api/...")`, `axios.get/post(...)`, `apiClient.get/post(...)` y hooks reactivos (`useQuery`, `useSWR`), extrayendo el path de la URL y el método HTTP.
-  - **Criterio de Aceptación**: Pruebas unitarias en `api_routes.rs` detectan llamadas en componentes de Next.js como `VerificacionForm.tsx` y las asocian a su ruta canónica. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: Pruebas unitarias en `api_routes.rs` detectan llamadas en componentes de Next.js como `VerificacionForm.tsx` y las asocian a su ruta canónica. [STATUS: COMPLETED]
 
 - [ ] **Task 6.2: Aristas Bidireccionales `CONSUMES_ENDPOINT` en el Grafo**
   - **Componentes**: `crates/ozymem-core/src/graph_backend/schema.rs`, `memory_graph.rs`, `types.rs`.
