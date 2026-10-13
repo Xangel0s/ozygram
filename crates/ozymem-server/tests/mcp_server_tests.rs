@@ -3082,3 +3082,155 @@ export class RecepcionService extends BaseService {
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_tools_context_and_exploration_lod_levels() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_lod_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let ts_file = tmp_root.join("CalculationService.ts");
+        let ts_content = r#"export class CalculationService {
+    calculateTotal(base: number, rate: number): number {
+        const factor = 1.18;
+        let sum = 0;
+        for (let i = 0; i < 100; i++) {
+            sum += base * rate * factor;
+        }
+        return sum;
+    }
+}
+"#;
+        std::fs::write(&ts_file, ts_content).unwrap();
+
+        // 1. LOD = "macro"
+        let req_macro = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "file",
+                    "file_path": ts_file.to_string_lossy(),
+                    "lod": "macro"
+                }
+            })),
+        };
+        let resp_macro = handle_request(&backend_ref, req_macro, None, None).await.unwrap().unwrap();
+        let text_macro = resp_macro.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text_macro.contains("[LOD 0: MACRO CONTEXT]"));
+        assert!(!text_macro.contains("const factor = 1.18;"));
+        assert!(!text_macro.contains("=== CONTRACTS SKELETON ==="));
+
+        // 2. LOD = "contracts" (default)
+        let req_contracts = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "file",
+                    "file_path": ts_file.to_string_lossy(),
+                    "lod": "contracts"
+                }
+            })),
+        };
+        let resp_contracts = handle_request(&backend_ref, req_contracts, None, None).await.unwrap().unwrap();
+        let text_contracts = resp_contracts.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text_contracts.contains("[LOD 1: CONTRACTS / SKELETON"));
+        assert!(text_contracts.contains("=== CONTRACTS SKELETON ==="));
+        assert!(text_contracts.contains("calculateTotal(base: number, rate: number): number { /* [omitted"));
+        assert!(!text_contracts.contains("const factor = 1.18;"));
+
+        // 3. LOD = "full"
+        let req_full = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "file",
+                    "file_path": ts_file.to_string_lossy(),
+                    "lod": "full"
+                }
+            })),
+        };
+        let resp_full = handle_request(&backend_ref, req_full, None, None).await.unwrap().unwrap();
+        let text_full = resp_full.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text_full.contains("[LOD 2: FULL SOURCE CONTEXT]"));
+        assert!(text_full.contains("const factor = 1.18;"));
+
+        // 4. Test ozy_exploration get_tree with LOD
+        let start_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "start",
+                    "task_description": "Test LOD tree exploration"
+                }
+            })),
+        };
+        let start_resp = handle_request(&backend_ref, start_req, None, None).await.unwrap().unwrap();
+        let start_body: Value = serde_json::from_str(start_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        let traj_id = start_body["trajectory_id"].as_str().unwrap();
+
+        let step_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(6)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "record_step",
+                    "trajectory_id": traj_id,
+                    "action_type": "ast_query",
+                    "action_payload": "{\"query\": \"find calculateTotal references across components\"}",
+                    "observation": "Detailed AST search returned 5 matches across 2 modules with full signatures."
+                }
+            })),
+        };
+        handle_request(&backend_ref, step_req, None, None).await.unwrap();
+
+        let tree_macro_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(7)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "get_tree",
+                    "trajectory_id": traj_id,
+                    "lod": "macro"
+                }
+            })),
+        };
+        let tree_macro_resp = handle_request(&backend_ref, tree_macro_req, None, None).await.unwrap().unwrap();
+        let tree_macro_body: Value = serde_json::from_str(tree_macro_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(tree_macro_body["lod"], "macro");
+        let first_node = &tree_macro_body["tree"][0]["node"];
+        assert_eq!(first_node["observation"], "");
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+

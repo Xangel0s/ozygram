@@ -210,10 +210,10 @@ sequenceDiagram
   - **Descripción**: Crear función de podado de AST que preserve imports, interfaces, types, signatures de métodos/funciones y docstrings, reemplazando el bloque del cuerpo (`body`) por un marcador compacto `/* [omitted N lines] */`.
   - **Criterio de Aceptación**: `cargo test -p ozymem-parser` valida que un archivo TypeScript de 500 líneas se reduzca a un esqueleto sintácticamente válido de < 60 líneas con reducción de tokens > 80%. [STATUS: COMPLETED]
 
-- [ ] **Task 5.2: Modos de Nivel de Detalle (LOD 0, 1, 2) en `exploration.rs` y `schemas.rs`**
-  - **Componentes**: `crates/ozymem-core/src/graph_backend/exploration.rs`, `crates/ozymem-server/src/dispatch.rs`.
+- [x] **Task 5.2: Modos de Nivel de Detalle (LOD 0, 1, 2) en `exploration.rs` y `schemas.rs`**
+  - **Componentes**: `crates/ozymem-server/src/unified.rs`, `crates/ozymem-server/src/exploration.rs`, `crates/ozymem-server/src/schemas.rs`.
   - **Descripción**: Parametrizar las herramientas `ozy_context` y `ozy_exploration` con el flag `lod: "macro" | "contracts" | "full"`. Configurar `lod: "contracts"` como valor por defecto para respuestas ligeras.
-  - **Criterio de Aceptación**: Consultas con `lod: "contracts"` devuelven contratos sin cuerpos de métodos, reduciendo el payload de tokens a menos de un tercio. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: Consultas con `lod: "contracts"` devuelven contratos sin cuerpos de métodos, reduciendo el payload de tokens a menos de un tercio. [STATUS: COMPLETED]
 
 - [ ] **Task 5.3: Ventana Extractiva para Búsqueda Semántica en `embeddings.rs`**
   - **Componentes**: `crates/ozymem-core/src/graph_backend/embeddings.rs`.

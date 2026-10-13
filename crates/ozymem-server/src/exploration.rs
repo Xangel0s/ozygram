@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
-use ozymem_core::graph_backend::{GraphBackend, RecordBatchParams, RecordNodeParams};
+use ozymem_core::graph_backend::{
+    ExplorationTreeNode, GraphBackend, RecordBatchParams, RecordNodeParams,
+};
 use ozymem_core::mcp_common::{ContentBlock, ToolCallParams, ToolCallResult};
 use serde_json::{json, Value};
 
@@ -243,15 +245,21 @@ pub fn handle_exploration(
                 .get("trajectory_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("Falta 'trajectory_id' para obtener el árbol"))?;
+            let lod = args
+                .get("lod")
+                .and_then(Value::as_str)
+                .unwrap_or("contracts");
 
             let tree = backend.get_trajectory_tree(trajectory_id)?;
+            let filtered_tree: Vec<_> = tree.into_iter().map(|n| apply_lod_to_tree_node(n, lod)).collect();
             let mermaid = backend.render_mermaid_tree(trajectory_id).unwrap_or_default();
 
             let res = json!({
                 "status": "ok",
                 "trajectory_id": trajectory_id,
+                "lod": lod,
                 "mermaid": mermaid,
-                "tree": tree
+                "tree": filtered_tree
             });
 
             Ok(ToolCallResult {
@@ -438,4 +446,30 @@ pub fn handle_exploration(
 
         other => Err(anyhow!("Acción de exploración desconocida: '{other}'")),
     }
+}
+
+fn apply_lod_to_tree_node(mut tree_node: ExplorationTreeNode, lod: &str) -> ExplorationTreeNode {
+    match lod {
+        "macro" => {
+            tree_node.node.observation = String::new();
+            if tree_node.node.action_payload.len() > 60 {
+                tree_node.node.action_payload = format!("{}...", &tree_node.node.action_payload[..60]);
+            }
+            tree_node.node.rollback_snapshot = None;
+        }
+        "contracts" => {
+            if tree_node.node.observation.len() > 200 {
+                let omitted = tree_node.node.observation.len() - 200;
+                tree_node.node.observation = format!("{}... [omitted {} chars]", &tree_node.node.observation[..200], omitted);
+            }
+            tree_node.node.rollback_snapshot = None;
+        }
+        _ => {}
+    }
+    tree_node.children = tree_node
+        .children
+        .into_iter()
+        .map(|c| apply_lod_to_tree_node(c, lod))
+        .collect();
+    tree_node
 }

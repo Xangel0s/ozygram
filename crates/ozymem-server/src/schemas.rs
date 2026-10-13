@@ -19,6 +19,7 @@ pub fn handle_tools_list(
                             "file_path": { "type": "string", "description": "File path for action=file" },
                             "project_name": { "type": "string", "description": "Registered project name for action=project" },
                             "max_tokens": { "type": "integer", "default": 4000 },
+                            "lod": { "type": "string", "enum": ["macro", "contracts", "full"], "default": "contracts", "description": "Level of Detail: macro (LOD 0, high-level summary/neighbors), contracts (LOD 1, AST skeleton with types and signatures), full (LOD 2, complete source code)" },
                             "limit": { "type": "integer", "default": 20 }
                         },
                         "additionalProperties": false
@@ -182,6 +183,7 @@ pub fn handle_tools_list(
                             "is_solution": { "type": "boolean", "description": "Whether this step reached the desired solution" },
                             "is_pruned": { "type": "boolean", "description": "Whether this branch should be pruned" },
                             "status": { "type": "string", "enum": ["completed", "failed", "abandoned"], "description": "Final status (for 'complete')" },
+                            "lod": { "type": "string", "enum": ["macro", "contracts", "full"], "default": "contracts", "description": "Level of detail for tree retrieval: macro (LOD 0, actions and scores only), contracts (LOD 1, truncated observations, no snapshots), full (LOD 2, full observations and snapshots)" },
                             "limit": { "type": "integer", "default": 20 }
                         },
                         "additionalProperties": false

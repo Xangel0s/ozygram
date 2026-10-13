@@ -161,21 +161,55 @@ pub async fn handle_unified_tool(
                                 .get("file_path")
                                 .and_then(Value::as_str)
                                 .ok_or_else(|| anyhow::anyhow!("missing file_path"))?;
+                            let lod = tool_call
+                                .arguments
+                                .get("lod")
+                                .and_then(Value::as_str)
+                                .unwrap_or("contracts");
                             let ctx = backend.get_file_context(file_path).await?;
                             let history =
                                 backend.get_historical_engram_solutions(file_path).await?;
                             let neighbors = backend.get_graph_neighbors(file_path).await.ok();
                             let last_git = get_last_commit(file_path).await;
+                            let base_text = format_file_context_enriched(
+                                ctx.as_ref(),
+                                file_path,
+                                &history,
+                                neighbors.as_ref(),
+                                last_git.as_deref(),
+                            );
+
+                            let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+                            let path_obj = std::path::Path::new(&resolved);
+                            let effective = if path_obj.exists() {
+                                path_obj.to_path_buf()
+                            } else if let Some(root) = backend.project_path() {
+                                std::path::Path::new(&root).join(&resolved)
+                            } else {
+                                std::path::PathBuf::from(&resolved)
+                            };
+
+                            let text = match lod {
+                                "macro" => format!("[LOD 0: MACRO CONTEXT]\n{}\n", base_text),
+                                "full" => {
+                                    let full_code = std::fs::read_to_string(&effective).unwrap_or_default();
+                                    format!("[LOD 2: FULL SOURCE CONTEXT]\n{}\n\n=== SOURCE CODE ===\n{}", base_text, full_code)
+                                }
+                                _ => {
+                                    let source = std::fs::read_to_string(&effective).unwrap_or_default();
+                                    let lang = ozymem_parser::SupportedLanguage::from_path(&effective);
+                                    let report = ozymem_parser::generate_skeleton(&resolved, lang, &source);
+                                    format!(
+                                        "[LOD 1: CONTRACTS / SKELETON (Saved {:.1}% lines)]\n{}\n\n=== CONTRACTS SKELETON ===\n{}",
+                                        report.reduction_percentage, base_text, report.skeleton_code
+                                    )
+                                }
+                            };
+
                             ToolCallResult {
                                 content: vec![ContentBlock {
                                     kind: "text",
-                                    text: format_file_context_enriched(
-                                        ctx.as_ref(),
-                                        file_path,
-                                        &history,
-                                        neighbors.as_ref(),
-                                        last_git.as_deref(),
-                                    ),
+                                    text,
                                 }],
                                 is_error: None,
                             }
