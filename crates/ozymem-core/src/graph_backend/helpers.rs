@@ -223,6 +223,38 @@ pub fn is_noise_dir(path: &Path) -> bool {
     }
 }
 
+/// Returns true if the path or any of its parent components is considered noise,
+/// a database artifact, lockfile, cache, or temporary file.
+pub fn is_noise_path(path: &Path) -> bool {
+    for ancestor in path.ancestors() {
+        if is_noise_dir(ancestor) {
+            return true;
+        }
+    }
+    let s = path.to_string_lossy();
+    if s.contains(".git") || s.contains(".ozymem") || s.contains("target") || s.contains("node_modules") {
+        return true;
+    }
+    let file_name = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_lowercase(),
+        None => return false,
+    };
+    if file_name.ends_with(".tmp")
+        || file_name.ends_with('~')
+        || file_name.ends_with(".swp")
+        || file_name.ends_with(".log")
+        || file_name.ends_with(".db")
+        || file_name.ends_with(".sqlite")
+        || file_name.ends_with(".sqlite3")
+    {
+        return true;
+    }
+    match crate::sync::check_noise_or_huge_file(path, crate::sync::DEFAULT_MAX_DELTA_FILE_BYTES) {
+        crate::sync::NoiseFilterDecision::Process => false,
+        _ => true,
+    }
+}
+
 /// Load ignore patterns from `.ozymemignore` and `.gitignore` in the project root.
 pub fn load_ignore_patterns(project_root: &Path) -> Vec<String> {
     let mut patterns = Vec::new();

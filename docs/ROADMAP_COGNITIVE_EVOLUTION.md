@@ -245,10 +245,10 @@ sequenceDiagram
   - **Descripción**: Parsear archivos `.sql` extrayendo nombres de tablas creadas o modificadas (`CREATE TABLE`, `ALTER TABLE`, `REFERENCES`), registrando entidades `GraphEntityType::DatabaseTable` y aristas `TouchesTable` conectadas a los modelos del backend (SQLAlchemy, SQLModel, Drizzle, Prisma).
   - **Criterio de Aceptación**: `ozy_graph(action="table_lineage", table="control_probetas")` devuelve la historia DDL completa de migraciones y modelos ORM vinculados en < 10 ms. [STATUS: COMPLETED]
 
-- [ ] **Task 6.4: Invalidador Incremental de Caché con Watcher de Filesystem**
-  - **Componentes**: `crates/ozymem-server/src/main.rs`, `crates/ozymem-core/src/graph_backend/indexing.rs`.
-  - **Descripción**: Incorporar un watcher basado en el crate `notify` que capture modificaciones en disco generadas por terminal o scripts externos, ejecutando un re-análisis incremental en memoria del archivo afectado sin bloquear el servidor.
-  - **Criterio de Aceptación**: Modificar un archivo fuera del editor actualiza el grafo y los símbolos en < 50 ms sin necesidad de reescaneo manual completo. [STATUS: PLANNED]
+- [x] **Task 6.4: Invalidador Incremental de Caché con Watcher de Filesystem**
+  - **Componentes**: `crates/ozymem-core/src/graph_backend/indexing.rs`, `helpers.rs`, `sync.rs`, `crates/ozymem-server/src/dispatch.rs`.
+  - **Descripción**: Incorporar un watcher reactivo basado en el crate `notify` con debouncing automático que capture modificaciones en disco generadas por terminal o scripts externos, ejecutando un re-análisis incremental en memoria del archivo afectado (`index_file_delta` / `remove_file_delta`) sin bloquear el servidor.
+  - **Criterio de Aceptación**: Modificar o eliminar un archivo fuera del editor actualiza el grafo y los símbolos en memoria en < 50 ms sin necesidad de reescaneo manual completo. [STATUS: COMPLETED]
 
 ---
 

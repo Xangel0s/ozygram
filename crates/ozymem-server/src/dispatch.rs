@@ -157,6 +157,48 @@ pub async fn handle_request(
                 }
             });
 
+            // Live filesystem watcher: auto-reindex file modifications from external editors/scripts
+            if std::env::var("OZYMEM_DISABLE_WATCHER").is_err() {
+                let backend_weak = Arc::downgrade(backend);
+                let watcher_root = project_path.clone();
+                tokio::task::spawn_blocking(move || {
+                    match ozymem_core::LiveWatcher::watch(&watcher_root, Some(std::time::Duration::from_millis(300))) {
+                        Ok(watcher) => {
+                            eprintln!("[ozymem-watcher] Live filesystem watcher started for {}", watcher_root.display());
+                            loop {
+                                let Some(backend_arc) = backend_weak.upgrade() else {
+                                    // Backend was dropped, exit watcher loop immediately
+                                    break;
+                                };
+                                if let Some(event) = watcher.recv_timeout(std::time::Duration::from_millis(200)) {
+                                    match event {
+                                        ozymem_core::DeltaFileEvent::Modified(p) => {
+                                            if !ozymem_core::graph_backend::helpers::is_noise_path(&p) {
+                                                let guard = backend_arc.lock().unwrap();
+                                                if let Some(ref gb) = *guard {
+                                                    let _ = gb.index_file_delta(&p, &watcher_root);
+                                                }
+                                            }
+                                        }
+                                        ozymem_core::DeltaFileEvent::Removed(p) => {
+                                            if !ozymem_core::graph_backend::helpers::is_noise_path(&p) {
+                                                let guard = backend_arc.lock().unwrap();
+                                                if let Some(ref gb) = *guard {
+                                                    let _ = gb.remove_file_delta(&p, &watcher_root);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[ozymem-watcher] Info: watcher skipped or unavailable for {}: {e}", watcher_root.display());
+                        }
+                    }
+                });
+            }
+
             Some(ok_response(id, serde_json::to_value(result)?))
         }
         "notifications/initialized" => return Ok(None),

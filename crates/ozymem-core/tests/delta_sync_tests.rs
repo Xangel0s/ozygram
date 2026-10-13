@@ -2,6 +2,7 @@ use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::sync::{check_noise_or_huge_file, DeltaFileEvent, DeltaIndexResult, LiveWatcher, NoiseFilterDecision, DEFAULT_MAX_DELTA_FILE_BYTES};
 use ozymem_core::McpBackend;
 use std::fs;
+use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -152,3 +153,49 @@ fn test_live_watcher_captures_file_events() {
         DeltaFileEvent::Removed(_) => panic!("Expected DeltaFileEvent::Modified"),
     }
 }
+
+#[tokio::test]
+async fn test_spawn_live_watcher_incremental_indexing() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let db_path = root.join("memory.db");
+    let backend = Arc::new(GraphBackend::open(Some(&db_path.to_string_lossy())).unwrap());
+    backend.set_project_path(Some(&root.to_string_lossy()));
+
+    let watcher_handle = backend.spawn_live_watcher(root, Some(Duration::from_millis(50))).unwrap();
+
+    // 1. Write file externally
+    let py_file = root.join("worker.py");
+    fs::write(&py_file, "def calculate_risk():\n    return 0.1\n").unwrap();
+
+    // Wait for live watcher debounce and auto-index
+    let mut indexed = false;
+    for _ in 0..30 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Ok(summary) = backend.get_graph_summary().await {
+            if summary.file_count >= 1 && summary.function_count >= 1 {
+                indexed = true;
+                break;
+            }
+        }
+    }
+    assert!(indexed, "Expected worker.py to be auto-indexed in RAM/SQLite by background LiveWatcher");
+
+    // 2. Remove file externally
+    fs::remove_file(&py_file).unwrap();
+
+    let mut removed = false;
+    for _ in 0..30 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if let Ok(summary) = backend.get_graph_summary().await {
+            if summary.file_count == 0 {
+                removed = true;
+                break;
+            }
+        }
+    }
+    assert!(removed, "Expected worker.py to be auto-removed from RAM/SQLite by background LiveWatcher");
+
+    watcher_handle.stop();
+}
+

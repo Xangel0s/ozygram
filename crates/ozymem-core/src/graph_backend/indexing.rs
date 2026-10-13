@@ -859,4 +859,66 @@ impl GraphBackend {
             )
             .map_err(Into::into)
     }
+
+    /// Spawns an asynchronous filesystem watcher using `notify` with automatic debouncing.
+    /// Captures external file changes (e.g. terminal scripts, git checkouts, external editors)
+    /// and performs transparent incremental delta indexing without blocking the caller or MCP server.
+    pub fn spawn_live_watcher(
+        self: &Arc<Self>,
+        root_path: &Path,
+        debounce: Option<std::time::Duration>,
+    ) -> Result<LiveWatcherHandle> {
+        let root_buf = root_path.to_path_buf();
+        let watcher = crate::sync::LiveWatcher::watch(&root_buf, debounce)?;
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let backend = Arc::clone(self);
+
+        std::thread::Builder::new()
+            .name("ozymem-live-watcher".to_string())
+            .spawn(move || {
+                loop {
+                    if stop_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    if let Some(event) = watcher.recv_timeout(std::time::Duration::from_millis(150)) {
+                        match event {
+                            crate::sync::DeltaFileEvent::Modified(path) => {
+                                if !crate::graph_backend::helpers::is_noise_path(&path) {
+                                    let _ = backend.index_file_delta(&path, &root_buf);
+                                }
+                            }
+                            crate::sync::DeltaFileEvent::Removed(path) => {
+                                if !crate::graph_backend::helpers::is_noise_path(&path) {
+                                    let _ = backend.remove_file_delta(&path, &root_buf);
+                                }
+                            }
+                        }
+                    }
+                }
+            })?;
+
+        Ok(LiveWatcherHandle::new(stop_tx))
+    }
 }
+
+/// Handle to control the background live filesystem watcher.
+pub struct LiveWatcherHandle {
+    stop_tx: std::sync::mpsc::Sender<()>,
+}
+
+impl LiveWatcherHandle {
+    pub fn new(stop_tx: std::sync::mpsc::Sender<()>) -> Self {
+        Self { stop_tx }
+    }
+
+    pub fn stop(&self) {
+        let _ = self.stop_tx.send(());
+    }
+}
+
+impl Drop for LiveWatcherHandle {
+    fn drop(&mut self) {
+        let _ = self.stop_tx.send(());
+    }
+}
+
