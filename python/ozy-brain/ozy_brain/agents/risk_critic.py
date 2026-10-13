@@ -107,6 +107,7 @@ class RiskAuditResult:
     mitigations: list[str]
     critic_engine: str
     blast_radius: BlastRadiusReport | None = None
+    ghost_simulation: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -121,6 +122,8 @@ class RiskAuditResult:
         }
         if self.blast_radius is not None:
             result["blast_radius"] = self.blast_radius.to_dict()
+        if self.ghost_simulation is not None:
+            result["ghost_simulation"] = self.ghost_simulation
         return result
 
 
@@ -147,6 +150,9 @@ class RiskCriticAgent:
         )
         blast_report = compute_blast_radius(symbol, impact_references) if symbol or impact_references else None
 
+        # Ghost Patch Simulation (RAM Speculative Verification)
+        ghost_sim: dict[str, Any] = payload.get("simulation_result") or payload.get("ghost_patch_report") or {}
+
         # 1. Telemetry & Hotspot extraction from DuckDB
         detected_hotspots: list[dict[str, Any]] = []
         for f in files:
@@ -157,13 +163,15 @@ class RiskCriticAgent:
         # 2. Try LLM Adversarial Review if OpenRouter/Ollama is configured
         if self.config.provider != LLMProvider.OFFLINE_FALLBACK:
             llm_result = self._audit_with_llm(
-                files, diff_text, plan_steps, detected_hotspots, blast_report=blast_report
+                files, diff_text, plan_steps, detected_hotspots, blast_report=blast_report, ghost_sim=ghost_sim
             )
             if llm_result:
                 return llm_result
 
         # 3. Deterministic Adversarial Heuristic Fallback ($0 cost)
-        return self._audit_offline(files, diff_text, plan_steps, detected_hotspots, blast_report=blast_report)
+        return self._audit_offline(
+            files, diff_text, plan_steps, detected_hotspots, blast_report=blast_report, ghost_sim=ghost_sim
+        )
 
     def _audit_with_llm(
         self,
@@ -172,6 +180,7 @@ class RiskCriticAgent:
         plan_steps: list[str],
         hotspots: list[dict[str, Any]],
         blast_report: BlastRadiusReport | None = None,
+        ghost_sim: dict[str, Any] | None = None,
     ) -> RiskAuditResult | None:
         blast_context = ""
         if blast_report and blast_report.alert_required:
@@ -180,6 +189,14 @@ class RiskCriticAgent:
                 f"{blast_report.critical_module_hits} critical module references "
                 f"(threshold: {_HIGH_BLAST_RADIUS_THRESHOLD}). "
                 "A snapshot is mandatory before changes."
+            )
+        ghost_context = ""
+        if ghost_sim and ghost_sim.get("breaks_dependents"):
+            target_sym = ghost_sim.get("target_symbol", "unknown")
+            breakages_count = len(ghost_sim.get("breakages", []))
+            ghost_context = (
+                f"\n[CRITICAL_VETO: CONTRACT_BREAKAGE] Ghost patch simulation in RAM indicates "
+                f"that updating symbol '{target_sym}' breaks {breakages_count} dependent caller(s)."
             )
 
         system_prompt = (
@@ -192,7 +209,7 @@ class RiskCriticAgent:
         user_prompt = f"""Audit the following proposed operation:
 Files affected: {files}
 Plan steps: {plan_steps}
-Repository Hotspot Telemetry: {hotspots}{blast_context}
+Repository Hotspot Telemetry: {hotspots}{blast_context}{ghost_context}
 Diff/Context snippet:
 {diff_text[:2000]}
 
@@ -221,6 +238,7 @@ Evaluate potential architectural breaks, concurrency hazards, data loss risks, o
                 mitigations=parsed.get("mitigations", []),
                 critic_engine=f"{self.config.provider.value}:{self.config.model}",
                 blast_radius=blast_report,
+                ghost_simulation=ghost_sim,
             )
         except Exception:
             return None
@@ -232,6 +250,7 @@ Evaluate potential architectural breaks, concurrency hazards, data loss risks, o
         plan_steps: list[str],
         hotspots: list[dict[str, Any]],
         blast_report: BlastRadiusReport | None = None,
+        ghost_sim: dict[str, Any] | None = None,
     ) -> RiskAuditResult:
         reasons: list[str] = []
         regression_vectors: list[str] = []
@@ -248,6 +267,25 @@ Evaluate potential architectural breaks, concurrency hazards, data loss risks, o
             mitigations.append(
                 "Execute ozy_exploration snapshot (rollback_snapshot) before applying the change. "
                 "Run integration test suite on all referencing modules after the edit."
+            )
+            is_blocked = True
+
+        # --- Speculative Ghost Patch check (Contract Breakage Veto) ---
+        if ghost_sim and ghost_sim.get("breaks_dependents"):
+            target_sym = ghost_sim.get("target_symbol") or (blast_report.symbol if blast_report else "unknown")
+            breakages = ghost_sim.get("breakages", [])
+            reasons.append(
+                f"[CRITICAL_VETO: CONTRACT_BREAKAGE] Speculative ghost patch broke "
+                f"{len(breakages)} caller(s) of symbol '{target_sym}'."
+            )
+            for b in breakages[:5]:
+                caller_loc = f"{b.get('caller_file', 'unknown')}:{b.get('line_number', '?')}"
+                reason = b.get("reason", "Incompatible argument signature")
+                regression_vectors.append(
+                    f"Breaking caller at {caller_loc} in `{b.get('caller_symbol', 'caller')}`: {reason}"
+                )
+            mitigations.append(
+                "Maintain backward compatibility with default arguments or update all referencing callers concurrently."
             )
             is_blocked = True
 
@@ -297,6 +335,7 @@ Evaluate potential architectural breaks, concurrency hazards, data loss risks, o
             mitigations=mitigations,
             critic_engine="ozy-brain:offline-adversarial-critic",
             blast_radius=blast_report,
+            ghost_simulation=ghost_sim,
         )
 
 

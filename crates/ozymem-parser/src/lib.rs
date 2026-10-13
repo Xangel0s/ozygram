@@ -2,6 +2,7 @@ pub mod dependency_resolution;
 pub mod api_routes;
 pub mod engram;
 pub mod sql_ddl;
+pub mod ghost_signature;
 
 pub use engram::{extract_engram_contracts, EngramContract, EngramTable, ArchivedEngramContract, ArchivedEngramTable};
 
@@ -11,6 +12,9 @@ pub use api_routes::{
 };
 pub use sql_ddl::{
     normalize_table_name, parse_model_tables, parse_sql_ddl_tables, SqlTableReference,
+};
+pub use ghost_signature::{
+    parse_call_site_argument_count, parse_function_signature, FunctionParam, FunctionSignature,
 };
 pub use dependency_resolution::{is_internal_dependency_hint, resolve_dependency_target};
 

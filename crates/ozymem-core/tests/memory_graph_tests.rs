@@ -334,4 +334,85 @@ class ControlProbeta(SQLModel, table=True):
     Ok(())
 }
 
+#[tokio::test]
+async fn test_ghost_patch_simulation_cow_and_arity() -> Result<()> {
+    let tmp = tempdir()?;
+    let root = tmp.path();
+    let db_path = root.join("memory.db");
+    let backend = GraphBackend::open(Some(&db_path.to_string_lossy()))?;
+    backend.set_project_path(Some(&root.to_string_lossy()));
+
+    // 1. Defining file
+    let def_file = root.join("math_service.py");
+    let orig_def = r#"def compute_discount(subtotal: float, rate: float = 0.1) -> float:
+    return subtotal * rate
+"#;
+    std::fs::write(&def_file, orig_def)?;
+
+    // 2. Caller files
+    let caller1 = root.join("order_service.py");
+    std::fs::write(
+        &caller1,
+        r#"from math_service import compute_discount
+
+def process_order(price: float):
+    d = compute_discount(price)
+    return price - d
+"#,
+    )?;
+
+    let caller2 = root.join("billing_service.py");
+    std::fs::write(
+        &caller2,
+        r#"from math_service import compute_discount
+
+def generate_invoice(amount: float, discount_rate: float):
+    d = compute_discount(amount, discount_rate)
+    return amount - d
+"#,
+    )?;
+
+    backend.index_file_delta(&def_file, root)?;
+    backend.index_file_delta(&caller1, root)?;
+    backend.index_file_delta(&caller2, root)?;
+
+    // 3. Test non-breaking patch (maintains required arity = 1)
+    let non_breaking_patch = r#"def compute_discount(subtotal: float, rate: float = 0.15) -> float:
+    return subtotal * (rate if rate > 0 else 0.05)
+"#;
+    let sim1 = backend.simulate_patch("compute_discount", non_breaking_patch)?;
+    assert_eq!(sim1.status, ozymem_core::graph_backend::types::SimulationStatus::Success);
+    assert!(!sim1.breaks_dependents, "Should not break callers with default param");
+    assert_eq!(sim1.breakages.len(), 0);
+    assert_eq!(sim1.isolation_guarantee, "SANDBOX_INVARIANT_COW_RAM_ONLY");
+    assert!(sim1.execution_time_ms < 100);
+
+    // 4. Test breaking patch (increases required arity from 1 to 3)
+    let breaking_patch = r#"def compute_discount(subtotal: float, rate: float, tax_category: str) -> float:
+    return subtotal * rate
+"#;
+    let sim2 = backend.simulate_patch("compute_discount", breaking_patch)?;
+    assert_eq!(sim2.status, ozymem_core::graph_backend::types::SimulationStatus::Success);
+    assert!(sim2.breaks_dependents, "Should flag breakage when required arity increases to 3");
+    assert!(sim2.arity_changed);
+    assert_eq!(sim2.old_required_param_count, 1);
+    assert_eq!(sim2.new_required_param_count, 3);
+    assert_eq!(sim2.breakages.len(), 2, "Both caller1 (passes 1) and caller2 (passes 2) must be flagged");
+
+    // 5. Verify strict Sandbox Invariant: disk file must be completely untouched!
+    let current_disk = std::fs::read_to_string(&def_file)?;
+    assert_eq!(current_disk, orig_def, "Disk file must NEVER be modified by simulate_patch");
+
+    // 6. Test edge case: Symbol not found
+    let sim_not_found = backend.simulate_patch("non_existent_func", "def non_existent_func(): pass")?;
+    assert_eq!(sim_not_found.status, ozymem_core::graph_backend::types::SimulationStatus::SymbolNotFound);
+
+    // 7. Test edge case: Syntax error in candidate code
+    let sim_syntax_err = backend.simulate_patch("compute_discount", "def broken_code(((((") ?;
+    assert!(matches!(sim_syntax_err.status, ozymem_core::graph_backend::types::SimulationStatus::SyntaxError(_)));
+
+    Ok(())
+}
+
+
 

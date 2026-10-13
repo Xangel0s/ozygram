@@ -3537,6 +3537,97 @@ class ControlProbeta(SQLModel, table=True):
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_ozy_simulate_patch_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_ghost_mcp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let calcs_file = tmp_root.join("calcs.py");
+        let orig_calcs = "def compute_fee(base_amount: float) -> float:\n    return base_amount * 0.18\n";
+        std::fs::write(&calcs_file, orig_calcs).unwrap();
+
+        let service_file = tmp_root.join("service.py");
+        let service_content = "from calcs import compute_fee\n\ndef execute_service(order_id: int, total: float):\n    fee = compute_fee(total)\n    return fee\n";
+        std::fs::write(&service_file, service_content).unwrap();
+
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1" },
+                "workspaceFolders": [{ "uri": proj_uri, "name": "test-ghost" }]
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        {
+            let guard = backend_ref.lock().unwrap();
+            let backend = guard.as_ref().unwrap();
+            backend.index_file_delta(&calcs_file, &tmp_root).unwrap();
+            backend.index_file_delta(&service_file, &tmp_root).unwrap();
+        }
+
+        // 1. Compatible candidate (optional parameter added)
+        let compatible_patch = "def compute_fee(base_amount: float, tax_rate: float = 0.18) -> float:\n    return base_amount * tax_rate\n";
+        let req1 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_simulate_patch",
+                "arguments": {
+                    "target_symbol": "compute_fee",
+                    "candidate_code": compatible_patch,
+                    "format": "text"
+                }
+            })),
+        };
+        let resp1 = handle_request(&backend_ref, req1, None, None).await.unwrap().unwrap();
+        assert!(resp1.error.is_none());
+        let text1 = resp1.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text1.contains("[SPECULATIVE GHOST PATCH REPORT]"));
+        assert!(text1.contains("Verdict: [STATUS: APPROVED: NO CONTRACT BREAKAGE]"));
+        assert!(text1.contains("Breaks Callers: false"));
+        assert!(text1.contains("Isolation: [SANDBOX_INVARIANT_COW_RAM_ONLY]"));
+
+        // Verify disk is untouched
+        let on_disk_calcs = std::fs::read_to_string(&calcs_file).unwrap();
+        assert_eq!(on_disk_calcs, orig_calcs, "Disk file must remain untouched during simulation");
+
+        // 2. Breaking candidate (mandatory second parameter added)
+        let breaking_patch = "def compute_fee(base_amount: float, required_code: str) -> float:\n    return base_amount * 0.18\n";
+        let req2 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_simulate_patch",
+                "arguments": {
+                    "target_symbol": "compute_fee",
+                    "candidate_code": breaking_patch,
+                    "format": "json"
+                }
+            })),
+        };
+        let resp2 = handle_request(&backend_ref, req2, None, None).await.unwrap().unwrap();
+        assert!(resp2.error.is_none());
+        let body2: Value = serde_json::from_str(resp2.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body2["breaks_dependents"], true);
+        assert_eq!(body2["old_required_param_count"], 1);
+        assert_eq!(body2["new_required_param_count"], 2);
+        assert_eq!(body2["breakages"].as_array().unwrap().len(), 1);
+        assert!(body2["breakages"][0]["caller_file"].as_str().unwrap().contains("service.py"));
+        assert!(body2["breakages"][0]["reason"].as_str().unwrap().contains("updated signature requires at least 2"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
 
 
 

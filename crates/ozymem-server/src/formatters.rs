@@ -720,6 +720,46 @@ pub(crate) fn format_table_lineage(report: &ozymem_core::graph_backend::types::T
     out
 }
 
+pub(crate) fn format_simulation_result(sim: &ozymem_core::graph_backend::types::SimulationResult) -> String {
+    let verdict = if sim.breaks_dependents {
+        "[STATUS: REJECTED: CONTRACT BREAKAGE]"
+    } else {
+        "[STATUS: APPROVED: NO CONTRACT BREAKAGE]"
+    };
+
+    let mut out = format!(
+        "[SPECULATIVE GHOST PATCH REPORT]\nTarget Symbol: {}\nTarget File: {}\nVerdict: {}\nIsolation: [{}]\nExecution Time: {} ms\n\n",
+        sim.target_symbol,
+        if sim.target_file.is_empty() { "unknown" } else { &sim.target_file },
+        verdict,
+        sim.isolation_guarantee,
+        sim.execution_time_ms
+    );
+
+    out.push_str("[CONTRACT ANALYSIS]\n");
+    out.push_str(&format!("  • Arity Changed: {}\n", sim.arity_changed));
+    out.push_str(&format!("  • Required Parameters: {} -> {}\n", sim.old_required_param_count, sim.new_required_param_count));
+    out.push_str(&format!("  • Total Parameters: {} -> {}\n", sim.old_param_count, sim.new_param_count));
+    out.push_str(&format!("  • Async Converted: {}\n", sim.async_changed));
+    out.push_str(&format!("  • Impacted Callers Inspected: {}\n", sim.impacted_callers_count));
+    out.push_str(&format!("  • Breaks Callers: {}\n\n", sim.breaks_dependents));
+
+    out.push_str(&format!("[DETECTED BREAKAGES] ({})\n", sim.breakages.len()));
+    if sim.breakages.is_empty() {
+        out.push_str("  No broken callers found. The proposed change is backward-compatible with all existing callers.\n");
+    } else {
+        for b in &sim.breakages {
+            out.push_str(&format!(
+                "  - [CALLER_BREAKAGE] {}:{} in `{}`: {}\n    Code: {}\n",
+                b.caller_file, b.line_number, b.caller_symbol, b.reason, b.line_content
+            ));
+        }
+    }
+
+    out
+}
+
+
 
 
 

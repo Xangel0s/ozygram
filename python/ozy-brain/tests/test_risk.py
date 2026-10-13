@@ -307,3 +307,58 @@ class TestSimulateActionBlastRadius:
         """Response must always carry the engine tag."""
         result = self._run({"symbol": "noop"})
         assert result.get("engine") == "ozy-brain-python"
+
+
+class TestRiskCriticGhostPatch:
+    """Tests for Speculative Ghost Patching contract breakage veto in RiskCriticAgent."""
+
+    def test_ghost_patch_clean_no_veto(self):
+        agent = RiskCriticAgent()
+        sim_clean = {
+            "target_symbol": "calculate_tax",
+            "breaks_dependents": False,
+            "old_param_count": 1,
+            "new_param_count": 2,
+            "breakages": [],
+        }
+        res = agent.audit({"symbol": "calculate_tax", "simulation_result": sim_clean})
+        assert not res.blocked
+        assert not any("CRITICAL_VETO: CONTRACT_BREAKAGE" in r for r in res.reasons)
+
+    def test_ghost_patch_breaking_triggers_critical_veto(self):
+        agent = RiskCriticAgent()
+        sim_breaking = {
+            "target_symbol": "calculate_tax",
+            "breaks_dependents": True,
+            "old_required_param_count": 1,
+            "new_required_param_count": 2,
+            "breakages": [
+                {
+                    "caller_file": "app/services.py",
+                    "caller_symbol": "process_order",
+                    "line_number": 42,
+                    "reason": "Caller passes 1 argument(s), but updated signature requires at least 2",
+                }
+            ],
+        }
+        res = agent.audit({"symbol": "calculate_tax", "simulation_result": sim_breaking})
+        assert res.blocked
+        assert res.risk_level == "CRITICAL"
+        assert any("[CRITICAL_VETO: CONTRACT_BREAKAGE]" in r for r in res.reasons)
+        assert any("app/services.py:42" in rv for rv in res.regression_vectors)
+        assert res.ghost_simulation == sim_breaking
+
+    def test_ghost_patch_via_simulate_action(self):
+        from ozy_brain.brain import run
+        sim_breaking = {
+            "target_symbol": "calculate_tax",
+            "breaks_dependents": True,
+            "breakages": [{"caller_file": "app/services.py", "caller_symbol": "order", "line_number": 10}],
+        }
+        result = run("simulate_action", {
+            "symbol": "calculate_tax",
+            "simulation_result": sim_breaking,
+        })
+        plan = result.get("plan", [])
+        assert any("[CRITICAL_VETO: CONTRACT_BREAKAGE]" in p for p in plan)
+        assert "[CRITICAL_VETO: CONTRACT_BREAKAGE]" in plan[0]

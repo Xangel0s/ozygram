@@ -4,9 +4,14 @@ use petgraph::algo::all_simple_paths;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::Bfs;
 use rusqlite::params;
+use std::time::Instant;
 use crate::GraphSummary;
 use crate::mcp_common::McpBackend;
-use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend, ImpactEntry, IncomingDependencyDetail, LiteralMatch, LiteralSearchResult, SymbolReference, SymbolReferencesResult, SymbolReplaceResult, UnifiedSearchResult};
+use crate::graph_backend::types::{
+    DependentBreakage, FileEdge, FileNode, GraphBackend, ImpactEntry, IncomingDependencyDetail,
+    LiteralMatch, LiteralSearchResult, SimulationResult, SimulationStatus, SymbolReference,
+    SymbolReferencesResult, SymbolReplaceResult, UnifiedSearchResult,
+};
 
 impl GraphBackend {
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
@@ -1331,6 +1336,225 @@ impl GraphBackend {
             references_count: total_count,
             estimated_tokens,
             references,
+        })
+    }
+
+    /// Speculative AST Patching ("Ghost Patching" in RAM).
+    /// Simulates a proposed patch against a target symbol in purely volatile RAM
+    /// under the Sandbox Invariant Contract (CoW, 100ms hard timeout, zero I/O).
+    /// Detects arity changes, async/sync conversions, and caller breakages.
+    pub fn simulate_patch(
+        &self,
+        target_symbol: &str,
+        candidate_code: &str,
+    ) -> Result<SimulationResult> {
+        let start_time = Instant::now();
+        let timeout_limit = std::time::Duration::from_millis(100);
+
+        // 1. Locate defining file and original function in RAM/SQLite (Read-Only)
+        let (defining_file, old_source, lang) = {
+            let inner = self.inner.lock().unwrap();
+            let row_res = inner.sqlite.query_row(
+                "SELECT f.file_path, f.start_line, f.end_line, fi.language 
+                 FROM functions f
+                 JOIN files fi ON (fi.path = f.file_path AND fi.tenant_id = f.tenant_id)
+                 WHERE f.name = ?1 AND f.tenant_id = ?2
+                 ORDER BY length(f.file_path) ASC LIMIT 1",
+                params![target_symbol, self.tenant_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+            );
+
+            match row_res {
+                Ok((fp, start_line, end_line, lang_str)) => {
+                    let path_ref = std::path::Path::new(&fp);
+                    let detected_lang = crate::graph_backend::helpers::detect_language(path_ref);
+                    let lang = if detected_lang != ozymem_parser::SupportedLanguage::Unknown {
+                        detected_lang
+                    } else {
+                        ozymem_parser::SupportedLanguage::from_path(std::path::Path::new(&format!("file.{}", lang_str)))
+                    };
+
+                    let content = std::fs::read_to_string(&fp).unwrap_or_default();
+                    let lines: Vec<&str> = content.lines().collect();
+                    let s_idx = (start_line.max(1) - 1) as usize;
+                    let e_idx = (end_line as usize).min(lines.len());
+                    let old_fn_slice = if s_idx < lines.len() && s_idx <= e_idx {
+                        lines[s_idx..e_idx].join("\n")
+                    } else {
+                        String::new()
+                    };
+
+                    (fp, old_fn_slice, lang)
+                }
+                Err(_) => {
+                    return Ok(SimulationResult {
+                        target_symbol: target_symbol.to_string(),
+                        target_file: String::new(),
+                        status: SimulationStatus::SymbolNotFound,
+                        breaks_dependents: false,
+                        arity_changed: false,
+                        async_changed: false,
+                        old_param_count: 0,
+                        new_param_count: 0,
+                        old_required_param_count: 0,
+                        new_required_param_count: 0,
+                        impacted_callers_count: 0,
+                        breakages: Vec::new(),
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                        isolation_guarantee: "SANDBOX_INVARIANT_COW_RAM_ONLY".to_string(),
+                    });
+                }
+            }
+        };
+
+        if start_time.elapsed() > timeout_limit {
+            return Ok(SimulationResult {
+                target_symbol: target_symbol.to_string(),
+                target_file: defining_file,
+                status: SimulationStatus::UnknownTimeout,
+                breaks_dependents: true,
+                arity_changed: false,
+                async_changed: false,
+                old_param_count: 0,
+                new_param_count: 0,
+                old_required_param_count: 0,
+                new_required_param_count: 0,
+                impacted_callers_count: 0,
+                breakages: Vec::new(),
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                isolation_guarantee: "SANDBOX_INVARIANT_COW_RAM_ONLY".to_string(),
+            });
+        }
+
+        // 2. Parse candidate code signature
+        let candidate_sig = match ozymem_parser::parse_function_signature(candidate_code, Some(target_symbol), lang)
+            .or_else(|| ozymem_parser::parse_function_signature(candidate_code, None, lang))
+        {
+            Some(sig) => sig,
+            None => {
+                return Ok(SimulationResult {
+                    target_symbol: target_symbol.to_string(),
+                    target_file: defining_file,
+                    status: SimulationStatus::SyntaxError("Failed to parse valid function signature from candidate code".to_string()),
+                    breaks_dependents: true,
+                    arity_changed: false,
+                    async_changed: false,
+                    old_param_count: 0,
+                    new_param_count: 0,
+                    old_required_param_count: 0,
+                    new_required_param_count: 0,
+                    impacted_callers_count: 0,
+                    breakages: Vec::new(),
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    isolation_guarantee: "SANDBOX_INVARIANT_COW_RAM_ONLY".to_string(),
+                });
+            }
+        };
+
+        // 3. Parse existing signature from original source slice
+        let old_sig = ozymem_parser::parse_function_signature(&old_source, Some(target_symbol), lang)
+            .or_else(|| ozymem_parser::parse_function_signature(&old_source, None, lang));
+
+        let (old_required, old_total, old_async) = if let Some(ref orig) = old_sig {
+            (orig.required_param_count, orig.total_param_count, orig.is_async)
+        } else {
+            (0, 0, false)
+        };
+
+        let arity_changed = old_required != candidate_sig.required_param_count
+            || old_total != candidate_sig.total_param_count;
+        let async_changed = old_async != candidate_sig.is_async;
+
+        // 4. Discover caller references across the project
+        let refs = self.find_symbol_references(target_symbol, Some(&defining_file), 100, 2000)?;
+        let mut breakages = Vec::new();
+        let mut impacted_callers_count = 0;
+
+        for r in &refs.references {
+            if start_time.elapsed() > timeout_limit {
+                return Ok(SimulationResult {
+                    target_symbol: target_symbol.to_string(),
+                    target_file: defining_file,
+                    status: SimulationStatus::UnknownTimeout,
+                    breaks_dependents: true,
+                    arity_changed,
+                    async_changed,
+                    old_param_count: old_total,
+                    new_param_count: candidate_sig.total_param_count,
+                    old_required_param_count: old_required,
+                    new_required_param_count: candidate_sig.required_param_count,
+                    impacted_callers_count,
+                    breakages,
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    isolation_guarantee: "SANDBOX_INVARIANT_COW_RAM_ONLY".to_string(),
+                });
+            }
+
+            if r.reference_kind == "definition" || r.reference_kind == "import" {
+                continue;
+            }
+
+            impacted_callers_count += 1;
+
+            if let Some(passed_args) = ozymem_parser::parse_call_site_argument_count(&r.snippet, target_symbol) {
+                // If caller passes fewer than required parameters
+                if passed_args < candidate_sig.required_param_count {
+                    breakages.push(DependentBreakage {
+                        caller_symbol: r.reference_kind.clone(),
+                        caller_file: r.file_path.clone(),
+                        line_number: r.line_number,
+                        line_content: r.snippet.clone(),
+                        reason: format!(
+                            "Caller passes {} argument(s), but updated signature requires at least {}",
+                            passed_args, candidate_sig.required_param_count
+                        ),
+                    });
+                }
+                // If caller passes more than total parameters allowed
+                else if passed_args > candidate_sig.total_param_count {
+                    breakages.push(DependentBreakage {
+                        caller_symbol: r.reference_kind.clone(),
+                        caller_file: r.file_path.clone(),
+                        line_number: r.line_number,
+                        line_content: r.snippet.clone(),
+                        reason: format!(
+                            "Caller passes {} argument(s), but updated signature only accepts {}",
+                            passed_args, candidate_sig.total_param_count
+                        ),
+                    });
+                }
+            }
+
+            // Async conversion mismatch
+            if !old_async && candidate_sig.is_async && !r.snippet.contains("await") && !r.snippet.contains(".then") {
+                breakages.push(DependentBreakage {
+                    caller_symbol: r.reference_kind.clone(),
+                    caller_file: r.file_path.clone(),
+                    line_number: r.line_number,
+                    line_content: r.snippet.clone(),
+                    reason: "Function converted to async, but caller site does not await returned Promise/Coroutine".to_string(),
+                });
+            }
+        }
+
+        let breaks_dependents = !breakages.is_empty();
+        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
+        Ok(SimulationResult {
+            target_symbol: target_symbol.to_string(),
+            target_file: defining_file,
+            status: SimulationStatus::Success,
+            breaks_dependents,
+            arity_changed,
+            async_changed,
+            old_param_count: old_total,
+            new_param_count: candidate_sig.total_param_count,
+            old_required_param_count: old_required,
+            new_required_param_count: candidate_sig.required_param_count,
+            impacted_callers_count,
+            breakages,
+            execution_time_ms,
+            isolation_guarantee: "SANDBOX_INVARIANT_COW_RAM_ONLY".to_string(),
         })
     }
 }

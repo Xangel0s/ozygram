@@ -161,13 +161,16 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
     if blast_report:
         blast_radius = max(blast_radius, blast_report.total_references)
 
+    # --- Speculative Ghost Patch simulation check ---
+    ghost_sim: dict[str, Any] = payload.get("simulation_result") or payload.get("ghost_patch_report") or {}
+
     critical_keywords = ["schema", "auth", "migration", "core", "token", "secret", "config", "backend"]
     is_critical = any(kw in target_file.lower() for kw in critical_keywords) or any(
         isinstance(item, dict) and any(kw in str(item.get("file_path", "")).lower() for kw in critical_keywords)
         for item in impact
     )
-    # A high-blast-radius symbol alert also makes the change critical.
-    if blast_report and blast_report.alert_required:
+    # A high-blast-radius symbol alert or contract breakage also makes the change critical.
+    if (blast_report and blast_report.alert_required) or (ghost_sim and ghost_sim.get("breaks_dependents")):
         is_critical = True
 
     snapshot_required = blast_radius >= 3 or is_critical
@@ -176,6 +179,14 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
         f"[SIMULATION: ACTION PREVIEW] Simulacion de accion sobre '{target_file or 'workspace'}'.",
         f"[BLAST RADIUS] Radio de impacto calculado: {blast_radius} archivo(s) dependiente(s).",
     ]
+    if ghost_sim and ghost_sim.get("breaks_dependents"):
+        target_sym = ghost_sim.get("target_symbol") or symbol or "unknown"
+        breakages_count = len(ghost_sim.get("breakages", []))
+        plan_steps.insert(
+            0,
+            f"[CRITICAL_VETO: CONTRACT_BREAKAGE] La simulacion en RAM detecto que modificar '{target_sym}' "
+            f"rompe el contrato de {breakages_count} llamador(es) dependiente(s).",
+        )
     if blast_report and blast_report.alert_required:
         plan_steps.append(blast_report.alert_text)
     elif snapshot_required:

@@ -417,3 +417,39 @@ pub fn handle_view_skeleton(
     })
 }
 
+pub fn handle_simulate_patch(
+    backend: &GraphBackend,
+    tool_call: &ToolCallParams,
+) -> Result<ToolCallResult> {
+    let target_symbol = tool_call
+        .arguments
+        .get("target_symbol")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing 'target_symbol'"))?;
+    let candidate_code = tool_call
+        .arguments
+        .get("candidate_code")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing 'candidate_code'"))?;
+    let format = tool_call
+        .arguments
+        .get("format")
+        .and_then(Value::as_str)
+        .unwrap_or("text");
+
+    let sim = backend.simulate_patch(target_symbol, candidate_code)?;
+    let text_output = if format == "json" {
+        serde_json::to_string_pretty(&sim)?
+    } else {
+        crate::formatters::format_simulation_result(&sim)
+    };
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: text_output,
+        }],
+        is_error: None,
+    })
+}
+

@@ -568,5 +568,41 @@ pub struct TableLineageReport {
     pub referencing_files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SimulationStatus {
+    Success,
+    SyntaxError(String),
+    SymbolNotFound,
+    UnknownTimeout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependentBreakage {
+    pub caller_symbol: String,
+    pub caller_file: String,
+    pub line_number: usize,
+    pub line_content: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationResult {
+    pub target_symbol: String,
+    pub target_file: String,
+    pub status: SimulationStatus,
+    pub breaks_dependents: bool,
+    pub arity_changed: bool,
+    pub async_changed: bool,
+    pub old_param_count: usize,
+    pub new_param_count: usize,
+    pub old_required_param_count: usize,
+    pub new_required_param_count: usize,
+    pub impacted_callers_count: usize,
+    pub breakages: Vec<DependentBreakage>,
+    pub execution_time_ms: u64,
+    pub isolation_guarantee: String,
+}
+
+
 
 

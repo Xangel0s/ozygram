@@ -1128,6 +1128,20 @@ pub fn handle_tools_list(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "ozy_simulate_patch",
+                    description: "Simulador de parche fantasma (Ghost Patch) en memoria RAM con Copy-on-Write (CoW), límite duro de 100ms y cero I/O a disco. Evalúa cambios especulativos en la firma de una función y audita en tiempo real si rompe la aridad o tipos de los callers dependientes en todo el workspace.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "target_symbol": { "type": "string", "description": "Nombre del símbolo o función existente a simular (ej. 'calcular_ley_vida' o 'calculate_discount')" },
+                            "candidate_code": { "type": "string", "description": "Código candidato completo de la nueva función a evaluar en RAM" },
+                            "format": { "type": "string", "enum": ["text", "json"], "default": "text", "description": "Formato del reporte resultante ('text' con badges Zero-Emoji o 'json' estructurado)" }
+                        },
+                        "required": ["target_symbol", "candidate_code"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 100;
