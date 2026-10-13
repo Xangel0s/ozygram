@@ -465,10 +465,22 @@ pub struct ImpactEntry {
     pub suggestion: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractiveSnippet {
+    pub file_path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub match_line: usize,
+    pub content: String,
+    pub token_estimate: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimilarLesson {
     pub lesson: LessonEntry,
     pub score: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<ExtractiveSnippet>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -612,7 +612,7 @@ pub async fn handle_memory_tool(
                         .and_then(Value::as_f64)
                         .unwrap_or(0.5) as f32;
                     let kind_filter = tool_call.arguments.get("kind").and_then(Value::as_str);
-                    match backend.similar_lessons(query, limit, min_score) {
+                    match backend.similar_lessons_with_windows(query, limit, min_score) {
                         Ok(results) => {
                             let filtered: Vec<&ozymem_core::graph_backend::SimilarLesson> =
                                 if let Some(kind) = kind_filter {
@@ -637,11 +637,20 @@ pub async fn handle_memory_tool(
                                     "Lessons semantically similar to \"{query}\" (min score {min_score}):\n"
                                 );
                                 for (i, sl) in filtered.iter().enumerate() {
-                                    body.push_str(&format!(
-                                        "\n{}. [score: {:.3}] [{}] {} :: {}\n   context: {}\n   solution: {}\n   created: {}\n",
-                                        i + 1, sl.score, sl.lesson.kind, sl.lesson.file_path, sl.lesson.symbol_name,
-                                        sl.lesson.error_context, sl.lesson.solution, sl.lesson.created_at,
-                                    ));
+                                    if let Some(snip) = &sl.snippet {
+                                        body.push_str(&format!(
+                                            "\n{}. [score: {:.3}] [{}] {} :: {}\n   [EXTRACTIVE SNIPPET: {}:L{}-L{} (Peak Match L{}, ~{} tokens)]\n{}\n   solution: {}\n   created: {}\n",
+                                            i + 1, sl.score, sl.lesson.kind, sl.lesson.file_path, sl.lesson.symbol_name,
+                                            snip.file_path, snip.start_line, snip.end_line, snip.match_line, snip.token_estimate,
+                                            snip.content, sl.lesson.solution, sl.lesson.created_at,
+                                        ));
+                                    } else {
+                                        body.push_str(&format!(
+                                            "\n{}. [score: {:.3}] [{}] {} :: {}\n   context: {}\n   solution: {}\n   created: {}\n",
+                                            i + 1, sl.score, sl.lesson.kind, sl.lesson.file_path, sl.lesson.symbol_name,
+                                            sl.lesson.error_context, sl.lesson.solution, sl.lesson.created_at,
+                                        ));
+                                    }
                                 }
                                 ToolCallResult {
                                     content: vec![ContentBlock {

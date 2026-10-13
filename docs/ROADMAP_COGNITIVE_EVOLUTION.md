@@ -215,10 +215,10 @@ sequenceDiagram
   - **Descripción**: Parametrizar las herramientas `ozy_context` y `ozy_exploration` con el flag `lod: "macro" | "contracts" | "full"`. Configurar `lod: "contracts"` como valor por defecto para respuestas ligeras.
   - **Criterio de Aceptación**: Consultas con `lod: "contracts"` devuelven contratos sin cuerpos de métodos, reduciendo el payload de tokens a menos de un tercio. [STATUS: COMPLETED]
 
-- [ ] **Task 5.3: Ventana Extractiva para Búsqueda Semántica en `embeddings.rs`**
-  - **Componentes**: `crates/ozymem-core/src/graph_backend/embeddings.rs`.
+- [x] **Task 5.3: Ventana Extractiva para Búsqueda Semántica en `embeddings.rs`**
+  - **Componentes**: `crates/ozymem-core/src/graph_backend/embeddings.rs`, `crates/ozymem-core/src/graph_backend/types.rs`, `crates/ozymem-server/src/memory.rs`.
   - **Descripción**: Reemplazar la inyección de chunks estáticos de 1024 tokens por un recortador que calcule el offset del match más cercano y extraiga una ventana contextual de $\pm 10$ líneas acompañada de la ruta del archivo y los números de línea exactos.
-  - **Criterio de Aceptación**: Resultados de búsqueda semántica devuelven snippets precisos de 20-30 líneas en lugar de archivos o bloques completos. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: Resultados de búsqueda semántica devuelven snippets precisos de 20-30 líneas en lugar de archivos o bloques completos. [STATUS: COMPLETED]
 
 - [ ] **Task 5.4: Deduplicador de Sesión y Telemetría de Tokens (`ozymem stats`)**
   - **Componentes**: `crates/ozymem-server/src/state.rs`, `crates/ozymem-cli/src/commands/stats.rs`.

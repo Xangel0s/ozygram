@@ -1,4 +1,6 @@
-use crate::graph_backend::types::{EmbeddingModelStatus, GraphBackend, LessonEntry, SimilarLesson};
+use crate::graph_backend::types::{
+    EmbeddingModelStatus, ExtractiveSnippet, GraphBackend, LessonEntry, SimilarLesson,
+};
 use anyhow::Result;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use rusqlite::params;
@@ -215,7 +217,11 @@ impl GraphBackend {
                 if score < min_score {
                     return None;
                 }
-                Some(SimilarLesson { lesson, score })
+                Some(SimilarLesson {
+                    lesson,
+                    score,
+                    snippet: None,
+                })
             })
             .collect();
 
@@ -226,5 +232,177 @@ impl GraphBackend {
         });
         scored.truncate(limit.min(100));
         Ok(scored)
+    }
+
+    /// Extrae una ventana contextual de un archivo registrado o de disco (+/- 10 líneas)
+    pub fn extract_context_window(
+        &self,
+        file_path: &str,
+        query: &str,
+        preferred_line: Option<usize>,
+    ) -> Option<ExtractiveSnippet> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let path_obj = std::path::Path::new(&resolved);
+        let effective = if path_obj.exists() {
+            path_obj.to_path_buf()
+        } else if let Some(root) = self.project_path() {
+            std::path::Path::new(&root).join(&resolved)
+        } else {
+            std::path::PathBuf::from(&resolved)
+        };
+
+        if let Ok(source) = std::fs::read_to_string(&effective) {
+            Some(extract_snippet_from_source(file_path, &source, query, preferred_line, 10))
+        } else {
+            None
+        }
+    }
+
+    /// Busca lecciones similares e inyecta ventanas extractivas quirúrgicas en lugar de bloques completos
+    pub fn similar_lessons_with_windows(
+        &self,
+        query: &str,
+        limit: usize,
+        min_score: f32,
+    ) -> Result<Vec<SimilarLesson>> {
+        let mut results = self.similar_lessons(query, limit, min_score)?;
+        for item in &mut results {
+            if let Some(snip) = self.extract_context_window(&item.lesson.file_path, query, None) {
+                item.snippet = Some(snip);
+            } else if !item.lesson.error_context.is_empty() {
+                let snip = extract_snippet_from_source(
+                    &item.lesson.file_path,
+                    &item.lesson.error_context,
+                    query,
+                    None,
+                    10,
+                );
+                item.snippet = Some(snip);
+            }
+        }
+        Ok(results)
+    }
+}
+
+/// Extrae una ventana contextual quirúrgica alrededor de la línea de mayor coincidencia (+/- window_padding líneas)
+pub fn extract_snippet_from_source(
+    file_path: &str,
+    source: &str,
+    query: &str,
+    preferred_line: Option<usize>,
+    window_padding: usize,
+) -> ExtractiveSnippet {
+    let lines: Vec<&str> = source.lines().collect();
+    if lines.is_empty() {
+        return ExtractiveSnippet {
+            file_path: file_path.to_string(),
+            start_line: 1,
+            end_line: 1,
+            match_line: 1,
+            content: String::new(),
+            token_estimate: 0,
+        };
+    }
+
+    let peak_line = if let Some(pref) = preferred_line {
+        pref.clamp(1, lines.len())
+    } else {
+        let query_tokens: Vec<String> = query
+            .split_whitespace()
+            .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+
+        let mut best_line = 1;
+        let mut best_score = 0;
+
+        for (idx, line) in lines.iter().enumerate() {
+            let line_lower = line.to_lowercase();
+            let mut score = 0;
+            if !query.is_empty() && line_lower.contains(&query.to_lowercase()) {
+                score += 100;
+            }
+            for token in &query_tokens {
+                if line_lower.contains(token) {
+                    score += 10;
+                }
+            }
+            if score > best_score {
+                best_score = score;
+                best_line = idx + 1;
+            }
+        }
+        best_line
+    };
+
+    let start_line = peak_line.saturating_sub(window_padding).max(1);
+    let end_line = (peak_line + window_padding).min(lines.len());
+
+    let mut snippet_lines = Vec::new();
+    for l_idx in start_line..=end_line {
+        let content_line = lines[l_idx - 1];
+        snippet_lines.push(format!("{:4} | {}", l_idx, content_line));
+    }
+
+    let content = snippet_lines.join("\n");
+    let token_estimate = (content.len() / 4).max(1);
+
+    ExtractiveSnippet {
+        file_path: file_path.to_string(),
+        start_line,
+        end_line,
+        match_line: peak_line,
+        content,
+        token_estimate,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_snippet_centered_window() {
+        let mut source_lines = Vec::new();
+        for i in 1..=100 {
+            if i == 50 {
+                source_lines.push(format!("line {}: critical recalculate target logic here", i));
+            } else {
+                source_lines.push(format!("line {}: normal code", i));
+            }
+        }
+        let source = source_lines.join("\n");
+
+        let snippet = extract_snippet_from_source(
+            "src/services/recalculo.ts",
+            &source,
+            "recalculate target logic",
+            None,
+            10,
+        );
+
+        assert_eq!(snippet.match_line, 50);
+        assert_eq!(snippet.start_line, 40);
+        assert_eq!(snippet.end_line, 60);
+        assert!(snippet.content.contains("50 | line 50: critical recalculate target logic here"));
+        assert!(snippet.content.contains("40 | line 40: normal code"));
+        assert!(snippet.content.contains("60 | line 60: normal code"));
+        assert!(!snippet.content.contains("39 | line 39: normal code"));
+        assert!(!snippet.content.contains("61 | line 61: normal code"));
+        assert!(snippet.token_estimate > 0 && snippet.token_estimate < 300);
+    }
+
+    #[test]
+    fn test_extract_snippet_boundaries() {
+        let source = "line 1\nline 2\nline 3: target match\nline 4\nline 5";
+        let snippet = extract_snippet_from_source("small.ts", source, "target match", None, 10);
+        assert_eq!(snippet.start_line, 1);
+        assert_eq!(snippet.end_line, 5);
+        assert_eq!(snippet.match_line, 3);
+
+        let snippet_pref = extract_snippet_from_source("small.ts", source, "irrelevant", Some(4), 2);
+        assert_eq!(snippet_pref.start_line, 2);
+        assert_eq!(snippet_pref.end_line, 5);
+        assert_eq!(snippet_pref.match_line, 4);
     }
 }
