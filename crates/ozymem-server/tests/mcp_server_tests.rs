@@ -3017,3 +3017,68 @@ export function handleReorderCard(a: number, b: number) {
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_tools_view_skeleton_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_skel_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let ts_file = tmp_root.join("RecepcionService.ts");
+        let ts_content = r#"import { BaseService } from './base';
+export interface RecepcionPayload { id: string; fecha: string; total: number; }
+export class RecepcionService extends BaseService {
+    async processRecepcion(payload: RecepcionPayload): Promise<boolean> {
+        console.log("Starting heavy validation step 1...");
+        let valid = true;
+        for (let i = 0; i < 50; i++) {
+            if (i % 2 === 0) {
+                valid = !valid;
+            }
+        }
+        return valid;
+    }
+}
+"#;
+        std::fs::write(&ts_file, ts_content).unwrap();
+
+        let call_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_view_skeleton",
+                "arguments": {
+                    "file_path": ts_file.to_string_lossy()
+                }
+            })),
+        };
+
+        let resp = handle_request(&backend_ref, call_req, None, None).await.unwrap().unwrap();
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let report: Value = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(report["language"], "TypeScript");
+        assert!(report["skeleton_code"].as_str().unwrap().contains("export interface RecepcionPayload"));
+        assert!(report["skeleton_code"].as_str().unwrap().contains("class RecepcionService extends BaseService"));
+        assert!(report["skeleton_code"].as_str().unwrap().contains("async processRecepcion(payload: RecepcionPayload): Promise<boolean> { /* [omitted"));
+        assert!(!report["skeleton_code"].as_str().unwrap().contains("Starting heavy validation step 1..."));
+        assert!(report["reduction_percentage"].as_f64().unwrap() >= 40.0);
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+

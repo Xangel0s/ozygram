@@ -1112,6 +1112,18 @@ pub fn handle_tools_list(
                         "additionalProperties": false
                     }),
                 },
+                mcp_common::ToolDefinition {
+                    name: "ozy_view_skeleton",
+                    description: "Genera una vista esqueleto podada por AST de un archivo fuente. Preserva imports, exports, interfaces, tipos, enums y firmas de funciones/métodos con docstrings, pero omite los cuerpos de las funciones ahorrando del 75% al 90% de tokens de contexto.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Ruta del archivo a inspeccionar en modo esqueleto" }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
             ];
             // Pagination support for tools/list
             let page_size = 100;

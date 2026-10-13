@@ -346,3 +346,50 @@ pub fn handle_find_references(
         is_error: None,
     })
 }
+
+pub fn handle_view_skeleton(
+    backend: &GraphBackend,
+    tool_call: &ToolCallParams,
+) -> Result<ToolCallResult> {
+    let file_path = tool_call
+        .arguments
+        .get("file_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing 'file_path'"))?;
+
+    let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+    let path_obj = std::path::Path::new(&resolved);
+    let effective = if path_obj.exists() {
+        path_obj.to_path_buf()
+    } else if let Some(root) = backend.project_path() {
+        std::path::Path::new(&root).join(&resolved)
+    } else {
+        std::path::PathBuf::from(&resolved)
+    };
+
+    if !effective.exists() {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock {
+                kind: "text",
+                text: serde_json::to_string_pretty(&json!({
+                    "status": "error",
+                    "error": format!("[ALERT: FILE_NOT_FOUND] File '{}' not found", file_path)
+                }))?,
+            }],
+            is_error: Some(true),
+        });
+    }
+
+    let source = std::fs::read_to_string(&effective)?;
+    let lang = ozymem_parser::SupportedLanguage::from_path(&effective);
+    let report = ozymem_parser::generate_skeleton(&resolved, lang, &source);
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: serde_json::to_string_pretty(&report)?,
+        }],
+        is_error: None,
+    })
+}
+

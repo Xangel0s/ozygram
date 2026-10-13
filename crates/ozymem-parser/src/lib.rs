@@ -85,6 +85,16 @@ pub struct AstDiagnostic {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SkeletonReport {
+    pub file_path: String,
+    pub language: String,
+    pub original_lines: usize,
+    pub skeleton_lines: usize,
+    pub reduction_percentage: f64,
+    pub skeleton_code: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtractedFunction {
     pub name: String,
@@ -951,6 +961,172 @@ pub fn extract_ast_diagnostics(
     diagnostics
 }
 
+/// Generates an AST-pruned skeleton of a source code file.
+/// Preserves imports, exports, interfaces, type aliases, enums, class structures,
+/// method/function signatures, and docstrings, while pruning function/method implementation bodies.
+pub fn generate_skeleton(
+    file_path: &str,
+    language: SupportedLanguage,
+    source_code: &str,
+) -> SkeletonReport {
+    let original_lines = source_code.lines().count();
+    let Some(ts_language) = language.native_tree_sitter_language() else {
+        return SkeletonReport {
+            file_path: file_path.to_string(),
+            language: language.as_str().to_string(),
+            original_lines,
+            skeleton_lines: original_lines,
+            reduction_percentage: 0.0,
+            skeleton_code: source_code.to_string(),
+        };
+    };
+
+    let mut parser = Parser::new();
+    if parser.set_language(&ts_language).is_err() {
+        return SkeletonReport {
+            file_path: file_path.to_string(),
+            language: language.as_str().to_string(),
+            original_lines,
+            skeleton_lines: original_lines,
+            reduction_percentage: 0.0,
+            skeleton_code: source_code.to_string(),
+        };
+    }
+
+    let Some(tree) = parser.parse(source_code, None) else {
+        return SkeletonReport {
+            file_path: file_path.to_string(),
+            language: language.as_str().to_string(),
+            original_lines,
+            skeleton_lines: original_lines,
+            reduction_percentage: 0.0,
+            skeleton_code: source_code.to_string(),
+        };
+    };
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    let mut cursor = tree.walk();
+    let mut reached_limit = false;
+
+    loop {
+        let node = cursor.node();
+        let kind = node.kind();
+
+        let is_func = match language {
+            SupportedLanguage::Python => kind == "function_definition",
+            SupportedLanguage::Rust => kind == "function_item",
+            SupportedLanguage::Go => kind == "function_declaration" || kind == "method_declaration",
+            SupportedLanguage::JavaScript
+            | SupportedLanguage::TypeScript
+            | SupportedLanguage::TypeScriptReact => {
+                kind == "function_declaration"
+                    || kind == "method_definition"
+                    || kind == "function_expression"
+                    || kind == "arrow_function"
+            }
+            _ => false,
+        };
+
+        if is_func {
+            if let Some(body_node) = node.child_by_field_name("body") {
+                let start_row = body_node.start_position().row;
+                let end_row = body_node.end_position().row;
+                let lines_omitted = end_row.saturating_sub(start_row);
+
+                if lines_omitted >= 2 && body_node.end_byte() > body_node.start_byte() {
+                    let (start_byte, end_byte, repl) = match language {
+                        SupportedLanguage::Python => {
+                            let indent = " ".repeat(body_node.start_position().column);
+                            let mut repl_start = body_node.start_byte();
+                            if let Some(first_child) = body_node.named_child(0) {
+                                if first_child.kind() == "expression_statement" {
+                                    if let Some(str_node) = first_child.named_child(0) {
+                                        if str_node.kind() == "string" {
+                                            repl_start = first_child.end_byte();
+                                        }
+                                    }
+                                }
+                            }
+                            let r = if repl_start > body_node.start_byte() {
+                                format!("\n{}# [omitted {} lines]\n{}pass", indent, lines_omitted, indent)
+                            } else {
+                                format!("# [omitted {} lines]\n{}pass", lines_omitted, indent)
+                            };
+                            (repl_start, body_node.end_byte(), r)
+                        }
+                        _ => {
+                            let r = if body_node.kind() == "statement_block" || body_node.kind() == "block" {
+                                format!("{{ /* [omitted {} lines] */ }}", lines_omitted)
+                            } else {
+                                format!("(/* [omitted {} lines] */)", lines_omitted)
+                            };
+                            (body_node.start_byte(), body_node.end_byte(), r)
+                        }
+                    };
+                    replacements.push((start_byte, end_byte, repl));
+                }
+            }
+        }
+
+        if cursor.goto_first_child() {
+            continue;
+        }
+        if cursor.goto_next_sibling() {
+            continue;
+        }
+        loop {
+            if !cursor.goto_parent() {
+                reached_limit = true;
+                break;
+            }
+            if cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        if reached_limit {
+            break;
+        }
+    }
+
+    // Sort intervals by start_byte ASC, end_byte DESC to prioritize outer functions
+    replacements.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
+
+    let mut filtered_replacements: Vec<(usize, usize, String)> = Vec::new();
+    let mut max_end = 0;
+    for (start, end, repl) in replacements {
+        if start >= max_end {
+            max_end = end;
+            filtered_replacements.push((start, end, repl));
+        }
+    }
+
+    // Apply replacements from back to front
+    filtered_replacements.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut skeleton = source_code.to_string();
+    for (start, end, repl) in filtered_replacements {
+        if start <= end && end <= skeleton.len() {
+            skeleton.replace_range(start..end, &repl);
+        }
+    }
+
+    let skeleton_lines = skeleton.lines().count();
+    let reduction_percentage = if original_lines > 0 {
+        let saved = original_lines.saturating_sub(skeleton_lines);
+        (saved as f64 / original_lines as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    SkeletonReport {
+        file_path: file_path.to_string(),
+        language: language.as_str().to_string(),
+        original_lines,
+        skeleton_lines,
+        reduction_percentage: (reduction_percentage * 10.0).round() / 10.0,
+        skeleton_code: skeleton,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1222,6 +1398,107 @@ export const columns = [
         let extract_flex = extract_symbol_source("src/components/Kanban.tsx", "cotizacion", source, SupportedLanguage::TypeScriptReact)
             .expect("flexible extract cotizacion should succeed");
         assert_eq!(extract_flex.name, "cotizacion.cell");
+    }
+
+    #[test]
+    fn test_skeletonize_typescript_contracts() {
+        let ts_code = r#"import { useState, useEffect } from 'react';
+import type { UserProfile, OrderData } from '@/types/crm';
+
+export interface RecalculoRequest {
+    clienteId: string;
+    anio: number;
+    aplicarDescuento: boolean;
+}
+
+export type RecalculoResult = {
+    total: number;
+    estado: 'ok' | 'error';
+};
+
+export async function recalcularVidaLey(req: RecalculoRequest): Promise<RecalculoResult> {
+    const factor = 1.05;
+    let acumulado = 0;
+    for (let i = 0; i < 100; i++) {
+        acumulado += (i * factor);
+        if (acumulado > 1000) {
+            console.log("Limite alcanzado en iteracion", i);
+        }
+    }
+    return { total: acumulado, estado: 'ok' };
+}
+
+export const fetchOrder = async (id: string): Promise<OrderData> => {
+    const res = await fetch(`/api/orders/${id}`);
+    const data = await res.json();
+    return data;
+};
+"#;
+
+        let report = generate_skeleton("test.ts", SupportedLanguage::TypeScript, ts_code);
+        assert!(report.skeleton_code.contains("export interface RecalculoRequest"));
+        assert!(report.skeleton_code.contains("export type RecalculoResult"));
+        assert!(report.skeleton_code.contains("export async function recalcularVidaLey(req: RecalculoRequest): Promise<RecalculoResult> { /* [omitted"));
+        assert!(report.skeleton_code.contains("export const fetchOrder = async (id: string): Promise<OrderData> => { /* [omitted"));
+        assert!(!report.skeleton_code.contains("let acumulado = 0;"));
+        assert!(!report.skeleton_code.contains("const factor = 1.05;"));
+        assert!(report.reduction_percentage > 40.0, "Reduction should be significant: was {}", report.reduction_percentage);
+    }
+
+    #[test]
+    fn test_skeletonize_python_class_methods() {
+        let py_code = r#"from typing import List, Optional
+import os
+
+class DatabaseEngine:
+    """Core database interface."""
+    def __init__(self, dsn: str):
+        """Initialize connection pool."""
+        self.dsn = dsn
+        self.connected = False
+        for i in range(10):
+            print("Connecting", i)
+        self.connected = True
+
+    def query(self, sql: str) -> List[dict]:
+        """Execute query safely."""
+        tokens = sql.split()
+        results = []
+        for token in tokens:
+            results.append({"token": token})
+        return results
+"#;
+
+        let report = generate_skeleton("engine.py", SupportedLanguage::Python, py_code);
+        eprintln!("PYTHON SKELETON:\n{}", report.skeleton_code);
+        eprintln!("LINES: orig={}, skel={}, red={}", report.original_lines, report.skeleton_lines, report.reduction_percentage);
+        assert!(report.skeleton_code.contains("class DatabaseEngine:"));
+        assert!(report.skeleton_code.contains("Core database interface."));
+        assert!(report.skeleton_code.contains("def __init__(self, dsn: str):"));
+        assert!(report.skeleton_code.contains("def query(self, sql: str) -> List[dict]:"));
+        assert!(report.skeleton_code.contains("# [omitted"));
+        assert!(!report.skeleton_code.contains("results.append({\"token\": token})"));
+        assert!(report.reduction_percentage >= 30.0);
+    }
+
+    #[test]
+    fn test_skeletonize_large_tsx_file_reduction() {
+        let mut lines = Vec::new();
+        lines.push("import React, { useState } from 'react';".to_string());
+        lines.push("export interface Props { title: string; }".to_string());
+        lines.push("export function HeavyComponent(props: Props) {".to_string());
+        for i in 0..100 {
+            lines.push(format!("    const step_{} = {} * 2;", i, i));
+        }
+        lines.push("    return <div>{props.title}</div>;".to_string());
+        lines.push("}".to_string());
+
+        let source = lines.join("\n");
+        let report = generate_skeleton("HeavyComponent.tsx", SupportedLanguage::TypeScriptReact, &source);
+        assert!(report.skeleton_code.contains("export interface Props"));
+        assert!(report.skeleton_code.contains("HeavyComponent(props: Props) { /* [omitted"));
+        assert!(report.skeleton_lines <= 4);
+        assert!(report.reduction_percentage >= 95.0, "Expected >=95% reduction, got {}", report.reduction_percentage);
     }
 }
 
