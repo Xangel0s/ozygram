@@ -674,5 +674,52 @@ pub(crate) fn format_endpoint_dependents(report: &ozymem_core::graph_backend::ty
     out
 }
 
+pub(crate) fn format_table_lineage(report: &ozymem_core::graph_backend::types::TableLineageReport) -> String {
+    let mut out = format!(
+        "[DATABASE TABLE LINEAGE]\nTable: {}\nTotal Referencing Files: {}\n\n",
+        report.table_name, report.total_referencing_files
+    );
+
+    out.push_str(&format!(
+        "[MIGRATIONS & DDL DEFINITIONS] ({})\n",
+        report.migration_definitions.len()
+    ));
+    if report.migration_definitions.is_empty() {
+        out.push_str("  No SQL migration files found defining or altering this table.\n");
+    } else {
+        for def in &report.migration_definitions {
+            out.push_str(&format!(
+                "  - [{}] {}:{} -> {}\n",
+                def.operation,
+                def.file_path,
+                def.line_number,
+                def.raw_statement
+            ));
+        }
+    }
+    out.push('\n');
+
+    out.push_str(&format!(
+        "[BACKEND MODELS & SERVICES] ({})\n",
+        report.backend_models.len()
+    ));
+    if report.backend_models.is_empty() {
+        out.push_str("  No backend ORM models found referencing this table.\n");
+    } else {
+        for model in &report.backend_models {
+            out.push_str(&format!(
+                "  - [{}] {}:{} -> {}\n",
+                model.operation,
+                model.file_path,
+                model.line_number,
+                model.raw_statement
+            ));
+        }
+    }
+
+    out
+}
+
+
 
 

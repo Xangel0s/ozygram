@@ -8,6 +8,7 @@ use std::str::FromStr;
 use crate::graph_backend::types::{
     AutoWireReport, EndpointDependentsReport, GraphBackend, GraphEntityNode, GraphEntityType,
     MemoryEdgeRecord, MemoryEdgeType, MemoryGraphEdge, MemoryNodeRecord, NeighborhoodResult,
+    TableLineageReport,
 };
 
 impl GraphBackend {
@@ -1033,6 +1034,81 @@ impl GraphBackend {
             consumers,
             total_consumer_files: consumer_files.len(),
             consumer_files,
+        })
+    }
+
+    /// Returns the DDL migration history and backend model references for a given database table.
+    /// Connects SQL migration lineage with FastAPI SQLAlchemy/SQLModel models.
+    pub fn get_table_lineage(&self, target_table: &str) -> Result<TableLineageReport> {
+        let norm_table = ozymem_parser::normalize_table_name(target_table);
+
+        let mut migration_definitions: Vec<ozymem_parser::SqlTableReference> = Vec::new();
+        let mut backend_models: Vec<ozymem_parser::SqlTableReference> = Vec::new();
+        let mut referencing_files_set: HashSet<String> = HashSet::new();
+
+        // 1. Fetch relevant files from files table
+        let target_files: Vec<(String, String)> = {
+            let inner = self.inner.lock().unwrap();
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT path, language FROM files 
+                 WHERE tenant_id = ?1 
+                   AND (path LIKE '%.sql' OR path LIKE '%.py' OR path LIKE '%.ts' OR path LIKE '%.js' OR path LIKE '%.prisma')",
+            )?;
+            let rows = stmt.query_map(params![self.tenant_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        for (fp, _lang_str) in target_files {
+            let path = std::path::Path::new(&fp);
+            if path.exists() {
+                if let Ok(source) = std::fs::read_to_string(path) {
+                    if fp.ends_with(".sql") {
+                        let sql_refs = ozymem_parser::parse_sql_ddl_tables(&source, &fp);
+                        for r in sql_refs {
+                            if r.table_name == norm_table {
+                                referencing_files_set.insert(r.file_path.clone());
+                                migration_definitions.push(r);
+                            }
+                        }
+                    } else {
+                        let model_refs = ozymem_parser::parse_model_tables(&source, &fp);
+                        for r in model_refs {
+                            if r.table_name == norm_table {
+                                referencing_files_set.insert(r.file_path.clone());
+                                backend_models.push(r);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut referencing_files: Vec<String> = referencing_files_set.into_iter().collect();
+        referencing_files.sort();
+
+        // Record TouchesTable edges in SQLite and memory graph
+        let now = chrono::Utc::now().to_rfc3339();
+        for r in migration_definitions.iter().chain(backend_models.iter()) {
+            let edge = MemoryEdgeRecord {
+                source_type: GraphEntityType::File,
+                source_id: r.file_path.clone(),
+                target_type: GraphEntityType::DatabaseTable,
+                target_id: norm_table.clone(),
+                edge_type: MemoryEdgeType::TouchesTable,
+                weight: 1.0,
+                created_at: now.clone(),
+                tenant_id: self.tenant_id.clone(),
+                workspace_root: self.project_path().unwrap_or_default(),
+            };
+            let _ = self.insert_memory_edge(&edge);
+        }
+
+        Ok(TableLineageReport {
+            table_name: norm_table,
+            migration_definitions,
+            backend_models,
+            total_referencing_files: referencing_files.len(),
+            referencing_files,
         })
     }
 }

@@ -386,6 +386,21 @@ pub async fn handle_unified_tool(
                                 crate::formatters::format_endpoint_dependents(&report)
                             }
                         }
+                        "table_lineage" | "table_impact" => {
+                            let table = tool_call
+                                .arguments
+                                .get("table")
+                                .or_else(|| tool_call.arguments.get("entity_id"))
+                                .or_else(|| tool_call.arguments.get("file_path"))
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing table parameter for table_lineage"))?;
+                            let report = backend.get_table_lineage(table)?;
+                            if tool_call.arguments.get("format").and_then(Value::as_str) == Some("json") {
+                                serde_json::to_string_pretty(&report)?
+                            } else {
+                                crate::formatters::format_table_lineage(&report)
+                            }
+                        }
                         "render_mermaid" | "mermaid" => {
                             let module = tool_call.arguments.get("module").and_then(Value::as_str);
                             backend.render_mermaid_memory_graph(module)?

@@ -3434,6 +3434,110 @@ export function ControlSig() {
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_ozy_graph_table_lineage_mcp() {
+        let backend_ref = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_mcp_tbl_lineage_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let mig_dir = tmp_root.join("migrations");
+        std::fs::create_dir_all(&mig_dir).unwrap();
+        let sql_file = mig_dir.join("067_clasificar_jinshi_antiguo_silvia.sql");
+        std::fs::write(
+            &sql_file,
+            r#"-- Migration 067
+CREATE TABLE IF NOT EXISTS public.control_probetas (
+    id SERIAL PRIMARY KEY,
+    codigo VARCHAR(50) NOT NULL
+);
+
+ALTER TABLE control_probetas ADD COLUMN costo_servicio NUMERIC(10, 2);
+"#,
+        ).unwrap();
+
+        let mod_dir = tmp_root.join("api").join("models");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        let py_model = mod_dir.join("probeta.py");
+        std::fs::write(
+            &py_model,
+            r#"from sqlmodel import SQLModel, Field
+
+class ControlProbeta(SQLModel, table=True):
+    __tablename__ = "control_probetas"
+    id: int = Field(primary_key=True)
+"#,
+        ).unwrap();
+
+        // 1. Initialize MCP backend with directory
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        let _ = handle_request(&backend_ref, init_req, None, None).await.unwrap().unwrap();
+
+        // 2. Index files
+        {
+            let guard = backend_ref.lock().unwrap();
+            let backend = guard.as_ref().unwrap();
+            backend.index_file_delta(&sql_file, &tmp_root).unwrap();
+            backend.index_file_delta(&py_model, &tmp_root).unwrap();
+        }
+
+        // 1. Text format
+        let req1 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(10)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_graph",
+                "arguments": {
+                    "action": "table_lineage",
+                    "table": "control_probetas"
+                }
+            })),
+        };
+        let resp1 = handle_request(&backend_ref, req1, None, None).await.unwrap().unwrap();
+        assert!(resp1.error.is_none());
+        let text1 = resp1.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text1.contains("[DATABASE TABLE LINEAGE]"));
+        assert!(text1.contains("Table: control_probetas"));
+        assert!(text1.contains("[MIGRATIONS & DDL DEFINITIONS] (2)"));
+        assert!(text1.contains("[BACKEND MODELS & SERVICES] (1)"));
+        assert!(text1.contains("Total Referencing Files: 2"));
+
+        // 2. JSON format
+        let req2 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(11)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_graph",
+                "arguments": {
+                    "action": "table_lineage",
+                    "table": "control_probetas",
+                    "format": "json"
+                }
+            })),
+        };
+        let resp2 = handle_request(&backend_ref, req2, None, None).await.unwrap().unwrap();
+        assert!(resp2.error.is_none());
+        let body2: Value = serde_json::from_str(resp2.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body2["table_name"], "control_probetas");
+        assert_eq!(body2["total_referencing_files"], 2);
+        assert_eq!(body2["migration_definitions"].as_array().unwrap().len(), 2);
+        assert_eq!(body2["backend_models"].as_array().unwrap().len(), 1);
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+
 
 
 

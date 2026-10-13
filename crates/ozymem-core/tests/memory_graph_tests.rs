@@ -278,3 +278,60 @@ export function SctrForm() {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_table_lineage_ddl_and_models() -> Result<()> {
+    let tmp = tempdir()?;
+    let root = tmp.path();
+    let db_path = root.join("memory.db");
+    let backend = GraphBackend::open(Some(&db_path.to_string_lossy()))?;
+    backend.set_project_path(Some(&root.to_string_lossy()));
+
+    // 1. Create SQL migration file
+    let mig_dir = root.join("migrations");
+    std::fs::create_dir_all(&mig_dir)?;
+    let sql_file = mig_dir.join("067_clasificar_jinshi_antiguo_silvia.sql");
+    std::fs::write(
+        &sql_file,
+        r#"-- Migration 067
+CREATE TABLE IF NOT EXISTS public.control_probetas (
+    id SERIAL PRIMARY KEY,
+    codigo VARCHAR(50) NOT NULL
+);
+
+ALTER TABLE control_probetas ADD COLUMN costo_servicio NUMERIC(10, 2);
+"#,
+    )?;
+
+    // 2. Create Python SQLAlchemy model file
+    let mod_dir = root.join("api").join("models");
+    std::fs::create_dir_all(&mod_dir)?;
+    let py_model = mod_dir.join("probeta.py");
+    std::fs::write(
+        &py_model,
+        r#"from sqlmodel import SQLModel, Field
+
+class ControlProbeta(SQLModel, table=True):
+    __tablename__ = "control_probetas"
+    id: int = Field(primary_key=True)
+"#,
+    )?;
+
+    // 3. Index the files
+    backend.index_file_delta(&sql_file, root)?;
+    backend.index_file_delta(&py_model, root)?;
+
+    // 4. Query table lineage for control_probetas
+    let lineage = backend.get_table_lineage("control_probetas")?;
+    assert_eq!(lineage.table_name, "control_probetas");
+    assert_eq!(lineage.total_referencing_files, 2);
+    assert_eq!(lineage.migration_definitions.len(), 2);
+    assert_eq!(lineage.backend_models.len(), 1);
+
+    assert_eq!(lineage.migration_definitions[0].operation, "CREATE");
+    assert_eq!(lineage.migration_definitions[1].operation, "ALTER");
+    assert_eq!(lineage.backend_models[0].operation, "MODEL");
+
+    Ok(())
+}
+
+

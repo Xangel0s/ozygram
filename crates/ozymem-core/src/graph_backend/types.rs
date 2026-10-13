@@ -559,4 +559,14 @@ pub struct EndpointDependentsReport {
     pub consumer_files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableLineageReport {
+    pub table_name: String,
+    pub migration_definitions: Vec<ozymem_parser::SqlTableReference>,
+    pub backend_models: Vec<ozymem_parser::SqlTableReference>,
+    pub total_referencing_files: usize,
+    pub referencing_files: Vec<String>,
+}
+
+
 

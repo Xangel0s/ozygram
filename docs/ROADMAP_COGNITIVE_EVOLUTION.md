@@ -240,10 +240,10 @@ sequenceDiagram
   - **Descripción**: Crear la entidad `GraphEntityType::Endpoint` y el tipo de arista `MemoryEdgeType::ConsumesEndpoint`. Durante el indexado, enlazar automáticamente los endpoints de Python/FastAPI con los componentes TSX de Next.js que los consumen.
   - **Criterio de Aceptación**: Una consulta a `ozy_graph(action="endpoint_dependents", endpoint="/api/sig/sctr")` devuelve en < 5 ms la lista exacta de componentes frontend vinculados y definiciones backend. [STATUS: COMPLETED]
 
-- [ ] **Task 6.3: Extractor de Linaje DDL para Migraciones SQL**
-  - **Componentes**: `crates/ozymem-server/src/sql_linter.rs`, `crates/ozymem-core/src/graph_backend/schema.rs`.
-  - **Descripción**: Parsear archivos `.sql` extrayendo nombres de tablas creadas o modificadas (`CREATE TABLE`, `ALTER TABLE`, `REFERENCES`), registrando entidades `GraphEntityType::DatabaseTable` y aristas `TouchesTable` conectadas a los modelos del backend.
-  - **Criterio de Aceptación**: Archivos de migración quedan vinculados en el grafo a sus respectivas tablas y servicios consumidores. [STATUS: PLANNED]
+- [x] **Task 6.3: Extractor de Linaje DDL para Migraciones SQL**
+  - **Componentes**: `crates/ozymem-parser/src/sql_ddl.rs`, `crates/ozymem-core/src/graph_backend/memory_graph.rs`, `crates/ozymem-server/src/unified.rs`.
+  - **Descripción**: Parsear archivos `.sql` extrayendo nombres de tablas creadas o modificadas (`CREATE TABLE`, `ALTER TABLE`, `REFERENCES`), registrando entidades `GraphEntityType::DatabaseTable` y aristas `TouchesTable` conectadas a los modelos del backend (SQLAlchemy, SQLModel, Drizzle, Prisma).
+  - **Criterio de Aceptación**: `ozy_graph(action="table_lineage", table="control_probetas")` devuelve la historia DDL completa de migraciones y modelos ORM vinculados en < 10 ms. [STATUS: COMPLETED]
 
 - [ ] **Task 6.4: Invalidador Incremental de Caché con Watcher de Filesystem**
   - **Componentes**: `crates/ozymem-server/src/main.rs`, `crates/ozymem-core/src/graph_backend/indexing.rs`.
