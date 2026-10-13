@@ -1,9 +1,79 @@
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use tokio::sync::mpsc;
 use ozymem_core::mcp_common;
+
+#[derive(Default)]
+pub struct SessionMetrics {
+    pub tokens_saved: AtomicUsize,
+    pub cache_hits: AtomicUsize,
+    pub symbols_served: AtomicUsize,
+    pub ghost_patches_simulated: AtomicUsize,
+    pub regressions_blocked: AtomicUsize,
+}
+
+pub struct SessionDeduplicator {
+    seen_hashes: RwLock<HashSet<String>>,
+    pub metrics: SessionMetrics,
+}
+
+impl Default for SessionDeduplicator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SessionDeduplicator {
+    pub fn new() -> Self {
+        Self {
+            seen_hashes: RwLock::new(HashSet::new()),
+            metrics: SessionMetrics::default(),
+        }
+    }
+
+    /// Computa el hash SHA-256 de un símbolo/contenido y verifica si ya fue entregado en esta sesión.
+    /// Si ya fue entregado y `force` es falso, retorna Some(compact_reference) con el hash corto.
+    /// Si es la primera vez, registra el hash y retorna None.
+    pub fn check_or_record(&self, symbol_key: &str, content: &str, force: bool) -> Option<String> {
+        let mut hasher = Sha256::new();
+        hasher.update(content.as_bytes());
+        let hash_hex = format!("{:x}", hasher.finalize());
+        let short_hash = &hash_hex[..8];
+
+        if !force {
+            let reader = self.seen_hashes.read().unwrap();
+            if reader.contains(&hash_hex) {
+                let saved = (content.len() / 4).max(10);
+                self.metrics.tokens_saved.fetch_add(saved, Ordering::Relaxed);
+                self.metrics.cache_hits.fetch_add(1, Ordering::Relaxed);
+
+                return Some(format!(
+                    "[STATUS: CACHED_IN_CONTEXT: Symbol '{}' (sha256: {}), unchanged - 0 lines emitted, saved ~{} tokens]",
+                    symbol_key, short_hash, saved
+                ));
+            }
+        }
+
+        let mut writer = self.seen_hashes.write().unwrap();
+        writer.insert(hash_hex);
+        self.metrics.symbols_served.fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
+    pub fn record_tokens_saved(&self, tokens: usize) {
+        self.metrics.tokens_saved.fetch_add(tokens, Ordering::Relaxed);
+    }
+}
+
+static DEDUPLICATOR: OnceLock<SessionDeduplicator> = OnceLock::new();
+
+pub fn get_session_deduplicator() -> &'static SessionDeduplicator {
+    DEDUPLICATOR.get_or_init(SessionDeduplicator::new)
+}
 
 #[derive(Clone)]
 pub struct Notifier {

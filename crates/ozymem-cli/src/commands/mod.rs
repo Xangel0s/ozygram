@@ -6,6 +6,7 @@ pub mod vector;
 pub mod dashboard;
 pub mod hook;
 pub mod dream;
+pub mod stats;
 
 pub use scan::*;
 pub use query::*;
@@ -15,3 +16,4 @@ pub use vector::*;
 pub use dashboard::*;
 pub use hook::*;
 pub use dream::*;
+pub use stats::*;

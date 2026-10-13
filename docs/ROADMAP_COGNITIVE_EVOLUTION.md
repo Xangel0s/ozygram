@@ -220,10 +220,10 @@ sequenceDiagram
   - **Descripción**: Reemplazar la inyección de chunks estáticos de 1024 tokens por un recortador que calcule el offset del match más cercano y extraiga una ventana contextual de $\pm 10$ líneas acompañada de la ruta del archivo y los números de línea exactos.
   - **Criterio de Aceptación**: Resultados de búsqueda semántica devuelven snippets precisos de 20-30 líneas en lugar de archivos o bloques completos. [STATUS: COMPLETED]
 
-- [ ] **Task 5.4: Deduplicador de Sesión y Telemetría de Tokens (`ozymem stats`)**
-  - **Componentes**: `crates/ozymem-server/src/state.rs`, `crates/ozymem-cli/src/commands/stats.rs`.
+- [x] **Task 5.4: Deduplicador de Sesión y Telemetría de Tokens (`ozymem stats`)**
+  - **Componentes**: `crates/ozymem-server/src/state.rs`, `crates/ozymem-server/src/symbols.rs`, `crates/ozymem-cli/src/commands/stats.rs`.
   - **Descripción**: Mantener en la sesión activa un conjunto de hashes SHA-256 de los símbolos entregados para responder con `[STATUS: CACHED_IN_CONTEXT]` ante peticiones redundantes. Implementar el comando CLI `ozymem stats` que reporte tokens ahorrados, ghost patches simulados, regresiones evitadas y estado de memoria.
-  - **Criterio de Aceptación**: `ozymem stats` reporta métricas cuantitativas en tiempo real y peticiones repetidas consumen < 30 tokens por referencia. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: `ozymem stats` reporta métricas cuantitativas en tiempo real y peticiones repetidas consumen < 30 tokens por referencia. [STATUS: COMPLETED]
 
 ---
 

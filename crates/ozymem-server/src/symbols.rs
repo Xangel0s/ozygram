@@ -18,8 +18,32 @@ pub fn handle_get_symbol(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing 'symbol_name'"))?;
 
+    let force = tool_call
+        .arguments
+        .get("force")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
     match backend.get_symbol(file_path, symbol_name)? {
         Some(sym) => {
+            let symbol_key = format!("{}::{}", file_path, symbol_name);
+            let dedup = crate::state::get_session_deduplicator();
+            if let Some(cached_msg) = dedup.check_or_record(&symbol_key, &sym.code, force) {
+                let json_res = json!({
+                    "status": "cached",
+                    "file_path": file_path,
+                    "symbol_name": symbol_name,
+                    "message": cached_msg
+                });
+                return Ok(ToolCallResult {
+                    content: vec![ContentBlock {
+                        kind: "text",
+                        text: serde_json::to_string_pretty(&json_res)?,
+                    }],
+                    is_error: None,
+                });
+            }
+
             let json_res = json!({
                 "status": "success",
                 "symbol": sym

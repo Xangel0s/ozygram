@@ -3233,4 +3233,98 @@ export class RecepcionService extends BaseService {
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_tools_get_symbol_session_deduplicator() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_dedup_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let ts_file = tmp_root.join("PricingEngine.ts");
+        let ts_content = r#"export function computeInvoicePrice(amount: number, taxRate: number): number {
+    return amount * (1.0 + taxRate);
+}
+"#;
+        std::fs::write(&ts_file, ts_content).unwrap();
+
+        {
+            let guard = backend_ref.lock().unwrap();
+            let b = guard.as_ref().unwrap();
+            b.full_scan(&tmp_root.to_string_lossy(), None).unwrap();
+        }
+
+        // 1. Primera llamada: Entrega el simbolo completo
+        let req1 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_get_symbol",
+                "arguments": {
+                    "file_path": ts_file.to_string_lossy(),
+                    "symbol_name": "computeInvoicePrice"
+                }
+            })),
+        };
+        let resp1 = handle_request(&backend_ref, req1, None, None).await.unwrap().unwrap();
+        let body1: Value = serde_json::from_str(resp1.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body1["status"], "success");
+        assert!(body1["symbol"]["code"].as_str().unwrap().contains("amount * (1.0 + taxRate)"));
+
+        // 2. Segunda llamada: Debe responder con [STATUS: CACHED_IN_CONTEXT]
+        let req2 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_get_symbol",
+                "arguments": {
+                    "file_path": ts_file.to_string_lossy(),
+                    "symbol_name": "computeInvoicePrice"
+                }
+            })),
+        };
+        let resp2 = handle_request(&backend_ref, req2, None, None).await.unwrap().unwrap();
+        let body2: Value = serde_json::from_str(resp2.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body2["status"], "cached");
+        assert!(body2["message"].as_str().unwrap().contains("[STATUS: CACHED_IN_CONTEXT: Symbol"));
+        assert!(body2["message"].as_str().unwrap().contains("computeInvoicePrice"));
+
+        // 3. Tercera llamada con force: true -> Debe saltarse la deduplicacion
+        let req3 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_get_symbol",
+                "arguments": {
+                    "file_path": ts_file.to_string_lossy(),
+                    "symbol_name": "computeInvoicePrice",
+                    "force": true
+                }
+            })),
+        };
+        let resp3 = handle_request(&backend_ref, req3, None, None).await.unwrap().unwrap();
+        let body3: Value = serde_json::from_str(resp3.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body3["status"], "success");
+        assert!(body3["symbol"]["code"].as_str().unwrap().contains("amount * (1.0 + taxRate)"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+
 

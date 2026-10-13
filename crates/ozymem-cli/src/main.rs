@@ -171,6 +171,11 @@ enum Commands {
         #[command(subcommand)]
         subcommand: DreamSubcommand,
     },
+    /// Telemetria y contabilidad de tokens en tiempo real (ahorro de tokens, skeletons, ghost patches, invariantes)
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -303,6 +308,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     match args.command {
+        Commands::Stats { json } => run_stats(json).await?,
         Commands::Status { json } => print_status(&context, json).await?,
         Commands::Scan { path, reset, force } => scan_directory(&context.connection, &path, reset, force).await?,
         Commands::Lessons { limit, file } => print_lessons(&context.connection, limit, file).await?,
