@@ -255,25 +255,25 @@ sequenceDiagram
 ### [FASE 7: Razonamiento Contrafactual & Simulación Especulativa (Ghost Patching)]
 *Objetivo: Validar los cambios de código en un sandbox virtual de AST en RAM antes de tocarlos en disco.*
 
-- [ ] **Task 7.1: Motor de Clonación Efímera en RAM con Contrato Sandbox Invariant**
+- [x] **Task 7.1: Motor de Clonación Efímera en RAM con Contrato Sandbox Invariant**
   - **Componentes**: `crates/ozymem-core/src/graph_backend/queries.rs`, `types.rs`.
   - **Descripción**: Implementar `simulate_patch(&self, target_symbol: &str, candidate_code: &str) -> SimulationResult` bajo el contrato estricto de aislamiento: Copy-on-Write en RAM volátil (`petgraph`), timeout duro de 100 ms (retornando `UNKNOWN_TIMEOUT` en caso de excederse) y cero accesos a disco o sockets de red.
-  - **Criterio de Aceptación**: La simulación de reemplazo de un método se ejecuta en < 15 ms en RAM y se cancela con seguridad si sobrepasa 100 ms. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: La simulación de reemplazo de un método se ejecuta en < 15 ms en RAM y se cancela con seguridad si sobrepasa 100 ms. [STATUS: COMPLETED]
 
-- [ ] **Task 7.2: Verificador de Invariantes de Aristas Entrantes (Callers)**
+- [x] **Task 7.2: Verificador de Invariantes de Aristas Entrantes (Callers)**
   - **Componentes**: `crates/ozymem-core/src/graph_backend/queries.rs`.
   - **Descripción**: Al simular una mutación de un símbolo, recorrer todas las aristas entrantes (`Incoming Callers`) y comprobar si los llamantes siguen cumpliendo con la cantidad de argumentos requeridos y compatibilidad de tipos devuelta.
-  - **Criterio de Aceptación**: Si una mutación elimina un argumento obligatorio usado por 3 componentes, el simulador reporta `breaks_dependents: true` con la lista de nodos incompatibles. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: Si una mutación elimina un argumento obligatorio usado por 3 componentes, el simulador reporta `breaks_dependents: true` con la lista de nodos incompatibles. [STATUS: COMPLETED]
 
-- [ ] **Task 7.3: Herramienta MCP `ozy_simulate_patch` para Agentes**
+- [x] **Task 7.3: Herramienta MCP `ozy_simulate_patch` para Agentes**
   - **Componentes**: `crates/ozymem-server/src/symbols.rs`, `src/dispatch.rs`, `src/schemas.rs`.
   - **Descripción**: Exponer la herramienta MCP `ozy_simulate_patch(file_path, symbol_name, candidate_code)`. Los agentes de programación la invocan como paso pre-vuelo antes de `ozy_ast_patch` o `replace_file_content`.
-  - **Criterio de Aceptación**: La herramienta retorna `SimulationResult` en formato JSON estructurado con nivel de riesgo (`LOW`, `MEDIUM`, `CRITICAL`). [STATUS: PLANNED]
+  - **Criterio de Aceptación**: La herramienta retorna `SimulationResult` en formato JSON estructurado con nivel de riesgo (`LOW`, `MEDIUM`, `CRITICAL`). [STATUS: COMPLETED]
 
-- [ ] **Task 7.4: Loop de Auto-Calibración en `risk_critic.py` y Veto de Invariantes**
+- [x] **Task 7.4: Loop de Auto-Calibración en `risk_critic.py` y Veto de Invariantes**
   - **Componentes**: `python/ozy-brain/ozy_brain/agents/risk_critic.py`, `python/ozy-brain/ozy_brain/dream/evaluator.py`.
   - **Descripción**: Registrar en SQLite los rollbacks y fallos de ejecución como eventos de retroalimentación negativa. `risk_critic.py` lee estos contraejemplos y los nodos `INVARIANT[...]` del grafo, emitiendo un bloqueo preventivo `[CRITICAL_VETO: INVARIANT_VIOLATION]` si una propuesta viola una regla histórica vacunada.
-  - **Criterio de Aceptación**: Propuestas de código que violen invariantes registradas son vetadas en < 5 ms con mensaje explicativo. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: Propuestas de código que violen invariantes registradas son vetadas en < 5 ms con mensaje explicativo. [STATUS: COMPLETED]
 
 ---
 
