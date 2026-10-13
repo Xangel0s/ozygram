@@ -13,11 +13,15 @@ async fn test_memory_types_from_str_and_display() {
     assert_eq!(GraphEntityType::Memory.to_string(), "memory");
     assert_eq!(GraphEntityType::Symbol.to_string(), "symbol");
     assert_eq!(GraphEntityType::TrajectoryNode.to_string(), "trajectory_node");
+    assert_eq!(GraphEntityType::Endpoint.to_string(), "endpoint");
+    assert_eq!(GraphEntityType::DatabaseTable.to_string(), "database_table");
 
     assert_eq!(GraphEntityType::from_str("file").unwrap(), GraphEntityType::File);
     assert_eq!(GraphEntityType::from_str("memory").unwrap(), GraphEntityType::Memory);
     assert_eq!(GraphEntityType::from_str("symbol").unwrap(), GraphEntityType::Symbol);
     assert_eq!(GraphEntityType::from_str("trajectory_node").unwrap(), GraphEntityType::TrajectoryNode);
+    assert_eq!(GraphEntityType::from_str("endpoint").unwrap(), GraphEntityType::Endpoint);
+    assert_eq!(GraphEntityType::from_str("database_table").unwrap(), GraphEntityType::DatabaseTable);
 
     assert_eq!(MemoryEdgeType::AppliesTo.to_string(), "applies_to");
     assert_eq!(MemoryEdgeType::CoupledWith.to_string(), "coupled_with");
@@ -25,6 +29,8 @@ async fn test_memory_types_from_str_and_display() {
     assert_eq!(MemoryEdgeType::Supersedes.to_string(), "supersedes");
     assert_eq!(MemoryEdgeType::Reinforces.to_string(), "reinforces");
     assert_eq!(MemoryEdgeType::DerivedFrom.to_string(), "derived_from");
+    assert_eq!(MemoryEdgeType::ConsumesEndpoint.to_string(), "consumes_endpoint");
+    assert_eq!(MemoryEdgeType::TouchesTable.to_string(), "touches_table");
 
     assert_eq!(MemoryEdgeType::from_str("applies_to").unwrap(), MemoryEdgeType::AppliesTo);
     assert_eq!(MemoryEdgeType::from_str("coupled_with").unwrap(), MemoryEdgeType::CoupledWith);
@@ -32,6 +38,8 @@ async fn test_memory_types_from_str_and_display() {
     assert_eq!(MemoryEdgeType::from_str("supersedes").unwrap(), MemoryEdgeType::Supersedes);
     assert_eq!(MemoryEdgeType::from_str("reinforces").unwrap(), MemoryEdgeType::Reinforces);
     assert_eq!(MemoryEdgeType::from_str("derived_from").unwrap(), MemoryEdgeType::DerivedFrom);
+    assert_eq!(MemoryEdgeType::from_str("consumes_endpoint").unwrap(), MemoryEdgeType::ConsumesEndpoint);
+    assert_eq!(MemoryEdgeType::from_str("touches_table").unwrap(), MemoryEdgeType::TouchesTable);
 }
 
 #[tokio::test]
@@ -187,3 +195,86 @@ async fn test_migration_and_sync_triggers_from_lessons() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_endpoint_dependents_cross_language() -> Result<()> {
+    let tmp = tempdir()?;
+    let root = tmp.path();
+    let db_path = root.join("memory.db");
+    let backend = GraphBackend::open(Some(&db_path.to_string_lossy()))?;
+    backend.set_project_path(Some(&root.to_string_lossy()));
+
+    // 1. Create FastAPI backend file
+    let py_dir = root.join("api-geofal-crm").join("routers");
+    std::fs::create_dir_all(&py_dir)?;
+    let py_file = py_dir.join("sig.py");
+    std::fs::write(
+        &py_file,
+        r#"from fastapi import APIRouter
+router = APIRouter(prefix="/api/sig")
+
+@router.get("/sctr")
+def get_sctr_records():
+    return [{"id": 1, "status": "active"}]
+
+@router.post("/sctr")
+def create_sctr_record():
+    return {"status": "created"}
+"#,
+    )?;
+
+    // 2. Create Next.js frontend consumer files
+    let tsx_dir = root.join("crm-geofal").join("src").join("app").join("control-sig");
+    std::fs::create_dir_all(&tsx_dir)?;
+    let tsx_file = tsx_dir.join("page.tsx");
+    std::fs::write(
+        &tsx_file,
+        r#"import React, { useEffect, useState } from 'react';
+export default function ControlSigPage() {
+    useEffect(() => {
+        fetch("/api/sig/sctr").then(r => r.json());
+    }, []);
+    return <div>Control SIG</div>;
+}
+"#,
+    )?;
+
+    let comp_dir = root.join("crm-geofal").join("src").join("components");
+    std::fs::create_dir_all(&comp_dir)?;
+    let comp_file = comp_dir.join("SctrForm.tsx");
+    std::fs::write(
+        &comp_file,
+        r#"import { apiClient } from '@/lib/api';
+export function SctrForm() {
+    const submit = async () => {
+        await apiClient.post("/api/sig/sctr", { name: "Test" });
+    };
+    return <button onClick={submit}>Save</button>;
+}
+"#,
+    )?;
+
+    // 3. Index the files via index_file_delta
+    backend.index_file_delta(&py_file, root)?;
+    backend.index_file_delta(&tsx_file, root)?;
+    backend.index_file_delta(&comp_file, root)?;
+
+    // 4. Query endpoint dependents for /api/sig/sctr
+    let report = backend.get_endpoint_dependents("/api/sig/sctr")?;
+    assert_eq!(report.canonical_path, "/api/sig/sctr");
+    assert_eq!(report.backend_definitions.len(), 2);
+    assert_eq!(report.total_consumer_files, 2);
+    assert_eq!(report.consumers.len(), 2);
+
+    // Verify consumer files were found
+    assert!(report.consumer_files.iter().any(|f| f.contains("page.tsx")));
+    assert!(report.consumer_files.iter().any(|f| f.contains("SctrForm.tsx")));
+
+    // 5. Query endpoint dependents by Python backend file
+    let file_report = backend.get_endpoint_dependents(&py_file.to_string_lossy())?;
+    assert_eq!(file_report.backend_definitions.len(), 2);
+    assert_eq!(file_report.total_consumer_files, 2);
+
+    Ok(())
+}
+

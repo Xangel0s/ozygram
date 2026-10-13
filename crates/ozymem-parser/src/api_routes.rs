@@ -17,6 +17,11 @@ pub struct ApiRouteDefinition {
 /// Parses source code for Python/FastAPI/Flask API routes.
 pub fn parse_fastapi_routes(source: &str, file_path: &str) -> Vec<ApiRouteDefinition> {
     let mut routes = Vec::new();
+    let prefix_re = Regex::new(
+        r#"(?i)APIRouter\s*\([^)]*prefix\s*=\s*["']([^"']+)["']"#
+    ).unwrap();
+    let file_prefix = prefix_re.captures(source).and_then(|c| c.get(1)).map(|m| m.as_str().trim_end_matches('/').to_string()).unwrap_or_default();
+
     let decorator_re = Regex::new(
         r#"(?i)@(?:app|router|api_router)\.(get|post|put|delete|patch|options|head)\s*\(\s*["']([^"']+)["']"#
     ).unwrap();
@@ -33,7 +38,16 @@ pub fn parse_fastapi_routes(source: &str, file_path: &str) -> Vec<ApiRouteDefini
         let line = lines[i];
         if let Some(dec_caps) = decorator_re.captures(line) {
             let method = dec_caps.get(1).map(|m| m.as_str().to_uppercase()).unwrap_or_else(|| "GET".into());
-            let path = dec_caps.get(2).map(|m| m.as_str().to_string()).unwrap_or_else(|| "/".into());
+            let subpath = dec_caps.get(2).map(|m| m.as_str()).unwrap_or("/");
+            let path = if !file_prefix.is_empty() {
+                if subpath.starts_with('/') {
+                    format!("{}{}", file_prefix, subpath)
+                } else {
+                    format!("{}/{}", file_prefix, subpath)
+                }
+            } else {
+                subpath.to_string()
+            };
             let line_number = i + 1;
 
             // Search next 5 lines for function definition

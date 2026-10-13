@@ -296,6 +296,30 @@ impl GraphBackend {
                 )?;
             }
 
+            if abs_path.ends_with(".tsx") || abs_path.ends_with(".ts") || abs_path.ends_with(".jsx") || abs_path.ends_with(".js") {
+                let consumers = ozymem_parser::parse_frontend_endpoint_consumers(&source, &abs_path);
+                let now = chrono::Utc::now().to_rfc3339();
+                for c in consumers {
+                    let canon = &c.canonical_path;
+                    let _ = inner.sqlite.execute(
+                        "INSERT OR IGNORE INTO memory_edges (source_type, source_id, target_type, target_id, edge_type, weight, created_at, tenant_id, workspace_root)
+                         VALUES ('file', ?1, 'endpoint', ?2, 'consumes_endpoint', 1.0, ?3, ?4, ?5)",
+                        params![abs_path, canon, now, self.tenant_id, inner.workspace_root],
+                    );
+                }
+            } else if abs_path.ends_with(".py") {
+                let routes = ozymem_parser::parse_api_routes(&source, &abs_path, lang);
+                let now = chrono::Utc::now().to_rfc3339();
+                for r in routes {
+                    let canon = ozymem_parser::canonicalize_endpoint_path(&r.path);
+                    let _ = inner.sqlite.execute(
+                        "INSERT OR IGNORE INTO memory_edges (source_type, source_id, target_type, target_id, edge_type, weight, created_at, tenant_id, workspace_root)
+                         VALUES ('file', ?1, 'endpoint', ?2, 'applies_to', 1.0, ?3, ?4, ?5)",
+                        params![abs_path, canon, now, self.tenant_id, inner.workspace_root],
+                    );
+                }
+            }
+
             file_count += 1;
             if let Some(cb) = progress {
                 processed += 1;
@@ -535,6 +559,38 @@ impl GraphBackend {
                     "INSERT OR IGNORE INTO file_dependencies (origin_path, destination_path, tenant_id, workspace_root) VALUES (?1, ?2, ?3, ?4)",
                     params![abs_path, dep, self.tenant_id, inner.workspace_root],
                 )?;
+            }
+
+            if abs_path.ends_with(".tsx") || abs_path.ends_with(".ts") || abs_path.ends_with(".jsx") || abs_path.ends_with(".js") {
+                let consumers = ozymem_parser::parse_frontend_endpoint_consumers(&source, &abs_path);
+                let now = chrono::Utc::now().to_rfc3339();
+                let _ = inner.sqlite.execute(
+                    "DELETE FROM memory_edges WHERE source_type = 'file' AND (source_id = ?1 OR source_id = ?2) AND edge_type = 'consumes_endpoint' AND tenant_id = ?3",
+                    params![abs_path, raw_path, self.tenant_id],
+                );
+                for c in consumers {
+                    let canon = &c.canonical_path;
+                    let _ = inner.sqlite.execute(
+                        "INSERT OR IGNORE INTO memory_edges (source_type, source_id, target_type, target_id, edge_type, weight, created_at, tenant_id, workspace_root)
+                         VALUES ('file', ?1, 'endpoint', ?2, 'consumes_endpoint', 1.0, ?3, ?4, ?5)",
+                        params![abs_path, canon, now, self.tenant_id, inner.workspace_root],
+                    );
+                }
+            } else if abs_path.ends_with(".py") {
+                let routes = ozymem_parser::parse_api_routes(&source, &abs_path, lang);
+                let now = chrono::Utc::now().to_rfc3339();
+                let _ = inner.sqlite.execute(
+                    "DELETE FROM memory_edges WHERE source_type = 'file' AND (source_id = ?1 OR source_id = ?2) AND target_type = 'endpoint' AND tenant_id = ?3",
+                    params![abs_path, raw_path, self.tenant_id],
+                );
+                for r in routes {
+                    let canon = ozymem_parser::canonicalize_endpoint_path(&r.path);
+                    let _ = inner.sqlite.execute(
+                        "INSERT OR IGNORE INTO memory_edges (source_type, source_id, target_type, target_id, edge_type, weight, created_at, tenant_id, workspace_root)
+                         VALUES ('file', ?1, 'endpoint', ?2, 'applies_to', 1.0, ?3, ?4, ?5)",
+                        params![abs_path, canon, now, self.tenant_id, inner.workspace_root],
+                    );
+                }
             }
         }
 

@@ -371,6 +371,21 @@ pub async fn handle_unified_tool(
                             let routes = backend.map_api_routes(file_path)?;
                             serde_json::to_string_pretty(&routes)?
                         }
+                        "endpoint_dependents" | "endpoint_impact" => {
+                            let endpoint = tool_call
+                                .arguments
+                                .get("endpoint")
+                                .or_else(|| tool_call.arguments.get("file_path"))
+                                .or_else(|| tool_call.arguments.get("entity_id"))
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow::anyhow!("missing endpoint parameter for endpoint_dependents"))?;
+                            let report = backend.get_endpoint_dependents(endpoint)?;
+                            if tool_call.arguments.get("format").and_then(Value::as_str) == Some("json") {
+                                serde_json::to_string_pretty(&report)?
+                            } else {
+                                crate::formatters::format_endpoint_dependents(&report)
+                            }
+                        }
                         "render_mermaid" | "mermaid" => {
                             let module = tool_call.arguments.get("module").and_then(Value::as_str);
                             backend.render_mermaid_memory_graph(module)?

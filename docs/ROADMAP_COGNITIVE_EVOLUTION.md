@@ -235,10 +235,10 @@ sequenceDiagram
   - **Descripción**: Implementar `parse_frontend_endpoint_consumers` para detectar llamadas a endpoints vía `fetch("/api/...")`, `axios.get/post(...)`, `apiClient.get/post(...)` y hooks reactivos (`useQuery`, `useSWR`), extrayendo el path de la URL y el método HTTP.
   - **Criterio de Aceptación**: Pruebas unitarias en `api_routes.rs` detectan llamadas en componentes de Next.js como `VerificacionForm.tsx` y las asocian a su ruta canónica. [STATUS: COMPLETED]
 
-- [ ] **Task 6.2: Aristas Bidireccionales `CONSUMES_ENDPOINT` en el Grafo**
-  - **Componentes**: `crates/ozymem-core/src/graph_backend/schema.rs`, `memory_graph.rs`, `types.rs`.
-  - **Descripción**: Crear la entidad `GraphEntityType::Endpoint` y el tipo de arista `MemoryEdgeType::EndpointConsumer`. Durante el indexado, enlazar automáticamente los endpoints de Python/FastAPI con los componentes TSX de Next.js que los consumen.
-  - **Criterio de Aceptación**: Una consulta a `ozy_graph(action="endpoint_dependents", path="/api/sig/sctr")` devuelve en < 5 ms la lista exacta de componentes frontend vinculados. [STATUS: PLANNED]
+- [x] **Task 6.2: Aristas Bidireccionales `CONSUMES_ENDPOINT` en el Grafo**
+  - **Componentes**: `crates/ozymem-core/src/graph_backend/schema.rs`, `memory_graph.rs`, `types.rs`, `crates/ozymem-server/src/unified.rs`.
+  - **Descripción**: Crear la entidad `GraphEntityType::Endpoint` y el tipo de arista `MemoryEdgeType::ConsumesEndpoint`. Durante el indexado, enlazar automáticamente los endpoints de Python/FastAPI con los componentes TSX de Next.js que los consumen.
+  - **Criterio de Aceptación**: Una consulta a `ozy_graph(action="endpoint_dependents", endpoint="/api/sig/sctr")` devuelve en < 5 ms la lista exacta de componentes frontend vinculados y definiciones backend. [STATUS: COMPLETED]
 
 - [ ] **Task 6.3: Extractor de Linaje DDL para Migraciones SQL**
   - **Componentes**: `crates/ozymem-server/src/sql_linter.rs`, `crates/ozymem-core/src/graph_backend/schema.rs`.

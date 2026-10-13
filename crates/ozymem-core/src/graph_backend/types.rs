@@ -32,6 +32,8 @@ pub enum GraphEntityType {
     Memory,
     Symbol,
     TrajectoryNode,
+    Endpoint,
+    DatabaseTable,
 }
 
 impl fmt::Display for GraphEntityType {
@@ -41,6 +43,8 @@ impl fmt::Display for GraphEntityType {
             Self::Memory => write!(f, "memory"),
             Self::Symbol => write!(f, "symbol"),
             Self::TrajectoryNode => write!(f, "trajectory_node"),
+            Self::Endpoint => write!(f, "endpoint"),
+            Self::DatabaseTable => write!(f, "database_table"),
         }
     }
 }
@@ -53,6 +57,8 @@ impl std::str::FromStr for GraphEntityType {
             "memory" => Ok(Self::Memory),
             "symbol" => Ok(Self::Symbol),
             "trajectory_node" => Ok(Self::TrajectoryNode),
+            "endpoint" => Ok(Self::Endpoint),
+            "database_table" | "table" => Ok(Self::DatabaseTable),
             other => Err(format!("Unknown GraphEntityType: {}", other)),
         }
     }
@@ -67,6 +73,8 @@ pub enum MemoryEdgeType {
     Supersedes,
     Reinforces,
     DerivedFrom,
+    ConsumesEndpoint,
+    TouchesTable,
 }
 
 impl fmt::Display for MemoryEdgeType {
@@ -78,6 +86,8 @@ impl fmt::Display for MemoryEdgeType {
             Self::Supersedes => write!(f, "supersedes"),
             Self::Reinforces => write!(f, "reinforces"),
             Self::DerivedFrom => write!(f, "derived_from"),
+            Self::ConsumesEndpoint => write!(f, "consumes_endpoint"),
+            Self::TouchesTable => write!(f, "touches_table"),
         }
     }
 }
@@ -92,6 +102,8 @@ impl std::str::FromStr for MemoryEdgeType {
             "supersedes" => Ok(Self::Supersedes),
             "reinforces" => Ok(Self::Reinforces),
             "derived_from" => Ok(Self::DerivedFrom),
+            "consumes_endpoint" | "endpoint_consumer" => Ok(Self::ConsumesEndpoint),
+            "touches_table" | "table_access" => Ok(Self::TouchesTable),
             other => Err(format!("Unknown MemoryEdgeType: {}", other)),
         }
     }
@@ -536,4 +548,15 @@ pub struct LiteralSearchResult {
     pub estimated_tokens: usize,
     pub matches: Vec<LiteralMatch>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointDependentsReport {
+    pub endpoint: String,
+    pub canonical_path: String,
+    pub backend_definitions: Vec<ozymem_parser::ApiRouteDefinition>,
+    pub consumers: Vec<ozymem_parser::EndpointConsumer>,
+    pub total_consumer_files: usize,
+    pub consumer_files: Vec<String>,
+}
+
 

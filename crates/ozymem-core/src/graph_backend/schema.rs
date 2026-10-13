@@ -508,12 +508,97 @@ impl GraphBackend {
             END;"
         )?;
 
+        // Migrate memory_edges and memory_nodes if they lack support for endpoint or consumes_endpoint
+        {
+            let edges_sql: Option<String> = {
+                let mut stmt = inner.sqlite.prepare(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_edges'"
+                )?;
+                let mut rows = stmt.query([])?;
+                if let Some(row) = rows.next()? {
+                    Some(row.get(0)?)
+                } else {
+                    None
+                }
+            };
+            if let Some(ref s) = edges_sql {
+                if !s.contains("consumes_endpoint") || !s.contains("endpoint") {
+                    let _ = inner.sqlite.execute_batch(
+                        "BEGIN IMMEDIATE;
+                        CREATE TABLE memory_edges_v2 (
+                            source_type TEXT NOT NULL,
+                            source_id TEXT NOT NULL,
+                            target_type TEXT NOT NULL,
+                            target_id TEXT NOT NULL,
+                            edge_type TEXT NOT NULL,
+                            weight REAL NOT NULL DEFAULT 1.0,
+                            created_at TEXT NOT NULL,
+                            tenant_id TEXT NOT NULL,
+                            workspace_root TEXT NOT NULL DEFAULT '',
+                            PRIMARY KEY (source_type, source_id, target_type, target_id, edge_type, tenant_id)
+                        );
+                        INSERT OR IGNORE INTO memory_edges_v2 SELECT * FROM memory_edges;
+                        DROP TABLE memory_edges;
+                        ALTER TABLE memory_edges_v2 RENAME TO memory_edges;
+                        CREATE INDEX IF NOT EXISTS idx_memory_edges_src ON memory_edges(source_type, source_id, tenant_id);
+                        CREATE INDEX IF NOT EXISTS idx_memory_edges_dst ON memory_edges(target_type, target_id, tenant_id);
+                        CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type, tenant_id);
+                        COMMIT;"
+                    );
+                }
+            }
+
+            let nodes_sql: Option<String> = {
+                let mut stmt = inner.sqlite.prepare(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_nodes'"
+                )?;
+                let mut rows = stmt.query([])?;
+                if let Some(row) = rows.next()? {
+                    Some(row.get(0)?)
+                } else {
+                    None
+                }
+            };
+            if let Some(ref s) = nodes_sql {
+                if !s.contains("endpoint") {
+                    let _ = inner.sqlite.execute_batch(
+                        "BEGIN IMMEDIATE;
+                        CREATE TABLE memory_nodes_v2 (
+                            id TEXT PRIMARY KEY,
+                            kind TEXT NOT NULL DEFAULT 'lesson',
+                            title TEXT NOT NULL DEFAULT '',
+                            content TEXT NOT NULL,
+                            error_context TEXT NOT NULL DEFAULT '',
+                            solution TEXT NOT NULL DEFAULT '',
+                            confidence_score REAL NOT NULL DEFAULT 1.0,
+                            touch_count INTEGER NOT NULL DEFAULT 0,
+                            stale INTEGER NOT NULL DEFAULT 0,
+                            stale_reason TEXT NULL,
+                            created_at TEXT NOT NULL,
+                            last_verified_at TEXT NOT NULL DEFAULT '',
+                            tenant_id TEXT NOT NULL,
+                            workspace_root TEXT NOT NULL DEFAULT '',
+                            embedding BLOB NULL,
+                            embedding_model TEXT NOT NULL DEFAULT ''
+                        );
+                        INSERT OR IGNORE INTO memory_nodes_v2 SELECT * FROM memory_nodes;
+                        DROP TABLE memory_nodes;
+                        ALTER TABLE memory_nodes_v2 RENAME TO memory_nodes;
+                        CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant ON memory_nodes(tenant_id);
+                        CREATE INDEX IF NOT EXISTS idx_memory_nodes_kind ON memory_nodes(kind, tenant_id);
+                        CREATE INDEX IF NOT EXISTS idx_memory_nodes_stale ON memory_nodes(stale, tenant_id);
+                        COMMIT;"
+                    );
+                }
+            }
+        }
+
         // --- Graph Memory Architecture v1.3.0 (Task 1.1 & Task 1.2) ---
         inner.sqlite.execute_batch(
             "CREATE TABLE IF NOT EXISTS memory_nodes (
                 id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL DEFAULT 'lesson'
-                    CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule','architecture')),
+                    CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule','architecture','endpoint','table')),
                 title TEXT NOT NULL DEFAULT '',
                 content TEXT NOT NULL,
                 error_context TEXT NOT NULL DEFAULT '',
@@ -534,9 +619,9 @@ impl GraphBackend {
             CREATE INDEX IF NOT EXISTS idx_memory_nodes_stale ON memory_nodes(stale, tenant_id);
 
             CREATE TABLE IF NOT EXISTS memory_edges (
-                source_type TEXT NOT NULL CHECK(source_type IN ('memory', 'file', 'symbol', 'trajectory_node')),
+                source_type TEXT NOT NULL CHECK(source_type IN ('memory', 'file', 'symbol', 'trajectory_node', 'endpoint', 'database_table')),
                 source_id TEXT NOT NULL,
-                target_type TEXT NOT NULL CHECK(target_type IN ('memory', 'file', 'symbol', 'trajectory_node')),
+                target_type TEXT NOT NULL CHECK(target_type IN ('memory', 'file', 'symbol', 'trajectory_node', 'endpoint', 'database_table')),
                 target_id TEXT NOT NULL,
                 edge_type TEXT NOT NULL CHECK(edge_type IN (
                     'applies_to',
@@ -544,7 +629,9 @@ impl GraphBackend {
                     'causes_regression',
                     'supersedes',
                     'reinforces',
-                    'derived_from'
+                    'derived_from',
+                    'consumes_endpoint',
+                    'touches_table'
                 )),
                 weight REAL NOT NULL DEFAULT 1.0,
                 created_at TEXT NOT NULL,

@@ -6,8 +6,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 
 use crate::graph_backend::types::{
-    AutoWireReport, GraphBackend, GraphEntityNode, GraphEntityType, MemoryEdgeRecord, MemoryEdgeType,
-    MemoryGraphEdge, MemoryNodeRecord, NeighborhoodResult,
+    AutoWireReport, EndpointDependentsReport, GraphBackend, GraphEntityNode, GraphEntityType,
+    MemoryEdgeRecord, MemoryEdgeType, MemoryGraphEdge, MemoryNodeRecord, NeighborhoodResult,
 };
 
 impl GraphBackend {
@@ -938,6 +938,102 @@ impl GraphBackend {
         ));
 
         Ok(mermaid)
+    }
+
+    /// Returns all frontend consumer files and backend definitions for a given API route endpoint or backend file.
+    /// Bridges the Python/FastAPI backend and TypeScript/Next.js frontend.
+    pub fn get_endpoint_dependents(&self, target: &str) -> Result<EndpointDependentsReport> {
+        let is_file_query = target.ends_with(".py") || target.ends_with(".ts") || target.ends_with(".js");
+        
+        let mut target_endpoints: Vec<String> = Vec::new();
+        let mut backend_definitions: Vec<ozymem_parser::ApiRouteDefinition> = Vec::new();
+
+        if is_file_query {
+            // Target is a file path: find all routes defined in that file
+            let file_routes = self.map_api_routes(Some(target)).unwrap_or_default();
+            for r in file_routes {
+                target_endpoints.push(ozymem_parser::canonicalize_endpoint_path(&r.path));
+                backend_definitions.push(r);
+            }
+        } else {
+            let canon = ozymem_parser::canonicalize_endpoint_path(target);
+            target_endpoints.push(canon.clone());
+            let all_routes = self.map_api_routes(None).unwrap_or_default();
+            for r in all_routes {
+                let r_canon = ozymem_parser::canonicalize_endpoint_path(&r.path);
+                if r_canon == canon || r.path == target {
+                    backend_definitions.push(r);
+                }
+            }
+        }
+
+        let primary_endpoint = if target_endpoints.is_empty() {
+            ozymem_parser::canonicalize_endpoint_path(target)
+        } else {
+            target_endpoints[0].clone()
+        };
+
+        // Fetch or scan frontend consumer files
+        let mut consumers: Vec<ozymem_parser::EndpointConsumer> = Vec::new();
+        let mut consumer_files_set: HashSet<String> = HashSet::new();
+
+        // 1. Query files table for frontend files
+        let frontend_files: Vec<(String, String)> = {
+            let inner = self.inner.lock().unwrap();
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT path, language FROM files 
+                 WHERE tenant_id = ?1 
+                   AND (language IN ('typescript', 'tsx', 'javascript', 'jsx') 
+                        OR path LIKE '%.tsx' OR path LIKE '%.ts' OR path LIKE '%.jsx' OR path LIKE '%.js')",
+            )?;
+            let rows = stmt.query_map(params![self.tenant_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        for (fp, _lang_str) in frontend_files {
+            let path = std::path::Path::new(&fp);
+            if path.exists() {
+                if let Ok(source) = std::fs::read_to_string(path) {
+                    let file_consumers = ozymem_parser::parse_frontend_endpoint_consumers(&source, &fp);
+                    for c in file_consumers {
+                        let matches = target_endpoints.iter().any(|te| te == &c.canonical_path || te == &c.raw_endpoint);
+                        if matches {
+                            consumer_files_set.insert(c.file_path.clone());
+                            consumers.push(c);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut consumer_files: Vec<String> = consumer_files_set.into_iter().collect();
+        consumer_files.sort();
+
+        // Also ensure edges are recorded in SQLite/RAM for fast graph queries
+        let now = chrono::Utc::now().to_rfc3339();
+        for c in &consumers {
+            let edge = MemoryEdgeRecord {
+                source_type: GraphEntityType::File,
+                source_id: c.file_path.clone(),
+                target_type: GraphEntityType::Endpoint,
+                target_id: c.canonical_path.clone(),
+                edge_type: MemoryEdgeType::ConsumesEndpoint,
+                weight: 1.0,
+                created_at: now.clone(),
+                tenant_id: self.tenant_id.clone(),
+                workspace_root: self.project_path().unwrap_or_default(),
+            };
+            let _ = self.insert_memory_edge(&edge);
+        }
+
+        Ok(EndpointDependentsReport {
+            endpoint: target.to_string(),
+            canonical_path: primary_endpoint,
+            backend_definitions,
+            consumers,
+            total_consumer_files: consumer_files.len(),
+            consumer_files,
+        })
     }
 }
 

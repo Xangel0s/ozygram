@@ -3326,5 +3326,114 @@ export class RecepcionService extends BaseService {
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_ozy_graph_endpoint_dependents_mcp() {
+        let backend_ref = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_endpoint_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let py_dir = tmp_root.join("api").join("routers");
+        std::fs::create_dir_all(&py_dir).unwrap();
+        let py_file = py_dir.join("sig.py");
+        std::fs::write(
+            &py_file,
+            r#"from fastapi import APIRouter
+router = APIRouter(prefix="/api/sig")
+
+@router.get("/sctr")
+def get_sctr_records():
+    return []
+
+@router.post("/sctr")
+def create_sctr():
+    return {}
+"#,
+        ).unwrap();
+
+        let tsx_dir = tmp_root.join("frontend").join("src").join("pages");
+        std::fs::create_dir_all(&tsx_dir).unwrap();
+        let tsx_file = tsx_dir.join("ControlSig.tsx");
+        std::fs::write(
+            &tsx_file,
+            r#"import React from 'react';
+export function ControlSig() {
+    const load = () => {
+        fetch("/api/sig/sctr").then(r => r.json());
+    };
+    return <button onClick={load}>Load</button>;
+}
+"#,
+        ).unwrap();
+
+        // 1. Initialize MCP backend with directory
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        let _ = handle_request(&backend_ref, init_req, None, None).await.unwrap().unwrap();
+
+        // 2. Index files
+        {
+            let guard = backend_ref.lock().unwrap();
+            let backend = guard.as_ref().unwrap();
+            backend.index_file_delta(&py_file, &tmp_root).unwrap();
+            backend.index_file_delta(&tsx_file, &tmp_root).unwrap();
+        }
+
+        // 3. Test ozy_graph(action="endpoint_dependents", endpoint="/api/sig/sctr") text format
+        let req1 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_graph",
+                "arguments": {
+                    "action": "endpoint_dependents",
+                    "endpoint": "/api/sig/sctr"
+                }
+            })),
+        };
+        let resp1 = handle_request(&backend_ref, req1, None, None).await.unwrap().unwrap();
+        assert!(resp1.error.is_none());
+        let text1 = resp1.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text1.contains("[CROSS-LANGUAGE IMPACT: ENDPOINT]"));
+        assert!(text1.contains("Canonical Endpoint: /api/sig/sctr"));
+        assert!(text1.contains("[BACKEND DEFINITIONS] (2)"));
+        assert!(text1.contains("[IMPACTED FRONTEND CONSUMERS] (1 files, 1 call sites)"));
+        assert!(text1.contains("ControlSig.tsx"));
+
+        // 4. Test ozy_graph(action="endpoint_dependents", format="json")
+        let req2 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_graph",
+                "arguments": {
+                    "action": "endpoint_dependents",
+                    "endpoint": "/api/sig/sctr",
+                    "format": "json"
+                }
+            })),
+        };
+        let resp2 = handle_request(&backend_ref, req2, None, None).await.unwrap().unwrap();
+        assert!(resp2.error.is_none());
+        let body2: Value = serde_json::from_str(resp2.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body2["canonical_path"], "/api/sig/sctr");
+        assert_eq!(body2["total_consumer_files"], 1);
+        assert_eq!(body2["backend_definitions"].as_array().unwrap().len(), 2);
+        assert_eq!(body2["consumers"].as_array().unwrap().len(), 1);
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+
 
 

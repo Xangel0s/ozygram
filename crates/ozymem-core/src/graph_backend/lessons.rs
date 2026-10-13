@@ -309,23 +309,39 @@ impl GraphBackend {
 
     pub fn map_api_routes(&self, file_path: Option<&str>) -> Result<Vec<ozymem_parser::ApiRouteDefinition>> {
         let mut routes = Vec::new();
-        let target_files: Vec<(String, String)> = {
+        let mut target_files: Vec<(String, String)> = {
             let inner = self.inner.lock().unwrap();
             if let Some(target) = file_path {
                 let norm = crate::normalize_path(target);
+                let canon = std::fs::canonicalize(target)
+                    .map(|c| crate::normalize_path(&c.to_string_lossy()))
+                    .unwrap_or_else(|_| norm.clone());
+                let like_pattern = format!("%{}", norm.replace('\\', "/"));
+                let like_pattern_win = format!("%{}", norm.replace('/', "\\"));
                 let mut stmt = inner.sqlite.prepare(
-                    "SELECT path, language FROM files WHERE path = ?1 AND tenant_id = ?2",
+                    "SELECT path, language FROM files 
+                     WHERE (path = ?1 OR path = ?2 OR path LIKE ?3 OR path LIKE ?4) 
+                       AND tenant_id = ?5",
                 )?;
-                let rows = stmt.query_map(params![norm, self.tenant_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                let rows = stmt.query_map(params![norm, canon, like_pattern, like_pattern_win, self.tenant_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
                 rows.filter_map(|r| r.ok()).collect()
             } else {
                 let mut stmt = inner.sqlite.prepare(
                     "SELECT path, language FROM files WHERE tenant_id = ?1 ORDER BY path ASC",
                 )?;
-                let rows = stmt.query_map(params![self.tenant_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                let rows = stmt.query_map(params![self.tenant_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
                 rows.filter_map(|r| r.ok()).collect()
             }
         };
+
+        if target_files.is_empty() {
+            if let Some(target) = file_path {
+                let p = Path::new(target);
+                if p.exists() {
+                    target_files.push((target.to_string(), detect_language(p).as_str().to_string()));
+                }
+            }
+        }
 
         for (path_str, _lang_str) in target_files {
             let p = Path::new(&path_str);

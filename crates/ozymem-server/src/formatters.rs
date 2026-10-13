@@ -612,4 +612,67 @@ pub(crate) fn format_memory_neighborhood(
     out
 }
 
+pub(crate) fn format_endpoint_dependents(report: &ozymem_core::graph_backend::types::EndpointDependentsReport) -> String {
+    let mut out = format!(
+        "[CROSS-LANGUAGE IMPACT: ENDPOINT]\nTarget: {}\nCanonical Endpoint: {}\n\n",
+        report.endpoint, report.canonical_path
+    );
+
+    out.push_str(&format!(
+        "[BACKEND DEFINITIONS] ({})\n",
+        report.backend_definitions.len()
+    ));
+    if report.backend_definitions.is_empty() {
+        out.push_str("  No backend route definitions found in indexed backend files.\n");
+    } else {
+        for def in &report.backend_definitions {
+            out.push_str(&format!(
+                "  - [{}] {} -> {} ({}:{})\n",
+                def.method.to_uppercase(),
+                def.path,
+                def.handler_name,
+                def.file_path,
+                def.line_number
+            ));
+        }
+    }
+    out.push('\n');
+
+    out.push_str(&format!(
+        "[IMPACTED FRONTEND CONSUMERS] ({} files, {} call sites)\n",
+        report.total_consumer_files,
+        report.consumers.len()
+    ));
+    if report.consumers.is_empty() {
+        out.push_str("  No frontend consumers detected consuming this endpoint.\n");
+    } else {
+        let mut grouped: std::collections::BTreeMap<&str, Vec<&ozymem_parser::EndpointConsumer>> = std::collections::BTreeMap::new();
+        for c in &report.consumers {
+            grouped.entry(&c.file_path).or_default().push(c);
+        }
+
+        for (fp, call_sites) in grouped {
+            out.push_str(&format!("  - {}:\n", fp));
+            for site in call_sites {
+                let method_badge = if site.http_method != "UNKNOWN" {
+                    format!(" [{}]", site.http_method.to_uppercase())
+                } else {
+                    String::new()
+                };
+                let caller_str = site.caller_symbol.as_deref().unwrap_or("fetch");
+                out.push_str(&format!(
+                    "      L{}: in {}() -> {}{}\n",
+                    site.line_number,
+                    caller_str,
+                    site.raw_endpoint,
+                    method_badge
+                ));
+            }
+        }
+    }
+
+    out
+}
+
+
 

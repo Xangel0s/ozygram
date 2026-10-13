@@ -55,14 +55,15 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_graph",
-                    description: "Unified architecture graph tool: summary, neighbors, incoming (reverse dependencies), impact, paths, impact_mermaid (dependency impact diagram in Mermaid), and architecture report. Replaces graph_summary, graph_neighbors, analyze_impact, graph_path.",
+                    description: "Unified architecture graph tool: summary, neighbors, incoming (reverse dependencies), impact, paths, impact_mermaid (dependency impact diagram in Mermaid), architecture report, and endpoint_dependents (cross-language FastAPI to Next.js impact analysis).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["summary", "neighbors", "incoming", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid", "impact_mermaid"], "default": "summary" },
+                            "action": { "type": "string", "enum": ["summary", "neighbors", "incoming", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid", "impact_mermaid", "endpoint_dependents", "api_routes"], "default": "summary" },
                             "file_path": { "type": "string" },
+                            "endpoint": { "type": "string", "description": "API route path (e.g. /api/sig/sctr) or backend file to query cross-language frontend dependents" },
                             "module": { "type": "string" },
-                            "entity_type": { "type": "string", "enum": ["file", "memory", "symbol", "trajectory_node"], "default": "file" },
+                            "entity_type": { "type": "string", "enum": ["file", "memory", "symbol", "trajectory_node", "endpoint"], "default": "file" },
                             "entity_id": { "type": "string" },
                             "from": { "type": "string" },
                             "to": { "type": "string" },
