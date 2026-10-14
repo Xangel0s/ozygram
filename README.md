@@ -32,11 +32,11 @@
 </p>
 
 <p>
-Your AI coding agent forgets everything when the session ends.<br/>
-<strong>Ozygram gives it a persistent brain.</strong>
+Stop restarting from zero.<br/>
+<strong>Empower your AI agent with continuous, self-improving intelligence.</strong>
 </p>
 
-<p><sub>Local-first. Agent-agnostic. Sub-5ms native MCP stdio. Zero cloud lock-in. $0 API cost.</sub></p>
+<p><sub>A neuro-symbolic engine that maps code graphs in microseconds, simulates patches in RAM before touching disk, and dreams offline via Dream-RSI to turn past mistakes into permanent architectural instincts at $0 API cost.</sub></p>
 
 </div>
 
