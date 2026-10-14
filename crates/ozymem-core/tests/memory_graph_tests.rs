@@ -414,5 +414,95 @@ def generate_invoice(amount: float, discount_rate: float):
     Ok(())
 }
 
+#[test]
+fn test_prune_decayed_memories_and_vaccinate_postmortems() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path();
+    let backend = GraphBackend::open_for_project(root)?;
+
+    // 1. Test Temporal Decay Pruning
+    let active_node = ozymem_core::graph_backend::types::MemoryNodeRecord {
+        id: "mem_active_1".to_string(),
+        kind: "lesson".to_string(),
+        title: "Active robust lesson".to_string(),
+        content: "High confidence".to_string(),
+        error_context: "".to_string(),
+        solution: "Solution".to_string(),
+        confidence_score: 0.95,
+        touch_count: 5,
+        stale: 0,
+        stale_reason: None,
+        created_at: "100000".to_string(),
+        last_verified_at: "".to_string(),
+        tenant_id: "local".to_string(),
+        workspace_root: root.to_string_lossy().to_string(),
+    };
+    let decayed_node = ozymem_core::graph_backend::types::MemoryNodeRecord {
+        id: "mem_decayed_1".to_string(),
+        kind: "observation".to_string(),
+        title: "Temporary low confidence note".to_string(),
+        content: "Stale note".to_string(),
+        error_context: "".to_string(),
+        solution: "None".to_string(),
+        confidence_score: 0.20,
+        touch_count: 0,
+        stale: 0,
+        stale_reason: None,
+        created_at: "100000".to_string(),
+        last_verified_at: "".to_string(),
+        tenant_id: "local".to_string(),
+        workspace_root: root.to_string_lossy().to_string(),
+    };
+
+    backend.insert_memory_node(&active_node)?;
+    backend.insert_memory_node(&decayed_node)?;
+
+    let pruned_count = backend.prune_decayed_memories(0.35, 7)?;
+    assert_eq!(pruned_count, 1, "Should prune exactly the 1 decayed memory node");
+
+    let node1 = backend.get_memory_node("mem_active_1")?.unwrap();
+    assert_eq!(node1.stale, 0);
+
+    let node2 = backend.get_memory_node("mem_decayed_1")?.unwrap();
+    assert_eq!(node2.stale, 1);
+    assert_eq!(node2.stale_reason.as_deref(), Some("TEMPORAL_MEMORY_DECAY"));
+
+    // 2. Test Postmortem Regression Vaccination
+    // Initialize git repo in root
+    let _ = std::process::Command::new("git").current_dir(root).args(["init"]).output()?;
+    let _ = std::process::Command::new("git").current_dir(root).args(["config", "user.name", "Ozy"]).output()?;
+    let _ = std::process::Command::new("git").current_dir(root).args(["config", "user.email", "ozy@example.com"]).output()?;
+
+    let coti_file = root.join("cotizacion.py");
+    std::fs::write(&coti_file, "def calc(): pass\n")?;
+    let _ = std::process::Command::new("git").current_dir(root).args(["add", "cotizacion.py"]).output()?;
+    let _ = std::process::Command::new("git").current_dir(root).args(["commit", "-m", "feat: initial commit"]).output()?;
+
+    // Make fix commit
+    std::fs::write(&coti_file, "def calc(): return 100\n")?;
+    let _ = std::process::Command::new("git").current_dir(root).args(["add", "cotizacion.py"]).output()?;
+    let _ = std::process::Command::new("git").current_dir(root).args(["commit", "-m", "fix(cotizacion): prevent total price overwrite"]).output()?;
+
+    let vaccinated = backend.vaccinate_postmortems(Some(root))?;
+    assert!(vaccinated >= 1, "Should vaccinate the fix commit");
+
+    let invariants = backend.list_memory_nodes(Some("invariant"), false)?;
+    assert!(!invariants.is_empty(), "Invariant memory node must be present");
+    let inv = invariants.iter().find(|i| i.id.contains("prevent_total_price_overwrite")).expect("Must find vaccinated invariant node");
+    assert_eq!(inv.kind, "invariant");
+    assert!(inv.content.contains("[POSTMORTEM_INVARIANT]"));
+
+    // Verify AppliesTo edge connects invariant to cotizacion.py
+    let neighborhood = backend.get_memory_neighborhood(
+        &ozymem_core::graph_backend::types::GraphEntityType::Memory,
+        &inv.id,
+        1,
+    )?;
+    assert!(!neighborhood.is_empty(), "Invariant must be connected to touched file in memory graph");
+    assert!(neighborhood.iter().any(|n| n.edge_type == ozymem_core::graph_backend::types::MemoryEdgeType::AppliesTo));
+
+    Ok(())
+}
+
 
 

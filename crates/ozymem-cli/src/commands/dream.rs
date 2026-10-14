@@ -106,6 +106,21 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                 println!("[*] Auto-Wiring Cognitivo: Red de memorias consolidada (0 aristas pendientes).");
             }
 
+            // [TASK 8.3] Consolidación Offline: Memory Decay y Vacunación Postmortem
+            let pruned = backend.prune_decayed_memories(0.35, 7)?;
+            if pruned > 0 {
+                println!("[*] Consolidación Offline: {} memoria(s) temporales decaídas purgadas/archivadas.", pruned);
+            } else {
+                println!("[*] Consolidación Offline: Memoria temporal al día (0 notas huérfanas).");
+            }
+
+            let vaccinated = backend.vaccinate_postmortems(Some(Path::new(target_path)))?;
+            if vaccinated > 0 {
+                println!("[*] Vacunación Postmortem: {} nueva(s) invariante(s) permanente(s) inyectada(s) desde commits fix/revert.", vaccinated);
+            } else {
+                println!("[*] Vacunación Postmortem: Sin regresiones pendientes de vacunar.");
+            }
+
             Ok(())
         }
 

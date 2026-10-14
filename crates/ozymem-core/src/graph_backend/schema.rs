@@ -560,12 +560,13 @@ impl GraphBackend {
                 }
             };
             if let Some(ref s) = nodes_sql {
-                if !s.contains("endpoint") {
+                if !s.contains("observation") {
                     let _ = inner.sqlite.execute_batch(
                         "BEGIN IMMEDIATE;
                         CREATE TABLE memory_nodes_v2 (
                             id TEXT PRIMARY KEY,
-                            kind TEXT NOT NULL DEFAULT 'lesson',
+                            kind TEXT NOT NULL DEFAULT 'lesson'
+                                CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule','architecture','endpoint','table','invariant','observation')),
                             title TEXT NOT NULL DEFAULT '',
                             content TEXT NOT NULL,
                             error_context TEXT NOT NULL DEFAULT '',
@@ -598,7 +599,7 @@ impl GraphBackend {
             "CREATE TABLE IF NOT EXISTS memory_nodes (
                 id TEXT PRIMARY KEY,
                 kind TEXT NOT NULL DEFAULT 'lesson'
-                    CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule','architecture','endpoint','table')),
+                    CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule','architecture','endpoint','table','invariant','observation')),
                 title TEXT NOT NULL DEFAULT '',
                 content TEXT NOT NULL,
                 error_context TEXT NOT NULL DEFAULT '',

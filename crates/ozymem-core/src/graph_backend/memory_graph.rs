@@ -729,6 +729,180 @@ impl GraphBackend {
         Ok(report)
     }
 
+    /// [TASK 8.3] Purga y atenuación de memorias decaídas temporalmente.
+    /// Marca como obsoletas en SQLite y en RAM las notas temporales con baja confianza o inactivas.
+    pub fn prune_decayed_memories(&self, decay_threshold: f64, older_than_days: i64) -> Result<usize> {
+        let mut inner = self.inner.lock().unwrap();
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let max_age_secs = (older_than_days.max(1) as u64) * 86400;
+
+        let to_stale: Vec<String> = {
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT id, created_at, confidence_score FROM memory_nodes 
+                 WHERE tenant_id = ?1 AND stale = 0",
+            )?;
+            let rows = stmt.query_map(params![self.tenant_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })?;
+
+            let mut list = Vec::new();
+            for item in rows.flatten() {
+                let (id, created_at, conf) = item;
+                let created_secs = created_at.parse::<u64>().unwrap_or(0);
+                let age_secs = if created_secs > 0 {
+                    now_secs.saturating_sub(created_secs)
+                } else {
+                    0
+                };
+                if conf < decay_threshold || (age_secs > max_age_secs && conf <= 0.5) {
+                    list.push(id);
+                }
+            }
+            list
+        };
+
+        let mut count = 0;
+        for id in to_stale {
+            inner.sqlite.execute(
+                "UPDATE memory_nodes SET stale = 1, stale_reason = 'TEMPORAL_MEMORY_DECAY' WHERE id = ?1 AND tenant_id = ?2",
+                params![id, self.tenant_id],
+            )?;
+            let key = Self::make_entity_key(&GraphEntityType::Memory, &id);
+            if let Some(&idx) = inner.memory_index.get(&key) {
+                if let Some(w) = inner.memory_graph.node_weight_mut(idx) {
+                    w.stale = true;
+                }
+            }
+            count += 1;
+        }
+
+        let _ = inner.sqlite.execute(
+            "DELETE FROM ozy_observations WHERE tenant_id = ?1 AND is_deleted = 1",
+            params![self.tenant_id],
+        );
+
+        Ok(count)
+    }
+
+    /// [TASK 8.3] Vacunación Postmortem de Regresiones desde commits fix: y revert.
+    /// Extrae causas raíz e inyecta nodos permanentes INVARIANT[...] conectados por AppliesTo.
+    pub fn vaccinate_postmortems(&self, project_path: Option<&std::path::Path>) -> Result<usize> {
+        let root = project_path
+            .map(|p| p.to_path_buf())
+            .or_else(|| self.project_path().map(std::path::PathBuf::from))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        let output = std::process::Command::new("git")
+            .current_dir(&root)
+            .args([
+                "log",
+                "-n",
+                "30",
+                "--grep=^fix",
+                "--grep=^revert",
+                "--format=%h|%s",
+            ])
+            .output();
+
+        let Ok(out) = output else {
+            return Ok(0);
+        };
+        if !out.status.success() {
+            return Ok(0);
+        }
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut vaccinated = 0;
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.splitn(2, '|').collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            let hash = parts[0].trim();
+            let subject = parts[1].trim();
+            if subject.is_empty() {
+                continue;
+            }
+
+            let slug: String = subject
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '_' || c == ':' { c } else { '_' })
+                .collect();
+            let invariant_id = format!("INVARIANT[{}]", slug);
+
+            if self.get_memory_node(&invariant_id)?.is_some() {
+                continue;
+            }
+
+            let diff_files_output = std::process::Command::new("git")
+                .current_dir(&root)
+                .args(["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", hash])
+                .output();
+
+            let touched_files: Vec<String> = if let Ok(d_out) = diff_files_output {
+                String::from_utf8_lossy(&d_out.stdout)
+                    .lines()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                .to_string();
+
+            let node = MemoryNodeRecord {
+                id: invariant_id.clone(),
+                kind: "invariant".to_string(),
+                title: subject.to_string(),
+                content: format!("[POSTMORTEM_INVARIANT] Regresion vacunada desde commit {}: {}", hash, subject),
+                error_context: format!("Git commit: {}", hash),
+                solution: subject.to_string(),
+                confidence_score: 1.0,
+                touch_count: 1,
+                stale: 0,
+                stale_reason: None,
+                created_at: now.clone(),
+                last_verified_at: now.clone(),
+                tenant_id: self.tenant_id.clone(),
+                workspace_root: self.project_path().unwrap_or_default(),
+            };
+
+            self.insert_memory_node(&node)?;
+            vaccinated += 1;
+
+            for file_path in touched_files {
+                let norm_file = crate::normalize_path(&file_path);
+                let edge = MemoryEdgeRecord {
+                    source_type: GraphEntityType::Memory,
+                    source_id: invariant_id.clone(),
+                    target_type: GraphEntityType::File,
+                    target_id: norm_file,
+                    edge_type: MemoryEdgeType::AppliesTo,
+                    weight: 1.0,
+                    created_at: now.clone(),
+                    tenant_id: self.tenant_id.clone(),
+                    workspace_root: self.project_path().unwrap_or_default(),
+                };
+                let _ = self.insert_memory_edge(&edge);
+            }
+        }
+
+        Ok(vaccinated)
+    }
+
     /// [TASK 4.3] Renderizado Visual Mermaid del Grafo de Memorias.
     ///
     /// Genera un diagrama Mermaid sintacticamente valido sin emojis, utilizando insignias

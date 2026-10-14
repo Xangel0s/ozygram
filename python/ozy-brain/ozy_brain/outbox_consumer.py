@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -581,3 +583,206 @@ class OutboxConsumer:
         except Exception:
             stats["errors"] += 1
             return stats
+
+
+@dataclass
+class DiagnosticPrescription:
+    """Pre-calculated proactive repair prescription generated from an IDE diagnostic error."""
+    prescription_id: str
+    diagnostic_id: str | int
+    file_path: str
+    line: int
+    category: str
+    diagnosis: str
+    suggested_action: str
+    code_fix: str | None
+    confidence: float
+    latency_ms: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prescription_id": self.prescription_id,
+            "diagnostic_id": self.diagnostic_id,
+            "file_path": self.file_path,
+            "line": self.line,
+            "category": self.category,
+            "diagnosis": self.diagnosis,
+            "suggested_action": self.suggested_action,
+            "code_fix": self.code_fix,
+            "confidence": self.confidence,
+            "latency_ms": self.latency_ms,
+        }
+
+
+class ProactiveDiagnosticConsumer:
+    """[TASK 8.4] Proactive IDE Diagnostic Outbox Consumer.
+
+    Listens to DIAGNOSTIC_ERROR events emitted to UniversalOutbox (from rust-analyzer,
+    pyright, tsc, ruff, or IDE hooks) and synthesizes deterministic, high-confidence
+    repair prescriptions in sub-second latency (< 1s, typically < 5ms) without waiting
+    for interactive user prompts.
+    """
+
+    def __init__(self, outbox: UniversalOutbox):
+        self.outbox = outbox
+
+    def analyze_diagnostic(
+        self,
+        payload: dict[str, Any],
+        event_id: str | int = 0,
+        aggregate_id: str = "",
+    ) -> DiagnosticPrescription:
+        """Analyzes a diagnostic payload and produces a structured repair prescription."""
+        start_time = time.perf_counter()
+
+        file_path = str(payload.get("file_path", ""))
+        line = int(payload.get("line", 1))
+        msg = str(payload.get("message", payload.get("error_message", ""))).strip()
+        code = str(payload.get("code", "")).strip().upper()
+        source = str(payload.get("source", "")).lower()
+
+        category = "GENERAL_DIAGNOSTIC"
+        diagnosis = f"Diagnostic alert: {msg}"
+        suggested_action = "Review the referenced code line and adjust according to language standards."
+        code_fix = None
+        confidence = 0.70
+
+        # 1. Postmortem Invariant Violations (Highest Priority)
+        if any(k in msg for k in ["INVARIANT[", "[CRITICAL_VETO", "NEVER OVERWRITE"]) or "costo_servicio" in msg:
+            category = "INVARIANT_VIOLATION"
+            diagnosis = f"Postmortem invariant violation detected in {file_path}:{line}: {msg}"
+            suggested_action = "[CRITICAL_VETO: INVARIANT_PROTECTION] Prohibited mutation of protected invariant domain field."
+            code_fix = "# Invariant violation: do not mutate protected domain rule"
+            confidence = 0.99
+
+        # 2. Missing Imports / Unresolved Identifiers
+        elif (
+            code in ("F821", "TS2304", "E0425", "E0412")
+            or "is not defined" in msg
+            or "Cannot find name" in msg
+            or "unresolved import" in msg
+            or "cannot find value" in msg
+            or "cannot import name" in msg
+        ):
+            category = "MISSING_IMPORT"
+            match = (
+                re.search(r"name ['\"](\w+)['\"] is not defined", msg)
+                or re.search(r"Cannot find name ['\"](\w+)['\"]", msg)
+                or re.search(r"cannot import name ['\"](\w+)['\"]", msg)
+                or re.search(r"unresolved import `([^`]+)`", msg)
+                or re.search(r"cannot find (?:value|type) `(\w+)`", msg)
+            )
+            symbol = match.group(1) if match else "symbol"
+            diagnosis = f"Unresolved identifier '{symbol}' in {file_path}:{line}."
+            if file_path.endswith(".py"):
+                suggested_action = f"Add missing import statement for symbol '{symbol}'."
+                code_fix = f"from ... import {symbol}"
+            elif file_path.endswith((".ts", ".tsx", ".js", ".jsx")):
+                suggested_action = f"Import '{symbol}' from respective module or package."
+                code_fix = f"import {{ {symbol} }} from './{symbol}';"
+            elif file_path.endswith(".rs"):
+                suggested_action = f"Bring symbol '{symbol}' into scope with 'use'."
+                code_fix = f"use crate::{symbol};"
+            else:
+                suggested_action = f"Import symbol '{symbol}'."
+            confidence = 0.95
+
+        # 3. Async / Await Mismatches
+        elif (
+            "await" in msg.lower()
+            and ("outside async" in msg or "never awaited" in msg or "not allowed" in msg or "TS1308" in code)
+        ):
+            category = "ASYNC_AWAIT_MISMATCH"
+            diagnosis = f"Async/await coroutine mismatch in {file_path}:{line}: {msg}"
+            suggested_action = "Ensure the enclosing function is declared 'async' and invoke coroutine with 'await'."
+            code_fix = "await result"
+            confidence = 0.92
+
+        # 4. Rust Borrow Checker & Mutability Errors
+        elif (
+            "cannot borrow" in msg
+            or "use of moved value" in msg
+            or "borrow of moved value" in msg
+            or code in ("E0502", "E0596", "E0382")
+        ):
+            category = "MUTABILITY_OR_BORROW"
+            diagnosis = f"Memory ownership / borrow checker violation in {file_path}:{line}: {msg}"
+            suggested_action = "Isolate the borrow scope with an inner block, introduce .clone(), or mark the binding as 'mut'."
+            confidence = 0.90
+
+        # 5. Type Mismatches
+        elif (
+            "is not assignable to type" in msg
+            or ("expected" in msg and "found" in msg)
+            or code in ("TS2322", "E0308")
+            or "TypeError:" in msg
+        ):
+            category = "TYPE_MISMATCH"
+            diagnosis = f"Type signature mismatch at {file_path}:{line}: {msg}"
+            suggested_action = "Align variable types, provide required generic parameters, or apply explicit type narrowing."
+            confidence = 0.88
+
+        # 6. Syntax Errors
+        elif "SyntaxError" in msg or "unexpected token" in msg or "expected ';'" in msg or code in ("TS1005", "SYNTAX"):
+            category = "SYNTAX_ERROR"
+            diagnosis = f"Syntax error at {file_path}:{line}: {msg}"
+            suggested_action = "Check for missing delimiter, parentheses, brackets, or colons near target line."
+            confidence = 0.85
+
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
+
+        diag_id = aggregate_id or str(event_id)
+        rx_id = f"RX_{diag_id}_{int(time.time() * 1000)}"
+
+        return DiagnosticPrescription(
+            prescription_id=rx_id,
+            diagnostic_id=diag_id,
+            file_path=file_path,
+            line=line,
+            category=category,
+            diagnosis=diagnosis,
+            suggested_action=suggested_action,
+            code_fix=code_fix,
+            confidence=confidence,
+            latency_ms=elapsed_ms,
+        )
+
+    def drain_proactive_diagnostics(
+        self,
+        limit: int = 50,
+        publish_prescriptions: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Drains pending DIAGNOSTIC_ERROR events and emits DIAGNOSTIC_PRESCRIPTION events."""
+        events = self.outbox.fetch_pending(limit=limit)
+        diag_events = [e for e in events if e.event_type == "DIAGNOSTIC_ERROR"]
+        if not diag_events:
+            return []
+
+        prescriptions: list[dict[str, Any]] = []
+
+        def handle_event(event: OutboxEvent) -> bool:
+            if event.event_type != "DIAGNOSTIC_ERROR":
+                return True
+            rx = self.analyze_diagnostic(
+                payload=event.payload,
+                event_id=event.id,
+                aggregate_id=event.aggregate_id,
+            )
+            prescriptions.append(rx.to_dict())
+            return True
+
+        self.outbox.drain(handler=handle_event, limit=limit, enforce_backoff=False)
+
+        if publish_prescriptions and prescriptions:
+            outbox_batch = [
+                {
+                    "event_type": "DIAGNOSTIC_PRESCRIPTION",
+                    "aggregate_id": str(rx["diagnostic_id"]),
+                    "payload": rx,
+                }
+                for rx in prescriptions
+            ]
+            self.outbox.publish_batch(outbox_batch)
+
+        return prescriptions
+

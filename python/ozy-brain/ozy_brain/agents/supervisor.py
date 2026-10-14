@@ -93,3 +93,72 @@ class SupervisorAgent:
             confidence=0.90,
             structured_plan=result,
         )
+
+    def deliberate_committee(self, payload: dict[str, Any]) -> BrainResponse:
+        """3-Agent Dialectic Committee:
+        1. Implementer Agent: Formulates structural plan & topological refactor sequence.
+        2. Devil's Advocate Critic: Challenges assumptions, audits blast radius, regressions & contract breaks.
+        3. Executive Judge: Evaluates arguments, applies vetoes or conditional approvals, synthesizing a hardened plan.
+        """
+        from ozy_brain.planner import plan as implementer_plan
+
+        # Agent 1: Implementer Proposal
+        imp_resp = implementer_plan(payload)
+
+        # Agent 2: Risk Critic Audit
+        critic_res = self.critic.audit(payload)
+
+        # Agent 3: Executive Judge Evaluation
+        if critic_res.blocked:
+            verdict = "[DIALECTIC VERDICT: REJECTED: CRITICAL_VETO]"
+            confidence = 0.50
+            approved = False
+        elif critic_res.risk_level in ("HIGH", "CRITICAL"):
+            verdict = "[DIALECTIC VERDICT: CONDITIONAL_APPROVAL]"
+            confidence = 0.82
+            approved = True
+        else:
+            verdict = "[DIALECTIC VERDICT: APPROVED]"
+            confidence = 0.95
+            approved = True
+
+        combined_plan = [
+            f"[DIALECTIC COMMITTEE] Executive Judge Verdict: {verdict}",
+            f"[IMPLEMENTER PROPOSAL] Goal: {imp_resp.summary}",
+        ]
+        if critic_res.blocked:
+            combined_plan.append("[CRITIC VETO] Proposed change was vetoed due to critical regression risks:")
+            for reason in critic_res.reasons:
+                combined_plan.append(f"  • {reason}")
+            combined_plan.append("[EXECUTIVE JUDGE DIRECTIVE] Execution halted. Apply required mitigations before re-attempting.")
+        else:
+            combined_plan.extend(imp_resp.plan)
+            if critic_res.mitigations:
+                combined_plan.append("[CRITIC REQUIRED SAFEGUARDS]")
+                for m in critic_res.mitigations:
+                    combined_plan.append(f"  • {m}")
+
+        committee_summary = (
+            f"Dialectic Committee Review: {verdict} | Risk: {critic_res.risk_level} | "
+            f"Approved: {approved}."
+        )
+
+        return BrainResponse(
+            action="dialectic_committee",
+            summary=committee_summary,
+            plan=combined_plan,
+            risks=critic_res.reasons + imp_resp.risks,
+            recommendations=critic_res.mitigations + imp_resp.recommendations,
+            memory_updates=[
+                f"Committee verdict: {verdict}",
+                f"Risk tier: {critic_res.risk_level}",
+            ],
+            confidence=confidence,
+            structured_plan={
+                "verdict": verdict,
+                "approved": approved,
+                "implementer_plan": imp_resp.structured_plan,
+                "critic_audit": critic_res.to_dict(),
+            },
+            risk_assessment=critic_res.to_dict(),
+        )

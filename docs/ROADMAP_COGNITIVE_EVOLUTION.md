@@ -280,28 +280,28 @@ sequenceDiagram
 ### [FASE 8: Arquitectura Cognitiva de Doble Sistema & DreamRSI Offline]
 *Objetivo: Integrar el procesamiento por reflejo rápido vs deliberación profunda y la consolidación de conocimiento en tiempo ocioso.*
 
-- [ ] **Task 8.1: Router Cognitivo Sistema 1 (Reflejo) vs Sistema 2 (Deliberativo)**
-  - **Componentes**: `python/ozy-brain/ozy_brain/brain.py`, `planner.py`.
+- [x] **Task 8.1: Router Cognitivo Sistema 1 (Reflejo) vs Sistema 2 (Deliberativo)**
+  - **Componentes**: `python/ozy-brain/ozy_brain/cognitive_router.py`, `python/ozy-brain/ozy_brain/brain.py`.
   - **Descripción**: Implementar un clasificador ultraligero que despache tareas mecánicas (imports, tipografías, formato) al Sistema 1 (< 150 ms, sin llamadas a LLM deliberativo), reservando el razonamiento multi-agente del Sistema 2 únicamente para cambios con alto blast radius o mutaciones de base de datos.
-  - **Criterio de Aceptación**: Tareas triviales se resuelven en < 200 ms con cero tokens de razonamiento extra. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: Tareas triviales se resuelven en < 200 ms con cero tokens de razonamiento extra. [STATUS: COMPLETED]
 
-- [ ] **Task 8.2: Comité Dialéctico de 3 Agentes en `ozy-brain`**
-  - **Componentes**: `python/ozy-brain/ozy_brain/agents/supervisor.py`, `risk_critic.py`.
+- [x] **Task 8.2: Comité Dialéctico de 3 Agentes en `ozy-brain`**
+  - **Componentes**: `python/ozy-brain/ozy_brain/agents/supervisor.py`, `risk_critic.py`, `planner.py`.
   - **Descripción**: Configurar la interacción dialéctica: Agente Implementador (propuesta) -> Agente Crítico (búsqueda de fallos) -> Juez Ejecutivo (síntesis y validación con `ozy_simulate_patch`), entregando una respuesta unificada y blindada.
-  - **Criterio de Aceptación**: Cambios críticos pasan por la auditoría interna antes de presentarse al usuario. [STATUS: PLANNED]
+  - **Criterio de Aceptación**: Cambios críticos pasan por la auditoría interna antes de presentarse al usuario. [STATUS: COMPLETED]
 
-- [ ] **Task 8.3: Consolidación Offline en Tiempo Ocioso (Sleep Daemon, Memory Decay & Postmortem Vaccine)**
-  - **Componentes**: `python/ozy-brain/ozy_brain/dream/optimizer.py`, `crates/ozymem-core/src/graph_backend/schema.rs`.
+- [x] **Task 8.3: Consolidación Offline en Tiempo Ocioso (Sleep Daemon, Memory Decay & Postmortem Vaccine)**
+  - **Componentes**: `crates/ozymem-core/src/graph_backend/memory_graph.rs`, `schema.rs`, `crates/ozymem-cli/src/commands/dream.rs`.
   - **Descripción**: Implementar el ciclo de consolidación nocturno o en tiempo ocioso:
     1. Agrupación y destilación de observaciones efímeras del día en lecciones consolidadas.
-    2. Algoritmo de decaimiento temporal (`memory decay`): atenuar y archivar notas temporales de baja confianza no consultadas en más de 7 días.
-    3. Vacunación Postmortem: detección de commits `fix:` y `git revert` para inyectar nodos `INVARIANT[...]` en el grafo.
-  - **Criterio de Aceptación**: `ozymem dream run` purga memorias huérfanas, comprime el grafo e inyecta invariantes de regresiones detectadas. [STATUS: PLANNED]
+    2. Algoritmo de decaimiento temporal (`memory decay`): atenuar y archivar notas temporales de baja confianza no consultadas en más de 7 días (`prune_decayed_memories`).
+    3. Vacunación Postmortem: detección de commits `fix:` y `git revert` para inyectar nodos permanentes `INVARIANT[...]` en el grafo (`vaccinate_postmortems`).
+  - **Criterio de Aceptación**: `ozymem dream run` purga memorias huérfanas, comprime el grafo e inyecta invariantes de regresiones detectadas. [STATUS: COMPLETED]
 
-- [ ] **Task 8.4: Consumidor Proactivo Outbox Conectado a Diagnósticos de IDE**
-  - **Componentes**: `python/ozy-brain/ozy_brain/outbox_consumer.py`.
-  - **Descripción**: Conectar el `UniversalOutbox` a los eventos de diagnóstico de Tree-Sitter / TypeScript en tiempo real. Cuando se detecta un error de sintaxis o tipo en el workspace, el consumidor genera de forma proactiva la sugerencia de reparación antes de que el usuario la solicite.
-  - **Criterio de Aceptación**: Eventos en la tabla `outbox_events` con tipo `DIAGNOSTIC_ERROR` generan recomendaciones contextuales pre-calculadas en menos de 1 segundo. [STATUS: PLANNED]
+- [x] **Task 8.4: Consumidor Proactivo Outbox Conectado a Diagnósticos de IDE**
+  - **Componentes**: `python/ozy-brain/ozy_brain/outbox_consumer.py`, `python/ozy-brain/tests/test_outbox_diagnostics.py`.
+  - **Descripción**: Conectar el `UniversalOutbox` a los eventos de diagnóstico en tiempo real. Cuando se detecta un error de sintaxis, tipo, o violación de invariante en el workspace (`DIAGNOSTIC_ERROR`), el consumidor genera de forma proactiva la sugerencia de reparación (`DIAGNOSTIC_PRESCRIPTION`) en < 1 segundo sin requerir interacción manual.
+  - **Criterio de Aceptación**: Eventos en la tabla `outbox_events` con tipo `DIAGNOSTIC_ERROR` generan recomendaciones contextuales pre-calculadas en menos de 1 segundo. [STATUS: COMPLETED]
 
 ---
 

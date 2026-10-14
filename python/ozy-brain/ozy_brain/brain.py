@@ -254,6 +254,31 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
     )
 
 
+def _route_handler(payload: dict[str, Any]) -> BrainResponse:
+    from ozy_brain.cognitive_router import route_cognitive_system
+
+    decision = route_cognitive_system(payload)
+    return BrainResponse(
+        action="cognitive_route",
+        summary=f"Cognitive Routing: {decision.tier.value} | Budget: {decision.latency_budget_ms}ms (Zero-Token: {decision.zero_token_guarantee}).",
+        plan=[f"Route decision: {decision.tier.value} - {decision.reason}"],
+        risks=[],
+        recommendations=[
+            "Dispatch immediately via System 1 Reflex (< 150ms)"
+            if decision.zero_token_guarantee
+            else "Escalate to System 2 Dialectic Committee for adversarial review."
+        ],
+        memory_updates=[f"Cognitive tier: {decision.tier.value}"],
+        confidence=0.98,
+        structured_plan=decision.to_dict(),
+    )
+
+
+def _dialectic_committee_handler(payload: dict[str, Any]) -> BrainResponse:
+    supervisor = SupervisorAgent(project_path=payload.get("project"))
+    return supervisor.deliberate_committee(payload)
+
+
 ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "plan": plan,
     "reflect": reflect,
@@ -276,6 +301,10 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "dream_rsi": _dream_rsi_handler,
     "simulate_action": _simulate_action_handler,
     "critique_hypothesis": _simulate_action_handler,
+    "cognitive_route": _route_handler,
+    "route": _route_handler,
+    "dialectic_committee": _dialectic_committee_handler,
+    "deliberate_committee": _dialectic_committee_handler,
 }
 
 
@@ -285,3 +314,4 @@ def run(action: str, payload: dict[str, Any]) -> dict[str, Any]:
     response["engine"] = "ozy-brain-python"
     response["safe_mode"] = True
     return response
+
