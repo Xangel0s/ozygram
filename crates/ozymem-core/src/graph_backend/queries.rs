@@ -1176,11 +1176,19 @@ impl GraphBackend {
             if let Some(resolved) = self.resolve_target_path(fp) {
                 defining_file_path = Some(resolved.clone());
                 let norm = crate::normalize_path(&resolved);
+                let fwd = norm.replace('\\', "/");
+                let bwd = norm.replace('/', "\\");
+                let file_name = std::path::Path::new(&norm)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| fp.to_string());
+                let suffix = format!("%{}", file_name);
+
                 let inner = self.inner.lock().unwrap();
                 let res = inner.sqlite.query_row(
                     "SELECT start_line, end_line FROM functions 
-                     WHERE name = ?1 AND (file_path = ?2 OR file_path = ?3) AND tenant_id = ?4 LIMIT 1",
-                    params![symbol_name, &resolved, &norm, self.tenant_id],
+                     WHERE name = ?1 AND (file_path = ?2 OR file_path = ?3 OR file_path = ?4 OR replace(file_path, '\\', '/') = ?5 OR file_path LIKE ?6) AND tenant_id = ?7 LIMIT 1",
+                    params![symbol_name, &resolved, &norm, &bwd, &fwd, &suffix, self.tenant_id],
                     |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
                 );
                 if let Ok(row) = res {
@@ -1190,7 +1198,7 @@ impl GraphBackend {
             }
         }
 
-        if defining_file_path.is_none() {
+        if def_start_line.is_none() {
             let inner = self.inner.lock().unwrap();
             let res = inner.sqlite.query_row(
                 "SELECT file_path, start_line, end_line FROM functions 
@@ -1199,7 +1207,9 @@ impl GraphBackend {
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
             );
             if let Ok(row) = res {
-                defining_file_path = Some(row.0);
+                if defining_file_path.is_none() {
+                    defining_file_path = Some(row.0);
+                }
                 def_start_line = Some(row.1);
                 def_end_line = Some(row.2);
             }
@@ -1257,9 +1267,13 @@ impl GraphBackend {
             if !re.is_match(&content) { continue };
 
             let normalized_file_path = crate::normalize_path(&path.to_string_lossy());
+            let norm_clean_file = normalized_file_path.replace('\\', "/").to_lowercase();
             let is_defining_file = defining_file_path.as_deref().map(|def| {
-                let norm_def = crate::normalize_path(def);
-                norm_def == normalized_file_path || norm_def.ends_with(&normalized_file_path) || normalized_file_path.ends_with(&norm_def)
+                let norm_def = crate::normalize_path(def).replace('\\', "/").to_lowercase();
+                norm_def == norm_clean_file
+                    || norm_def.ends_with(&norm_clean_file)
+                    || norm_clean_file.ends_with(&norm_def)
+                    || (std::path::Path::new(&norm_def).file_name() == std::path::Path::new(&norm_clean_file).file_name())
             }).unwrap_or(false);
 
             for (idx, line) in content.lines().enumerate() {
@@ -1268,19 +1282,28 @@ impl GraphBackend {
                     let trimmed = line.trim();
                     let trimmed_lower = trimmed.to_lowercase();
 
-                    let kind = if is_defining_file
-                        && def_start_line.map(|s| line_num as i64 >= s && def_end_line.map(|e| (line_num as i64) <= e).unwrap_or(true)).unwrap_or(false)
-                        && (trimmed_lower.starts_with("def ")
-                            || trimmed_lower.starts_with("fn ")
-                            || trimmed_lower.starts_with("function ")
-                            || trimmed_lower.starts_with("export function ")
-                            || trimmed_lower.starts_with("class ")
-                            || trimmed_lower.starts_with("export class ")
-                            || trimmed_lower.starts_with("interface ")
-                            || trimmed_lower.starts_with("export interface ")
-                            || trimmed_lower.starts_with("export const ")
-                            || trimmed_lower.starts_with("const "))
-                    {
+                    let is_def_keyword = trimmed_lower.starts_with("def ")
+                        || trimmed_lower.starts_with("async def ")
+                        || trimmed_lower.starts_with("fn ")
+                        || trimmed_lower.starts_with("pub fn ")
+                        || trimmed_lower.starts_with("function ")
+                        || trimmed_lower.starts_with("export function ")
+                        || trimmed_lower.starts_with("class ")
+                        || trimmed_lower.starts_with("export class ")
+                        || trimmed_lower.starts_with("interface ")
+                        || trimmed_lower.starts_with("export interface ")
+                        || trimmed_lower.starts_with("struct ")
+                        || trimmed_lower.starts_with("pub struct ")
+                        || trimmed_lower.starts_with("enum ")
+                        || trimmed_lower.starts_with("pub enum ")
+                        || trimmed_lower.starts_with("export const ")
+                        || trimmed_lower.starts_with("const ");
+
+                    let within_def_range = def_start_line
+                        .map(|s| line_num as i64 >= s && def_end_line.map(|e| (line_num as i64) <= e).unwrap_or(true))
+                        .unwrap_or(true);
+
+                    let kind = if is_defining_file && is_def_keyword && within_def_range {
                         "definition".to_string()
                     } else if trimmed_lower.starts_with("import ")
                         || trimmed_lower.starts_with("from ")
