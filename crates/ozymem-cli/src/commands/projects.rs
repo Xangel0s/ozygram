@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::client::build_backend_client;
 use crate::config::{load_config, save_config};
 
-pub fn run_start(path_arg: Option<String>, force: bool) -> anyhow::Result<()> {
+pub async fn run_start(path_arg: Option<String>, force: bool) -> anyhow::Result<()> {
     let target_path = path_arg.unwrap_or_else(|| ".".to_string());
     
     // Authorization Check
@@ -22,64 +22,61 @@ pub fn run_start(path_arg: Option<String>, force: bool) -> anyhow::Result<()> {
 
     // Send wake command to daemon socket
     let clean_path_str = clean_path(&canonical);
-    let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(async {
-        match send_daemon_command_cli(&serde_json::json!({
-            "action": "wake",
-            "project_name": project_name,
-            "project_path": clean_path_str
-        })).await {
-            Ok(res) => {
-                println!("[SUCCESS] Daemon despertó el proyecto con éxito: {}", serde_json::to_string_pretty(&res).unwrap_or_default());
-            }
-            Err(e) => {
-                println!("[WARNING] No se pudo conectar al daemon central (¿está encendido?). Detalle: {e}");
-                println!("[INFO] Arrancando watcher en modo fallback heredado local...");
-                
-                // Fallback watcher code...
-                let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-                let pid_file = home_dir.join(format!(".ozymem-{}.pid", project_name));
-                if pid_file.exists() {
-                    if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-                        if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                            if is_pid_alive(pid) {
-                                println!("[INFO] El watcher para '{}' ya se encuentra activo (PID: {}).", project_name, pid);
-                                return;
-                            }
+    match send_daemon_command_cli(&serde_json::json!({
+        "action": "wake",
+        "project_name": project_name,
+        "project_path": clean_path_str
+    })).await {
+        Ok(res) => {
+            println!("[SUCCESS] Daemon despertó el proyecto con éxito: {}", serde_json::to_string_pretty(&res).unwrap_or_default());
+        }
+        Err(e) => {
+            println!("[WARNING] No se pudo conectar al daemon central (¿está encendido?). Detalle: {e}");
+            println!("[INFO] Arrancando watcher en modo fallback heredado local...");
+            
+            // Fallback watcher code...
+            let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let pid_file = home_dir.join(format!(".ozymem-{}.pid", project_name));
+            if pid_file.exists() {
+                if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                        if is_pid_alive(pid) {
+                            println!("[INFO] El watcher para '{}' ya se encuentra activo (PID: {}).", project_name, pid);
+                            return Ok(());
                         }
                     }
                 }
-
-                let exe_path = std::env::current_exe().unwrap();
-                let mut cmd = std::process::Command::new(exe_path);
-                cmd.arg("watch").arg(&target_path);
-                if force {
-                    cmd.arg("--force");
-                }
-
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-                }
-
-                let log_path = home_dir.join(format!(".ozymem-{}.log", project_name));
-                let log_file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path).unwrap();
-                let stdout_file = log_file.try_clone().unwrap();
-                let stderr_file = log_file.try_clone().unwrap();
-                cmd.stdout(stdout_file);
-                cmd.stderr(stderr_file);
-
-                let child = cmd.spawn().unwrap();
-                let pid = child.id();
-                let _ = std::fs::write(&pid_file, pid.to_string());
-                println!("[SUCCESS] Watcher para '{}' iniciado en segundo plano (PID: {}).", project_name, pid);
             }
+
+            let exe_path = std::env::current_exe().unwrap();
+            let mut cmd = std::process::Command::new(exe_path);
+            cmd.arg("watch").arg(&target_path);
+            if force {
+                cmd.arg("--force");
+            }
+
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            let log_path = home_dir.join(format!(".ozymem-{}.log", project_name));
+            let log_file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path).unwrap();
+            let stdout_file = log_file.try_clone().unwrap();
+            let stderr_file = log_file.try_clone().unwrap();
+            cmd.stdout(stdout_file);
+            cmd.stderr(stderr_file);
+
+            let child = cmd.spawn().unwrap();
+            let pid = child.id();
+            let _ = std::fs::write(&pid_file, pid.to_string());
+            println!("[SUCCESS] Watcher para '{}' iniciado en segundo plano (PID: {}).", project_name, pid);
         }
-    });
+    }
 
     Ok(())
 }
@@ -266,7 +263,7 @@ pub fn run_list() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn run_stop(project_arg: Option<String>) -> anyhow::Result<()> {
+pub async fn run_stop(project_arg: Option<String>) -> anyhow::Result<()> {
     let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     
     let project_name = match project_arg {
@@ -300,32 +297,29 @@ pub fn run_stop(project_arg: Option<String>) -> anyhow::Result<()> {
     
     match project {
         Some(p) => {
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(async {
-                match send_daemon_command_cli(&serde_json::json!({
-                    "action": "sleep",
-                    "project_name": p.name
-                })).await {
-                    Ok(res) => {
-                        println!("[SUCCESS] Daemon suspendió el proyecto '{}': {}", p.name, serde_json::to_string_pretty(&res).unwrap_or_default());
-                    }
-                    Err(e) => {
-                        println!("[WARNING] No se pudo enviar comando al daemon (¿está encendido?). Detalle: {e}");
-                        println!("[INFO] Intentando detener watcher local como fallback...");
-                        let pid_file = home_dir.join(format!(".ozymem-{}.pid", p.name));
-                        if pid_file.exists() {
-                            if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-                                let pid_str = pid_str.trim();
-                                let _ = std::process::Command::new("taskkill")
-                                    .args(&["/PID", pid_str, "/F"])
-                                    .status();
-                                let _ = std::fs::remove_file(&pid_file);
-                                println!("[SUCCESS] Watcher local detenido (PID: {}).", pid_str);
-                            }
+            match send_daemon_command_cli(&serde_json::json!({
+                "action": "sleep",
+                "project_name": p.name
+            })).await {
+                Ok(res) => {
+                    println!("[SUCCESS] Daemon suspendió el proyecto '{}': {}", p.name, serde_json::to_string_pretty(&res).unwrap_or_default());
+                }
+                Err(e) => {
+                    println!("[WARNING] No se pudo enviar comando al daemon (¿está encendido?). Detalle: {e}");
+                    println!("[INFO] Intentando detener watcher local como fallback...");
+                    let pid_file = home_dir.join(format!(".ozymem-{}.pid", p.name));
+                    if pid_file.exists() {
+                        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+                            let pid_str = pid_str.trim();
+                            let _ = std::process::Command::new("taskkill")
+                                .args(&["/PID", pid_str, "/F"])
+                                .status();
+                            let _ = std::fs::remove_file(&pid_file);
+                            println!("[SUCCESS] Watcher local detenido (PID: {}).", pid_str);
                         }
                     }
                 }
-            });
+            }
         }
         None => println!("[ERROR] Proyecto '{}' no encontrado en el registro.", project_name)
     }
@@ -592,7 +586,7 @@ pub async fn run_init() -> anyhow::Result<()> {
     };
 
     // Paso 3: Levantar el Watcher del proyecto seleccionado
-    let watcher_res = run_start(Some(selected_project_path.clone()), false);
+    let watcher_res = run_start(Some(selected_project_path.clone()), false).await;
     let watcher_status_str = match watcher_res {
         Ok(_) => {
             let home_dir = home::home_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());

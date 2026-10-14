@@ -196,10 +196,10 @@ async fn main() -> anyhow::Result<()> {
             return run_doctor(*json).await;
         }
         Commands::Start { path, force } => {
-            return run_start(path.clone(), *force);
+            return run_start(path.clone(), *force).await;
         }
         Commands::Stop { project } => {
-            return run_stop(project.clone());
+            return run_stop(project.clone()).await;
         }
         Commands::Logs { project } => {
             return run_logs_tail(project.clone()).await;
