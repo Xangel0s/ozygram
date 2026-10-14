@@ -709,9 +709,21 @@ impl GraphBackend {
     /// Removes a file and its relations from SQLite and in-memory graph (Delta Indexing).
     pub fn remove_file_delta(&self, file_path: &Path, _project_root: &Path) -> Result<bool> {
         let raw_path = crate::normalize_path(&file_path.to_string_lossy());
-        let abs_path = std::fs::canonicalize(file_path)
-            .map(|c| crate::normalize_path(&c.to_string_lossy()))
-            .unwrap_or_else(|_| raw_path.clone());
+        let abs_path = if let Ok(c) = std::fs::canonicalize(file_path) {
+            crate::normalize_path(&c.to_string_lossy())
+        } else if let Some(parent) = file_path.parent() {
+            if let Ok(c_parent) = std::fs::canonicalize(parent) {
+                if let Some(file_name) = file_path.file_name() {
+                    crate::normalize_path(&c_parent.join(file_name).to_string_lossy())
+                } else {
+                    raw_path.clone()
+                }
+            } else {
+                raw_path.clone()
+            }
+        } else {
+            raw_path.clone()
+        };
 
         self.engram_store.remove_file_incremental(&abs_path);
         self.engram_store.remove_file_incremental(&raw_path);

@@ -13,8 +13,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from ozy_brain.agents.risk_critic import (
     BlastRadiusReport,
     RiskCriticAgent,

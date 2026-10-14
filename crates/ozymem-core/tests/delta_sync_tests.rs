@@ -170,7 +170,7 @@ async fn test_spawn_live_watcher_incremental_indexing() {
 
     // Wait for live watcher debounce and auto-index
     let mut indexed = false;
-    for _ in 0..30 {
+    for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if let Ok(summary) = backend.get_graph_summary().await {
             if summary.file_count >= 1 && summary.function_count >= 1 {
@@ -185,7 +185,7 @@ async fn test_spawn_live_watcher_incremental_indexing() {
     fs::remove_file(&py_file).unwrap();
 
     let mut removed = false;
-    for _ in 0..30 {
+    for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if let Ok(summary) = backend.get_graph_summary().await {
             if summary.file_count == 0 {

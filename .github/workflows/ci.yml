@@ -25,7 +25,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install duckdb polars pydantic
+          pip install duckdb polars pydantic pytest
 
       - name: Run Python Unit Tests
         run: python -m unittest discover -s python/ozy-brain/tests -v
