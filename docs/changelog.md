@@ -2,6 +2,22 @@
 
 This document tracks the chronological evolution, architectural milestones, and key improvements in **Ozygram**.
 
+## Version v0.1.2 — Cognitive Evolution, Resilient CI & Zero-Emoji Standardization
+
+### 1. Cognitive Evolution Architecture
+- **Token Hyper-Optimization**: Introduced `view_skeleton` AST body pruning, extractive context windows ($\pm 10$ lines), and SHA-256 session deduplication (`ozymem stats`).
+- **Cross-Language Lineage**: Bidirectional Next.js/TSX endpoint resolution (`CONSUMES_ENDPOINT`) and SQL DDL table lineage extractor.
+- **Speculative Ghost Patching**: Ephemeral Copy-on-Write RAM sandbox (`simulate_patch`), caller arity validator (`ghost_signature.rs`), and `ozy_simulate_patch` MCP tool.
+- **Dual System Cognitive Engine**: System 1 fast reflex (<150ms) vs System 2 deliberative committee (Implementer + Risk Critic + Supervisor).
+- **Proactive Outbox Diagnostics**: UniversalOutbox listener providing sub-second compiler and runtime repair prescriptions.
+
+### 2. CI & Cross-Platform Windows Hardening
+- **Path Canonicalization Resiliency**: Resolved Windows `NotFound` edge case in delta watcher when files are deleted by falling back to parent directory canonicalization.
+- **Robust Symbol Reference Classification**: Eliminated path separator mismatch between Windows backslashes and forward slashes, and made definition classification resilient against unindexed start lines.
+- **Dual Unittest & Pytest Discovery**: Converted all test suites in `python/ozy-brain/tests` to standard `unittest.TestCase` for 100% out-of-the-box compatibility with `python -m unittest discover`.
+
+---
+
 ## Version v1.5.0 — Enterprise Resilience, Reverse Dependencies, Universal Outbox & UI Sandbox
 
 ### 1. Fast Lane & Agent DX Enhancements
