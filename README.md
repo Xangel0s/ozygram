@@ -70,7 +70,13 @@ Treat Ozygram as a curated, high-precision project brain, not a raw transcript s
 | **🧠 Persistent Memory** | Local SQLite ACID with FTS5 lexical BM25 search | Retains lessons, gotchas, and conventions across sessions. |
 | **🔍 Local Hybrid RRF Search** | Reciprocal Rank Fusion (FTS5 + FastEmbed ONNX local) | Deep semantic search with **$0 API cost** and 100% offline privacy. |
 | **📐 $O(1)$ Symbol Engrams** | Zero-copy deserialization via `rkyv` + `memmap2` | Instant AST contract prefill; >90% prompt cache hit rate. |
-| **🌙 Dream-RSI v1.1.0** | Offline MCTS replay + Auto-parenting + Batch logging | Continuous self-improvement without token tax or manual hash tracking. |
+| **📉 AST Skeletonization & LOD** | Native `view_skeleton` body pruning + LOD 0/1/2 | >80% token savings on exploration and semantic search. |
+| **🌉 Cross-Language Frontier** | TSX endpoint consumers + SQL DDL lineage + File watcher | Seamless API ⇄ UI and ORM ⇄ Migration graph navigation. |
+| **👻 Ghost Patch Simulator** | Ephemeral RAM copy-on-write + Caller arity validator | Pre-flight patch contract verification with zero disk I/O. |
+| **🧠 Dual System Cognitive Engine** | System 1 Reflex (<150ms) + 3-Agent Dialectic Committee | Fast-path mechanical resolution & adversarial deliberation. |
+| **💉 Postmortem Vaccines & Decay** | Git `fix:`/`revert` invariant injection + Temporal decay | Permanent protection against repeated bugs & clean memory. |
+| **🚨 Proactive Outbox Diagnostics** | `UniversalOutbox` listener for IDE diagnostics | Sub-second deterministic repair prescriptions (< 1s). |
+| **🌙 Dream-RSI v1.3.0** | Offline MCTS replay + Auto-parenting + Cognitive Auto-Wiring | Continuous self-improvement without token tax. |
 | **🛡️ Safety & Blast Radius** | DuckDB git churn analysis + DDL/DML drop guards | Blocks destructive modifications and flags high-risk regressions. |
 | **🚀 The Dream Team** | Bundled with Microsoft `tgrep` & `rtk` (Rust Token Killer) | Trigram regex speeds and aggressive terminal token compression. |
 
