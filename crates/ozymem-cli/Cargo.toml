@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "ozymem"
 path = "src/main.rs"
 
+[[bin]]
+name = "ozygram"
+path = "src/bin/ozygram.rs"
+
 
 [dependencies]
 anyhow.workspace = true

@@ -28,7 +28,8 @@ fi
 echo "[3/4] Installing executables and Ozy Brain worker..."
 cp -f "$SERVER_RELEASE" "$BIN_DIR/ozymem-server"
 cp -f "$CLI_RELEASE" "$BIN_DIR/ozymem"
-chmod +x "$BIN_DIR/ozymem-server" "$BIN_DIR/ozymem"
+cp -f "$CLI_RELEASE" "$BIN_DIR/ozygram"
+chmod +x "$BIN_DIR/ozymem-server" "$BIN_DIR/ozymem" "$BIN_DIR/ozygram"
 
 if [ -d "./python/ozy-brain" ]; then
     cp -rf "./python/ozy-brain" "$OZY_DIR/python/"

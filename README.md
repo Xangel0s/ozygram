@@ -111,11 +111,18 @@ Find the exact capability, technical mechanism, and documentation for your task:
 
 ## [QUICKSTART: 1-MINUTE INSTALL]
 
-### Windows (PowerShell)
+### 1-Click Autonomous Binary (`ozygram.exe`)
+Download `ozygram.exe` (Windows) or `ozygram` (Linux / macOS) from the latest [Release](https://github.com/Xangel0s/ozygram/releases) and execute it (or simply double-click on Windows):
+- Auto-deploys binaries to `~/.ozymem/bin/`.
+- Automatically injects `~/.ozymem/bin` into your User `PATH`.
+- Auto-detects and writes the MCP configuration directly into **Antigravity IDE**, **Claude Desktop**, **Cursor**, **Windsurf**, and **VS Code**.
+- Prints the verified JSON configuration for any other custom MCP client.
+
+### Windows (PowerShell Script)
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
-*Or download directly via PowerShell:*
+*Or download and execute directly via PowerShell:*
 ```powershell
 irm https://raw.githubusercontent.com/Xangel0s/ozygram/main/install.ps1 | iex
 ```

@@ -9,14 +9,19 @@ use ozymem_core::mcp_common::McpBackend;
 use ozymem_parser::{extract_dependency_hints, parse_source, SupportedLanguage};
 
 #[derive(Parser)]
-#[command(name = "ozymem", author, version, about = "CLI para gestión de grafos y lecciones", long_about = None)]
+#[command(name = "ozygram", author, version, about = "Ozygram: Neuro-Symbolic Cognitive Engine & Code Graph", long_about = None)]
 struct Args {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// One-click setup: install to PATH and auto-configure AI MCP clients
+    Setup {
+        #[arg(long)]
+        auto: bool,
+    },
     /// Mostrar el estado logistico de Ozymem, incluyendo la tabla de watchers desde SQLite
     Status {
         #[arg(long)]
@@ -181,8 +186,12 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let command = args.command.unwrap_or(Commands::Setup { auto: false });
 
-    match &args.command {
+    match &command {
+        Commands::Setup { auto } => {
+            return run_setup(*auto).await;
+        }
         Commands::Doctor { json } => {
             return run_doctor(*json).await;
         }
@@ -307,7 +316,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    match args.command {
+    match command {
         Commands::Stats { json } => run_stats(json).await?,
         Commands::Status { json } => print_status(&context, json).await?,
         Commands::Scan { path, reset, force } => scan_directory(&context.connection, &path, reset, force).await?,
@@ -359,6 +368,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("[Core] Estructura física del grafo purgada. Conservando base de conocimientos a largo plazo.");
             }
         }
+        Commands::Setup { .. } => unreachable!(),
         Commands::Start { .. } => unreachable!(),
         Commands::Stop { .. } => unreachable!(),
         Commands::Logs { .. } => unreachable!(),

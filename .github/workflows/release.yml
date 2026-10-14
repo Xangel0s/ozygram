@@ -52,6 +52,7 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/ozymem-server dist/
           cp target/${{ matrix.target }}/release/ozymem dist/
+          cp target/${{ matrix.target }}/release/ozygram dist/
           cp install.sh dist/
           cp README.md dist/
           tar -czvf ${{ matrix.asset_name }} -C dist .
@@ -63,6 +64,7 @@ jobs:
           New-Item -ItemType Directory -Path dist -Force
           Copy-Item target/${{ matrix.target }}/release/ozymem-server.exe dist/
           Copy-Item target/${{ matrix.target }}/release/ozymem.exe dist/
+          Copy-Item target/${{ matrix.target }}/release/ozygram.exe dist/
           Copy-Item install.ps1 dist/
           Copy-Item README.md dist/
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset_name }}

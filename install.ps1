@@ -23,8 +23,9 @@ try {
     exit 1
 }
 
-$ServerRelease = Join-Path $PSScriptRoot "target\release\ozymem-server.exe"
-$CliRelease    = Join-Path $PSScriptRoot "target\release\ozymem.exe"
+$ServerRelease  = Join-Path $PSScriptRoot "target\release\ozymem-server.exe"
+$CliRelease     = Join-Path $PSScriptRoot "target\release\ozymem.exe"
+$OzygramRelease = Join-Path $PSScriptRoot "target\release\ozygram.exe"
 
 if (-not (Test-Path $ServerRelease) -or -not (Test-Path $CliRelease)) {
     Write-Host "[!] Release binaries not found in target\release." -ForegroundColor Red
@@ -32,8 +33,9 @@ if (-not (Test-Path $ServerRelease) -or -not (Test-Path $CliRelease)) {
 }
 
 Write-Host "[3/4] Installing executables and Ozy Brain worker..." -ForegroundColor Yellow
-$DestServer = Join-Path $BinDir "ozymem-server.exe"
-$DestCli    = Join-Path $BinDir "ozymem.exe"
+$DestServer  = Join-Path $BinDir "ozymem-server.exe"
+$DestCli     = Join-Path $BinDir "ozymem.exe"
+$DestOzygram = Join-Path $BinDir "ozygram.exe"
 
 if (Test-Path $DestServer) {
     Move-Item -Force $DestServer "$DestServer.old" -ErrorAction SilentlyContinue
@@ -41,9 +43,17 @@ if (Test-Path $DestServer) {
 if (Test-Path $DestCli) {
     Move-Item -Force $DestCli "$DestCli.old" -ErrorAction SilentlyContinue
 }
+if (Test-Path $DestOzygram) {
+    Move-Item -Force $DestOzygram "$DestOzygram.old" -ErrorAction SilentlyContinue
+}
 
 Copy-Item -Path $ServerRelease -Destination $DestServer -Force
 Copy-Item -Path $CliRelease    -Destination $DestCli -Force
+if (Test-Path $OzygramRelease) {
+    Copy-Item -Path $OzygramRelease -Destination $DestOzygram -Force
+} else {
+    Copy-Item -Path $CliRelease     -Destination $DestOzygram -Force
+}
 
 if (Test-Path (Join-Path $PSScriptRoot "python\ozy-brain")) {
     Copy-Item -Path (Join-Path $PSScriptRoot "python\ozy-brain") -Destination (Split-Path $PyDir) -Recurse -Force
