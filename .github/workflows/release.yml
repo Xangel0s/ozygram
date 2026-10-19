@@ -57,6 +57,8 @@ jobs:
           cp install.sh dist/
           cp README.md dist/
           tar -czvf ${{ matrix.asset_name }} -C dist .
+          mkdir -p upload
+          cp ${{ matrix.asset_name }} upload/
 
       - name: Package Release Assets (Windows)
         if: matrix.os == 'windows-latest'
@@ -69,12 +71,20 @@ jobs:
           Copy-Item install.ps1 dist/
           Copy-Item README.md dist/
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset_name }}
+          New-Item -ItemType Directory -Path upload -Force
+          Copy-Item ${{ matrix.asset_name }} upload/
+          Copy-Item target/${{ matrix.target }}/release/ozymem-server.exe upload/ozymem-server.exe
+          Copy-Item target/${{ matrix.target }}/release/ozymem.exe upload/ozymem.exe
+          Copy-Item target/${{ matrix.target }}/release/ozygram.exe upload/ozygram.exe
+          Copy-Item target/${{ matrix.target }}/release/ozymem-server.exe upload/ozymem-server-windows-x64.exe
+          Copy-Item target/${{ matrix.target }}/release/ozymem.exe upload/ozymem-windows-x64.exe
+          Copy-Item target/${{ matrix.target }}/release/ozygram.exe upload/ozygram-windows-x64.exe
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.asset_name }}
+          path: upload/*
 
   publish-release:
     name: Publish GitHub Release
@@ -102,3 +112,4 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
+            artifacts/**/*.exe
