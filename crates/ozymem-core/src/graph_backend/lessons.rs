@@ -306,6 +306,19 @@ impl GraphBackend {
             .map_err(Into::into)
     }
 
+    pub fn get_lesson(&self, id: i64) -> Result<Option<LessonEntry>> {
+        let inner = self.inner.lock().unwrap();
+        let sql = "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
+                   FROM lessons
+                   WHERE id = ?1 AND tenant_id = ?2 LIMIT 1";
+        let mut stmt = inner.sqlite.prepare(sql)?;
+        let mut rows = stmt.query_map(params![id, self.tenant_id], |row| LessonEntry::from_row(row))?;
+        if let Some(res) = rows.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
 
     pub fn map_api_routes(&self, file_path: Option<&str>) -> Result<Vec<ozymem_parser::ApiRouteDefinition>> {
         let mut routes = Vec::new();
