@@ -54,7 +54,7 @@ pub(crate) fn format_lessons_list(results: &[ozymem_core::graph_backend::LessonE
             entry.created_at
         ));
         if entry.freshness_warning.is_some() {
-            body.push_str("   [ALERT: STALE_MEMORY] Esta memoria puede estar desactualizada; verifica el código vivo primero.\n");
+            body.push_str("   [ALERT: STALE_MEMORY] This memory may be out of date; verify live code first.\n");
         }
     }
     body
@@ -306,7 +306,7 @@ pub(crate) async fn build_ozy_task_context(
                 e.solution
             ));
             if e.freshness_warning.is_some() {
-                body.push_str("   [ALERT: STALE_MEMORY] Esta memoria puede estar desactualizada; verifica el código vivo primero.\n");
+                body.push_str("   [ALERT: STALE_MEMORY] This memory may be out of date; verify live code first.\n");
             }
         }
     }

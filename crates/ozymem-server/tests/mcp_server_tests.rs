@@ -4011,16 +4011,16 @@ Always use context manager with SessionLocal() as db.
     }
 
     #[test]
-    fn test_ozy_brain_format_compact_and_verbose_spanish() {
+    fn test_ozy_brain_format_compact_and_verbose() {
         use ozymem_server::brain::format_ozy_brain_response;
 
         let payload = json!({
             "action": "plan",
-            "summary": "Plan de refactor topológico",
+            "summary": "Topological refactor plan",
             "confidence": 0.88,
             "plan": [
-                "1. [PRE-FLIGHT] Verificación previa",
-                "2. [TOPOLOGÍA] Secuencia de edición"
+                "1. [PRE-FLIGHT] Baseline check",
+                "2. [TOPOLOGY] Topological edit sequence"
             ],
             "execution_policy": {
                 "mode": "advisory",
@@ -4034,8 +4034,8 @@ Always use context manager with SessionLocal() as db.
 
         // 1. Compact / default mode (verbose false/omitted) -> NO Execution Policy boilerplate
         let compact_output = format_ozy_brain_response(&payload);
-        assert!(compact_output.contains("## Plan Recomendado"));
-        assert!(compact_output.contains("Confianza: 0.88"));
+        assert!(compact_output.contains("## Recommended Plan"));
+        assert!(compact_output.contains("Confidence: 0.88"));
         assert!(!compact_output.contains("Execution Policy"));
         assert!(!compact_output.contains("can_do_without_confirmation"));
 
@@ -4043,9 +4043,9 @@ Always use context manager with SessionLocal() as db.
         let mut verbose_payload = payload.clone();
         verbose_payload["verbose"] = json!(true);
         let verbose_output = format_ozy_brain_response(&verbose_payload);
-        assert!(verbose_output.contains("## Política de Ejecución (Execution Policy)"));
-        assert!(verbose_output.contains("autoridad_rust: true"));
-        assert!(verbose_output.contains("Acciones sin Confirmación"));
+        assert!(verbose_output.contains("## Execution Policy"));
+        assert!(verbose_output.contains("rust_authority: true"));
+        assert!(verbose_output.contains("Can Do Without Confirmation"));
     }
 
 

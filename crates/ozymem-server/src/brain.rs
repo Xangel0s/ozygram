@@ -161,7 +161,7 @@ pub(crate) async fn handle_ozy_brain(
     for l in &relevant_lessons {
         let content = if let Some(ref warn) = l.freshness_warning {
             format!(
-                "{} Lesson in {} [{}]: {}\nSolution: {}\n[ALERT: STALE_MEMORY] Esta memoria puede estar desactualizada; verifica el código vivo primero.",
+                "{} Lesson in {} [{}]: {}\nSolution: {}\n[ALERT: STALE_MEMORY] This memory may be out of date; verify live code first.",
                 warn, l.file_path, l.kind, l.error_context, l.solution
             )
         } else {
@@ -623,12 +623,12 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
         .get("confidence")
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
-    let mut body = format!("# Ozy Brain: {action}\n\n{summary}\n\nConfianza: {confidence:.2}\n");
+    let mut body = format!("# Ozy Brain: {action}\n\n{summary}\n\nConfidence: {confidence:.2}\n");
     for (title, key) in [
-        ("Plan Recomendado", "plan"),
-        ("Riesgos Identificados", "risks"),
-        ("Recomendaciones Clave", "recommendations"),
-        ("Actualizaciones de Memoria Sugeridas", "memory_updates"),
+        ("Recommended Plan", "plan"),
+        ("Identified Risks", "risks"),
+        ("Key Recommendations", "recommendations"),
+        ("Suggested Memory Updates", "memory_updates"),
     ] {
         if let Some(items) = value.get(key).and_then(Value::as_array) {
             if !items.is_empty() {
@@ -643,46 +643,46 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
     }
     if let Some(structured) = value.get("structured_plan").and_then(Value::as_object) {
         if !structured.is_empty() {
-            body.push_str("\n## Plan Estructurado\n");
+            body.push_str("\n## Structured Plan\n");
             if let Some(level) = structured.get("autonomy_level").and_then(Value::as_str) {
-                body.push_str(&format!("- nivel_autonomia: {level}\n"));
+                body.push_str(&format!("- autonomy_level: {level}\n"));
             }
             if let Some(goal) = structured.get("goal").and_then(Value::as_str) {
-                body.push_str(&format!("- objetivo: {goal}\n"));
+                body.push_str(&format!("- goal: {goal}\n"));
             }
             if let Some(blast) = structured.get("blast_radius_analysis").and_then(Value::as_object) {
-                body.push_str("\n### Análisis de Radio de Impacto (Blast Radius Analysis)\n");
+                body.push_str("\n### Blast Radius Analysis\n");
                 if let Some(tier) = blast.get("risk_tier").and_then(Value::as_str) {
-                    body.push_str(&format!("- nivel_de_riesgo: {tier}\n"));
+                    body.push_str(&format!("- risk_tier: {tier}\n"));
                 }
                 if let Some(total) = blast.get("total_blast_radius").and_then(Value::as_i64) {
-                    body.push_str(&format!("- total_archivos_impactados: {total}\n"));
+                    body.push_str(&format!("- total_impacted_files: {total}\n"));
                 }
                 if let Some(high) = blast.get("high_severity_files").and_then(Value::as_array) {
                     if !high.is_empty() {
                         let list = high.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
-                        body.push_str(&format!("- nodos_alta_severidad: [{list}]\n"));
+                        body.push_str(&format!("- high_severity_nodes: [{list}]\n"));
                     }
                 }
             }
             if let Some(exp) = structured.get("exploration_guidance").and_then(Value::as_object) {
-                body.push_str("\n### Guía de Exploración y Rollback (Exploration & Rollback Guidance)\n");
+                body.push_str("\n### Exploration & Rollback Guidance\n");
                 if let Some(req) = exp.get("snapshot_required").and_then(Value::as_bool) {
-                    body.push_str(&format!("- snapshot_requerido: {req}\n"));
+                    body.push_str(&format!("- snapshot_required: {req}\n"));
                 }
                 if let Some(alert) = exp.get("snapshot_alert").and_then(Value::as_str) {
-                    body.push_str(&format!("- alerta: {alert}\n"));
+                    body.push_str(&format!("- alert: {alert}\n"));
                 }
                 if let Some(resume) = exp.get("recommended_resume_node_id").and_then(Value::as_str) {
-                    body.push_str(&format!("- nodo_reanudacion_recomendado: {resume}\n"));
+                    body.push_str(&format!("- recommended_resume_node_id: {resume}\n"));
                 }
                 if let Some(advice) = exp.get("backtracking_advice").and_then(Value::as_str) {
-                    body.push_str(&format!("- consejo_backtracking: {advice}\n"));
+                    body.push_str(&format!("- backtracking_advice: {advice}\n"));
                 }
             }
             if let Some(seq) = structured.get("topological_edit_sequence").and_then(Value::as_array) {
                 if !seq.is_empty() {
-                    body.push_str("\n### Secuencia Topológica de Edición (Hojas a Raíz)\n");
+                    body.push_str("\n### Topological Edit Sequence (Leaves to Root)\n");
                     for item in seq {
                         let step = item.get("step").and_then(Value::as_i64).unwrap_or(0);
                         let file = item.get("file").and_then(Value::as_str).unwrap_or("");
@@ -693,23 +693,23 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                 }
             }
             if let Some(phases) = structured.get("phases").and_then(Value::as_array) {
-                body.push_str("\n### Fases del Plan\n");
+                body.push_str("\n### Plan Phases\n");
                 for phase in phases {
-                    let name = phase.get("name").and_then(Value::as_str).unwrap_or("fase");
+                    let name = phase.get("name").and_then(Value::as_str).unwrap_or("phase");
                     let objective = phase.get("objective").and_then(Value::as_str).unwrap_or("");
                     let exit = phase
                         .get("exit_condition")
                         .and_then(Value::as_str)
                         .unwrap_or("");
-                    body.push_str(&format!("- {name}: {objective} | fin: {exit}\n"));
+                    body.push_str(&format!("- {name}: {objective} | exit: {exit}\n"));
                 }
             }
             for (title, key) in [
-                ("Archivos Candidatos", "candidate_files"),
-                ("Comandos de Validación Sugeridos", "suggested_commands"),
-                ("Verificaciones de Validación", "validation_checks"),
-                ("Condiciones de Parada", "stop_conditions"),
-                ("Archivos Protegidos (No Tocar)", "what_not_to_touch"),
+                ("Candidate Files", "candidate_files"),
+                ("Suggested Commands", "suggested_commands"),
+                ("Validation Checks", "validation_checks"),
+                ("Stop Conditions", "stop_conditions"),
+                ("What Not To Touch", "what_not_to_touch"),
             ] {
                 if let Some(items) = structured.get(key).and_then(Value::as_array) {
                     if !items.is_empty() {
@@ -726,16 +726,16 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
     }
     if let Some(pack) = value.get("brain_context_pack").and_then(Value::as_object) {
         if !pack.is_empty() {
-            body.push_str("\n## Paquete de Contexto\n");
+            body.push_str("\n## Context Pack\n");
             if let Some(risk) = pack.get("risk_level").and_then(Value::as_str) {
-                body.push_str(&format!("- nivel_de_riesgo: {risk}\n"));
+                body.push_str(&format!("- risk_level: {risk}\n"));
             }
             if let Some(dirty) = pack.get("dirty").and_then(Value::as_bool) {
-                body.push_str(&format!("- cambios_locales: {dirty}\n"));
+                body.push_str(&format!("- dirty: {dirty}\n"));
             }
             if let Some(files) = pack.get("candidate_file_scores").and_then(Value::as_array) {
                 if !files.is_empty() {
-                    body.push_str("\n### Puntuación de Archivos Candidatos\n");
+                    body.push_str("\n### Candidate File Scores\n");
                     for file in files.iter().take(10) {
                         let path = file
                             .get("path")
@@ -759,8 +759,8 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                 }
             }
             for (title, key) in [
-                ("Validación Recomendada", "recommended_validation"),
-                ("Recomendaciones Persistibles", "persistible_recommendations"),
+                ("Recommended Validation", "recommended_validation"),
+                ("Persistible Recommendations", "persistible_recommendations"),
             ] {
                 if let Some(items) = pack.get(key).and_then(Value::as_array) {
                     if !items.is_empty() {
@@ -779,20 +779,20 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
     if is_verbose {
         if let Some(policy) = value.get("execution_policy").and_then(Value::as_object) {
             if !policy.is_empty() {
-                body.push_str("\n## Política de Ejecución (Execution Policy)\n");
+                body.push_str("\n## Execution Policy\n");
                 if let Some(mode) = policy.get("mode").and_then(Value::as_str) {
-                    body.push_str(&format!("- modo: {mode}\n"));
+                    body.push_str(&format!("- mode: {mode}\n"));
                 }
                 if let Some(authority) = policy.get("rust_authority").and_then(Value::as_bool) {
-                    body.push_str(&format!("- autoridad_rust: {authority}\n"));
+                    body.push_str(&format!("- rust_authority: {authority}\n"));
                 }
                 if let Some(role) = policy.get("python_role").and_then(Value::as_str) {
-                    body.push_str(&format!("- rol_python: {role}\n"));
+                    body.push_str(&format!("- python_role: {role}\n"));
                 }
                 for (title, key) in [
-                    ("Acciones sin Confirmación", "can_do_without_confirmation"),
-                    ("Requieren Confirmación", "requires_confirmation"),
-                    ("Prohibidas para el Worker Python", "forbidden_for_python_worker"),
+                    ("Can Do Without Confirmation", "can_do_without_confirmation"),
+                    ("Requires Confirmation", "requires_confirmation"),
+                    ("Forbidden For Python Worker", "forbidden_for_python_worker"),
                 ] {
                     if let Some(items) = policy.get(key).and_then(Value::as_array) {
                         if !items.is_empty() {
@@ -810,13 +810,13 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
     }
     if let Some(report) = value.get("reflection_report").and_then(Value::as_object) {
         if !report.is_empty() {
-            body.push_str("\n## Reporte de Reflexión\n");
+            body.push_str("\n## Reflection Report\n");
             if let Some(creep) = report.get("scope_creep_detected").and_then(Value::as_bool) {
-                body.push_str(&format!("- desviacion_de_alcance: {creep}\n"));
+                body.push_str(&format!("- scope_creep_detected: {creep}\n"));
             }
             if let Some(rules) = value.get("procedural_rules").or_else(|| report.get("procedural_rules")).and_then(Value::as_array) {
                 if !rules.is_empty() {
-                    body.push_str("\n### Reglas Procedimentales (Disparador -> Acción)\n");
+                    body.push_str("\n### Procedural Rules (Trigger -> Action)\n");
                     for rule in rules {
                         if let Some(block) = rule.get("engram_block").and_then(Value::as_str) {
                             body.push_str(&format!("- {}\n", block));
@@ -830,10 +830,10 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                 }
             }
             for (title, key) in [
-                ("Causas Raíz", "root_causes"),
-                ("Archivos Fuera de Alcance", "out_of_scope_files"),
-                ("Gotchas Extraídos", "extracted_gotchas"),
-                ("Acciones de Memoria Recomendadas", "recommended_memory_actions"),
+                ("Root Causes", "root_causes"),
+                ("Out of Scope Files", "out_of_scope_files"),
+                ("Extracted Gotchas", "extracted_gotchas"),
+                ("Recommended Memory Actions", "recommended_memory_actions"),
             ] {
                 if let Some(items) = report.get(key).and_then(Value::as_array) {
                     if !items.is_empty() {
@@ -850,17 +850,17 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
     }
     if let Some(assessment) = value.get("risk_assessment").and_then(Value::as_object) {
         if !assessment.is_empty() {
-            body.push_str("\n## Evaluación de Riesgos (Risk Assessment)\n");
+            body.push_str("\n## Risk Assessment\n");
             if let Some(level) = assessment.get("risk_level").and_then(Value::as_str) {
-                body.push_str(&format!("- nivel_de_riesgo: {level}\n"));
+                body.push_str(&format!("- risk_level: {level}\n"));
             }
             if let Some(confirm) = assessment.get("requires_user_confirmation").and_then(Value::as_bool) {
-                body.push_str(&format!("- requiere_confirmacion_usuario: {confirm}\n"));
+                body.push_str(&format!("- requires_user_confirmation: {confirm}\n"));
             }
             for (title, key) in [
-                ("Categorías de Riesgo", "risk_categories"),
-                ("Rutas Críticas", "critical_paths"),
-                ("Lista de Verificación", "verification_checklist"),
+                ("Risk Categories", "risk_categories"),
+                ("Critical Paths", "critical_paths"),
+                ("Verification Checklist", "verification_checklist"),
             ] {
                 if let Some(items) = assessment.get(key).and_then(Value::as_array) {
                     if !items.is_empty() {
