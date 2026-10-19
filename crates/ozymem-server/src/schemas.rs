@@ -154,8 +154,8 @@ pub fn handle_tools_list(
                                 "default": "plan",
                                 "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'plan': goal (req)\n- 'recall_deep' / 'deep_semantic_search': query (req)\n- 'simulate_action' / 'audit_changes_with_critic': file_path (req), proposed_action (req)\n- 'analyze_failure': failures (req)\n- 'consolidate_memory' / 'sync_outbox': sincronización offline"
                             },
-                            "goal": { "type": "string" },
-                            "query": { "type": "string" },
+                            "goal": { "type": "string", "description": "Objetivo específico de la tarea (obligatorio para 'plan' y 'reflect')" },
+                            "query": { "type": "string", "description": "Consulta de búsqueda o alternativa a goal" },
                             "project": { "type": "string" },
                             "file_path": { "type": "string", "description": "Target file for blast radius and impact simulation" },
                             "trajectory_id": { "type": "string", "description": "Exploration trajectory ID for tree context and resume recommendation" },

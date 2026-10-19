@@ -307,18 +307,33 @@ pub async fn handle_request(
                     }
                 }
                 "ozy_brain" => {
-                    let action = tool_call
-                        .arguments
-                        .get("action")
-                        .and_then(Value::as_str)
-                        .unwrap_or("plan");
-                    let report = handle_ozy_brain(backend, &tool_call, action).await?;
-                    ToolCallResult {
-                        content: vec![ContentBlock {
-                            kind: "text",
-                            text: report,
-                        }],
-                        is_error: None,
+                    let has_action = tool_call.arguments.get("action").is_some();
+                    let has_goal = tool_call.arguments.get("goal").is_some() || tool_call.arguments.get("query").is_some();
+                    if !has_action && !has_goal {
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: "[OZY_BRAIN] Invocación sin parámetros. Especifica una acción y un objetivo.\n\
+                                       Acciones disponibles: plan, reflect, risk_review, deep_semantic_search, dream_rsi.\n\
+                                       Ejemplo: ozy_brain(action=\"plan\", goal=\"Tu objetivo aquí\")".to_string(),
+                            }],
+                            is_error: Some(true),
+                        }
+                    } else {
+                        let action = tool_call
+                            .arguments
+                            .get("action")
+                            .and_then(Value::as_str)
+                            .unwrap_or("plan");
+                        let report = handle_ozy_brain(backend, &tool_call, action).await?;
+                        let is_error = if report.starts_with("[ERROR:") { Some(true) } else { None };
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: report,
+                            }],
+                            is_error,
+                        }
                     }
                 }
                 "deep_semantic_search" | "ozy_deep_search" => {

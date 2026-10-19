@@ -60,12 +60,24 @@ pub(crate) async fn handle_ozy_brain(
             })
         })
         .unwrap_or_else(|| "default".to_string());
-    let goal = tool_call
+    let goal_opt = tool_call
         .arguments
         .get("goal")
         .and_then(Value::as_str)
         .or_else(|| tool_call.arguments.get("query").and_then(Value::as_str))
-        .unwrap_or("guide the agent safely");
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    if (action == "plan" || action == "reflect" || action == "critique_hypothesis") && goal_opt.is_none() {
+        return Ok(format!(
+            "[ERROR: MISSING_GOAL] ozy_brain(action=\"{}\") requiere el parámetro 'goal' o 'query' con el objetivo específico de la tarea.\n\
+             Ejemplo: ozy_brain(action=\"plan\", goal=\"Implementar soporte para 2 columnas en Sulfatos Solubles NTP 339.178\").\n\
+             No se generó un plan genérico para evitar contaminar la ventana de contexto ni consumir tokens innecesarios.",
+            action
+        ));
+    }
+
+    let goal = goal_opt.unwrap_or("");
     let limit = tool_call
         .arguments
         .get("limit")
@@ -87,17 +99,25 @@ pub(crate) async fn handle_ozy_brain(
     let observations = backend
         .recent_observations(Some(&project), Some("project"), limit.min(30))
         .unwrap_or_default();
-    let relevant_observations = backend
-        .search_observations(goal, Some(&project), Some("project"), None, limit.min(30))
-        .unwrap_or_default();
+    let relevant_observations = if !goal.is_empty() {
+        backend
+            .search_observations(goal, Some(&project), Some("project"), None, limit.min(30))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let lessons = backend
         .recent_lessons(None, limit.min(30))
         .await
         .unwrap_or_default();
-    let relevant_lessons = backend
-        .search_lessons(goal, None, limit.min(30))
-        .await
-        .unwrap_or_default();
+    let relevant_lessons = if !goal.is_empty() {
+        backend
+            .search_lessons(goal, None, limit.min(30))
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     let git_context = backend
         .project_path()
@@ -114,8 +134,6 @@ pub(crate) async fn handle_ozy_brain(
     let mut impact = Vec::new();
     if let Some(target) = target_file_opt {
         impact = backend.analyze_impact(target, 2);
-    } else if let Some(first_file) = files.first() {
-        impact = backend.analyze_impact(first_file, 2);
     }
 
     let trajectory_id_opt = tool_call

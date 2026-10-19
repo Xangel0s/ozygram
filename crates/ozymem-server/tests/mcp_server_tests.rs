@@ -3825,3 +3825,63 @@ Always use context manager with SessionLocal() as db.
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_ozy_brain_fails_fast_when_goal_is_missing() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_brain_failfast_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 1. Initialize
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "rootPath": tmp_root.to_string_lossy(),
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // 2. Call ozy_brain with empty arguments
+        let empty_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_brain",
+                "arguments": {}
+            })),
+        };
+        let empty_resp = handle_request(&backend, empty_req, None, None).await.unwrap().unwrap();
+        assert!(empty_resp.error.is_none());
+        let res_val = empty_resp.result.unwrap();
+        assert_eq!(res_val["isError"], true);
+        let text = res_val["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("[OZY_BRAIN] Invocación sin parámetros"));
+
+        // 3. Call ozy_brain with action=plan but no goal
+        let plan_no_goal_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_brain",
+                "arguments": {
+                    "action": "plan"
+                }
+            })),
+        };
+        let plan_resp = handle_request(&backend, plan_no_goal_req, None, None).await.unwrap().unwrap();
+        assert!(plan_resp.error.is_none());
+        let plan_res_val = plan_resp.result.unwrap();
+        assert_eq!(plan_res_val["isError"], true);
+        let plan_text = plan_res_val["content"][0]["text"].as_str().unwrap();
+        assert!(plan_text.contains("[ERROR: MISSING_GOAL]"));
+        assert!(plan_text.contains("No se generó un plan genérico"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
