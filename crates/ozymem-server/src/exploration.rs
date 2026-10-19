@@ -5,6 +5,30 @@ use ozymem_core::graph_backend::{
 use ozymem_core::mcp_common::{ContentBlock, ToolCallParams, ToolCallResult};
 use serde_json::{json, Value};
 
+/// Resuelve el trajectory_id explícito o auto-detecta la trayectoria activa 'in_progress'
+fn resolve_trajectory_id(
+    backend: &GraphBackend,
+    args: &serde_json::Map<String, Value>,
+) -> Result<String> {
+    if let Some(id) = args.get("trajectory_id").and_then(Value::as_str) {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let project_path_owned = args
+        .get("project_path")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| backend.project_path());
+    if let Ok(Some(active)) = backend.get_active_trajectory(project_path_owned.as_deref()) {
+        return Ok(active.id);
+    }
+    Err(anyhow!(
+        "[ERROR: MISSING_TRAJECTORY_ID] No se proporcionó 'trajectory_id' y no hay ninguna trayectoria activa ('in_progress') en el proyecto. Inicia una con ozy_exploration(action=\"start\", task_description=\"...\")"
+    ))
+}
+
 /// Manejador unificado para la herramienta MCP `ozy_exploration` (Dream-RSI & MCTS)
 pub fn handle_exploration(
     backend: &GraphBackend,
@@ -22,7 +46,9 @@ pub fn handle_exploration(
             let task_description = args
                 .get("task_description")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("Falta el parámetro 'task_description' para iniciar la trayectoria"))?;
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("[ERROR: MISSING_TASK_DESCRIPTION] Falta el parámetro 'task_description' para iniciar la trayectoria. Ejemplo: ozy_exploration(action=\"start\", task_description=\"Implementar X\")"))?;
             let project_path = args
                 .get("project_path")
                 .and_then(Value::as_str)
@@ -52,11 +78,7 @@ pub fn handle_exploration(
         }
 
         "record_step" => {
-            let trajectory_id = args
-                .get("trajectory_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("Falta el parámetro 'trajectory_id' para registrar el paso"))?
-                .to_string();
+            let trajectory_id = resolve_trajectory_id(backend, args)?;
 
             let parent_id = args
                 .get("parent_id")
@@ -132,11 +154,7 @@ pub fn handle_exploration(
         }
 
         "record_batch" => {
-            let trajectory_id = args
-                .get("trajectory_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("Falta el parámetro 'trajectory_id' para registrar el lote"))?
-                .to_string();
+            let trajectory_id = resolve_trajectory_id(backend, args)?;
 
             let steps_arr = args
                 .get("steps")
@@ -208,18 +226,15 @@ pub fn handle_exploration(
         }
 
         "complete" => {
-            let trajectory_id = args
-                .get("trajectory_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("Falta 'trajectory_id' para completar la trayectoria"))?;
+            let trajectory_id = resolve_trajectory_id(backend, args)?;
             let status = args
                 .get("status")
                 .and_then(Value::as_str)
                 .unwrap_or("completed");
             let final_reward = args.get("reward_score").and_then(Value::as_f64);
 
-            backend.complete_trajectory(trajectory_id, status, final_reward)?;
-            let mermaid = backend.render_mermaid_tree(trajectory_id).ok();
+            backend.complete_trajectory(&trajectory_id, status, final_reward)?;
+            let mermaid = backend.render_mermaid_tree(&trajectory_id).ok();
 
             let mut res = json!({
                 "status": "ok",
@@ -241,18 +256,15 @@ pub fn handle_exploration(
         }
 
         "get_tree" => {
-            let trajectory_id = args
-                .get("trajectory_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("Falta 'trajectory_id' para obtener el árbol"))?;
+            let trajectory_id = resolve_trajectory_id(backend, args)?;
             let lod = args
                 .get("lod")
                 .and_then(Value::as_str)
                 .unwrap_or("contracts");
 
-            let tree = backend.get_trajectory_tree(trajectory_id)?;
+            let tree = backend.get_trajectory_tree(&trajectory_id)?;
             let filtered_tree: Vec<_> = tree.into_iter().map(|n| apply_lod_to_tree_node(n, lod)).collect();
-            let mermaid = backend.render_mermaid_tree(trajectory_id).unwrap_or_default();
+            let mermaid = backend.render_mermaid_tree(&trajectory_id).unwrap_or_default();
 
             let res = json!({
                 "status": "ok",
@@ -272,9 +284,9 @@ pub fn handle_exploration(
         }
 
         "diagnose" => {
-            let trajectory_id = match args.get("trajectory_id").and_then(Value::as_str) {
-                Some(tid) => tid.to_string(),
-                None => {
+            let trajectory_id = match resolve_trajectory_id(backend, args) {
+                Ok(tid) => tid,
+                Err(_) => {
                     let recent = backend.list_trajectories(None, 1)?;
                     match recent.into_iter().next() {
                         Some(t) => t.id,
@@ -321,9 +333,9 @@ pub fn handle_exploration(
         }
 
         "resume" => {
-            let trajectory_id = match args.get("trajectory_id").and_then(Value::as_str) {
-                Some(tid) => tid.to_string(),
-                None => {
+            let trajectory_id = match resolve_trajectory_id(backend, args) {
+                Ok(tid) => tid,
+                Err(_) => {
                     let recent = backend.list_trajectories(None, 1)?;
                     match recent.into_iter().next() {
                         Some(t) => t.id,

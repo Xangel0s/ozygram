@@ -3885,3 +3885,129 @@ Always use context manager with SessionLocal() as db.
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_exploration_auto_resolves_active_trajectory_and_fails_fast() {
+        let tmp_root = std::env::temp_dir().join(format!("test_expl_auto_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+
+        // 1. Initialize
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "rootPath": tmp_root.to_string_lossy().to_string(),
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap().unwrap();
+
+        // 2. Start trajectory without task_description -> Fail fast
+        let start_empty_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "start"
+                }
+            })),
+        };
+        let start_resp = handle_request(&backend, start_empty_req, None, None).await.unwrap().unwrap();
+        let res_val = start_resp.result.unwrap();
+        assert_eq!(res_val["isError"], true);
+        let text = res_val["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("[ERROR: MISSING_TASK_DESCRIPTION]"));
+
+        // 3. record_step without trajectory_id when none is active -> Fail fast
+        let record_no_traj_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "record_step",
+                    "action_type": "tool_call",
+                    "observation": "some output"
+                }
+            })),
+        };
+        let rec_resp = handle_request(&backend, record_no_traj_req, None, None).await.unwrap().unwrap();
+        let rec_val = rec_resp.result.unwrap();
+        assert_eq!(rec_val["isError"], true);
+        let rec_text = rec_val["content"][0]["text"].as_str().unwrap();
+        assert!(rec_text.contains("[ERROR: MISSING_TRAJECTORY_ID]"));
+
+        // 4. Start trajectory with valid task_description
+        let start_valid_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "start",
+                    "task_description": "Auto resolution feature test"
+                }
+            })),
+        };
+        let valid_resp = handle_request(&backend, start_valid_req, None, None).await.unwrap().unwrap();
+        let valid_val = valid_resp.result.unwrap();
+        assert!(valid_val.get("isError").is_none() || valid_val["isError"] == false);
+        let valid_text = valid_val["content"][0]["text"].as_str().unwrap();
+        let parsed_start: serde_json::Value = serde_json::from_str(valid_text).unwrap();
+        assert_eq!(parsed_start["status"], "ok");
+        let active_traj_id = parsed_start["trajectory_id"].as_str().unwrap();
+        assert!(!active_traj_id.is_empty());
+
+        // 5. record_step WITHOUT trajectory_id -> should auto-resolve active trajectory
+        let auto_record_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "record_step",
+                    "action_type": "patch",
+                    "observation": "exit code: 0"
+                }
+            })),
+        };
+        let auto_rec_resp = handle_request(&backend, auto_record_req, None, None).await.unwrap().unwrap();
+        let auto_rec_val = auto_rec_resp.result.unwrap();
+        assert!(auto_rec_val.get("isError").is_none() || auto_rec_val["isError"] == false);
+        let auto_rec_text = auto_rec_val["content"][0]["text"].as_str().unwrap();
+        let parsed_node: serde_json::Value = serde_json::from_str(auto_rec_text).unwrap();
+        assert_eq!(parsed_node["status"], "ok");
+        assert_eq!(parsed_node["node"]["trajectory_id"], active_traj_id);
+
+        // 6. complete WITHOUT trajectory_id -> should auto-resolve and complete
+        let auto_complete_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(6)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "complete",
+                    "status": "completed"
+                }
+            })),
+        };
+        let auto_comp_resp = handle_request(&backend, auto_complete_req, None, None).await.unwrap().unwrap();
+        let auto_comp_val = auto_comp_resp.result.unwrap();
+        assert!(auto_comp_val.get("isError").is_none() || auto_comp_val["isError"] == false);
+        let auto_comp_text = auto_comp_val["content"][0]["text"].as_str().unwrap();
+        let parsed_comp: serde_json::Value = serde_json::from_str(auto_comp_text).unwrap();
+        assert_eq!(parsed_comp["status"], "ok");
+        assert_eq!(parsed_comp["trajectory_id"], active_traj_id);
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+

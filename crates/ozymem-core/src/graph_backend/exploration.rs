@@ -655,6 +655,37 @@ impl GraphBackend {
         Ok(list)
     }
 
+    /// Obtiene la última trayectoria activa ('in_progress') para auto-resolución
+    pub fn get_active_trajectory(
+        &self,
+        project_path: Option<&str>,
+    ) -> Result<Option<TrajectoryHeader>> {
+        let inner = self.inner.lock().unwrap();
+        let query = "SELECT id, project_path, task_description, policy_version, status, total_steps, cumulative_reward, created_at, completed_at
+                     FROM exploration_trajectories
+                     WHERE status = 'in_progress' AND (?1 IS NULL OR project_path = ?1 OR project_path = '.' OR ?1 = '')
+                     ORDER BY created_at DESC LIMIT 1";
+        let mut stmt = inner.sqlite.prepare(query)?;
+        let mut rows = stmt.query_map(params![project_path], |row| {
+            Ok(TrajectoryHeader {
+                id: row.get(0)?,
+                project_path: row.get(1)?,
+                task_description: row.get(2)?,
+                policy_version: row.get(3)?,
+                status: row.get(4)?,
+                total_steps: row.get(5)?,
+                cumulative_reward: row.get(6)?,
+                created_at: row.get(7)?,
+                completed_at: row.get(8)?,
+            })
+        })?;
+        if let Some(res) = rows.next() {
+            Ok(Some(res?))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Diagnostica cuellos de botella, eficiencia de tokens y oportunidades de poda en una trayectoria
     pub fn diagnose_trajectory(&self, trajectory_id: &str) -> Result<TrajectoryDiagnosis> {
         let inner = self.inner.lock().unwrap();
