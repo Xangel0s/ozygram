@@ -651,7 +651,7 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                 body.push_str(&format!("- objetivo: {goal}\n"));
             }
             if let Some(blast) = structured.get("blast_radius_analysis").and_then(Value::as_object) {
-                body.push_str("\n### Análisis de Radio de Impacto (Blast Radius)\n");
+                body.push_str("\n### Análisis de Radio de Impacto (Blast Radius Analysis)\n");
                 if let Some(tier) = blast.get("risk_tier").and_then(Value::as_str) {
                     body.push_str(&format!("- nivel_de_riesgo: {tier}\n"));
                 }
@@ -666,7 +666,7 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                 }
             }
             if let Some(exp) = structured.get("exploration_guidance").and_then(Value::as_object) {
-                body.push_str("\n### Guía de Exploración y Rollback\n");
+                body.push_str("\n### Guía de Exploración y Rollback (Exploration & Rollback Guidance)\n");
                 if let Some(req) = exp.get("snapshot_required").and_then(Value::as_bool) {
                     body.push_str(&format!("- snapshot_requerido: {req}\n"));
                 }
