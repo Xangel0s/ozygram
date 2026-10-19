@@ -52,8 +52,10 @@ Add the following entry to your MCP client configuration file (`claude_desktop_c
 | `ozy_get_symbol` | `file_path`, `symbol_name`, `line` | Surgical retrieval of exact symbol source code (function, class, React component, hook, interface) without reading entire files into context. |
 | `ozy_file_tree` | `directory`, `max_depth` | Native zero-process file tree exploration with file sizes and node types, avoiding terminal/PowerShell execution overhead. |
 | `ozy_parse` | `file_path` | Native AST parser exposing definitions, line ranges, and dependency hints directly over JSON-RPC. |
-| `ozy_replace_symbol` | `file_path`, `symbol_name`, `new_code`, `dry_run` | Surgical AST-guided symbol replacement with automatic pre-flight syntax validation and unified diff preview. |
-| `ozy_graph` | `action`, `file_path`, `depth` | Unified architectural navigation: `summary`, `neighbors`, `impact`, `path`, and structural dependency reports. |
+| `ozy_ast_patch` | `file_path`, `symbol_name`, `new_code`, `dry_run` | **[RECOMMENDED]** Surgical AST-guided symbol replacement with auto-indentation and pre-flight Tree-Sitter validation. |
+| `ozy_replace_symbol` | `file_path`, `symbol_name`, `new_code`, `dry_run` | *[DEPRECATED]* Legacy alias to `ozy_ast_patch`. |
+| `ozy_search_literal` | `query`, `path_prefix`, `token_budget` | **[RECOMMENDED]** Fast (< 15ms) Rust code search with 800-token budget guard against context explosion. |
+| `ozy_graph` | `action`, `file_path`, `depth` | Unified architectural navigation: `summary`, `neighbors`, `incoming` (blast radius), `impact_mermaid`, and structural reports. |
 | `analyze_impact` | `target_file` | Maps direct and transitive dependent files, calculating architectural blast radius. |
 | `graph_neighbors` | `file_path`, `direction` | Retrieves immediate incoming, outgoing, or bidirectional AST neighbors. |
 
@@ -81,8 +83,8 @@ Add the following entry to your MCP client configuration file (`claude_desktop_c
 | Tool | Key Parameters | Description |
 | :--- | :--- | :--- |
 | `ozy_verify_diff` | `file_path`, `diff` | Test-time sandboxed validation: verifies AST syntactic integrity prior to saving modifications. |
-| `ozy_doctor` | `format`, `include_projects` | Comprehensive operational diagnostics: SQLite integrity, embedding models, watchers, and registries. |
-| `ozy_code_doctor` | `mode`, `scope`, `min_duplicate_lines` | Detects duplicated blocks, refactoring candidates, and structural boilerplate. |
+| `ozy_doctor` | `action` (`status`, `audit_migrations`, `code`), `scope`, `migrations_path` | **[UNIFIED DOCTOR]** Comprehensive operational diagnostics: SQLite integrity, embedding models, SQL migration linter, and static code analysis (duplicates/smells). |
+| `ozy_code_doctor` | `scope`, `min_duplicate_lines` | *[CONSOLIDATED]* Legacy alias to `ozy_doctor(action="code")`. |
 | `ozy_skills` | `action`, `query`, `category` | Official integration with skills.sh for searching and applying contextual guides. |
 | `ozy_export_memory_notes` | `notes_ref` | Exports lessons and decisions to Git Notes (`refs/notes/ozymem`) for decentralized P2P synchronization. |
 | `ozy_import_memory_notes` | `notes_ref` | Imports and merges memories from Git Notes without database conflicts. |
