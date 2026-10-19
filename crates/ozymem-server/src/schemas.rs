@@ -38,9 +38,9 @@ pub fn handle_tools_list(
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["record", "search", "file", "symbol", "recent", "similar", "session_start", "session_end", "save", "get", "timeline", "delete", "prompt", "passive"],
+                                "enum": ["record", "search", "file", "symbol", "recent", "similar", "session_start", "session_end", "save", "get", "timeline", "delete", "prompt", "passive", "sync_markdown", "export_markdown", "scan_markdown"],
                                 "default": "search",
-                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'search': query (req), [min_score, limit]\n- 'get': id (req)\n- 'save' / 'record': title (req), content (req), [kind, topic_key]\n- 'session_start' / 'session_end': session_id (req)\n- 'file': file_path (req)\n- 'symbol': symbol_name (req), [file_path]\n- 'timeline': [topic_key, session_id, limit]\n- 'delete': id (req)"
+                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'search': query (req), [min_score, limit]\n- 'get': id (req)\n- 'save' / 'record': title (req), content (req), [kind, topic_key]\n- 'session_start' / 'session_end': session_id (req)\n- 'file': file_path (req)\n- 'symbol': symbol_name (req), [file_path]\n- 'timeline': [topic_key, session_id, limit]\n- 'delete': id (req)\n- 'sync_markdown': sincroniza memorias Git (.ozy/memories) a SQLite\n- 'export_markdown': [id o kind, limit] -> exporta lecciones a .ozy/memories/<kind>/\n- 'scan_markdown': lista memorias Git Markdown activas"
                             },
                             "kind": { "type": "string", "enum": ["lesson", "decision", "convention", "gotcha", "module_rule", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "session_summary"] },
                             "session_id": { "type": "string" },

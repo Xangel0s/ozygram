@@ -3701,3 +3701,127 @@ class ControlProbeta(SQLModel, table=True):
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
+
+    #[tokio::test]
+    async fn test_git_first_markdown_memories_mcp_flow() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_git_mem_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // Create sample file app/db.py
+        let app_dir = tmp_root.join("app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::write(app_dir.join("db.py"), "def get_db():\n    pass\n").unwrap();
+
+        // 1. Initialize MCP server
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1" },
+                "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // 2. Create markdown gotcha file in .ozy/memories/gotcha/
+        let ozy_mem_dir = tmp_root.join(".ozy").join("memories").join("gotcha");
+        std::fs::create_dir_all(&ozy_mem_dir).unwrap();
+        let md_content = r#"---
+id: "mem_20261019_leak"
+kind: "gotcha"
+topic_key: "db-pool-exhaustion"
+title: "SQLAlchemy connection pool leak"
+author: "diego"
+date: "2026-10-19"
+severity: "critical"
+applies_to:
+  - "app/db.py"
+tags:
+  - "database"
+---
+
+Always use context manager with SessionLocal() as db.
+"#;
+        std::fs::write(ozy_mem_dir.join("db_pool.md"), md_content).unwrap();
+
+        // 3. Call ozy_memory action=scan_markdown
+        let scan_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_memory",
+                "arguments": {
+                    "action": "scan_markdown"
+                }
+            })),
+        };
+        let scan_resp = handle_request(&backend_ref, scan_req, None, None).await.unwrap().unwrap();
+        assert!(scan_resp.error.is_none());
+        let scan_text = scan_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(scan_text.contains("[STATUS: ACTIVE]"));
+        assert!(scan_text.contains("SQLAlchemy connection pool leak"));
+
+        // 4. Call ozy_memory action=sync_markdown
+        let sync_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_memory",
+                "arguments": {
+                    "action": "sync_markdown"
+                }
+            })),
+        };
+        let sync_resp = handle_request(&backend_ref, sync_req, None, None).await.unwrap().unwrap();
+        assert!(sync_resp.error.is_none());
+        let sync_text = sync_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(sync_text.contains("Synchronized 1 markdown memories"));
+
+        // 5. Call ozy_context action=file to verify preventive gotcha injection
+        let ctx_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "file",
+                    "file_path": "app/db.py"
+                }
+            })),
+        };
+        let ctx_resp = handle_request(&backend_ref, ctx_req, None, None).await.unwrap().unwrap();
+        assert!(ctx_resp.error.is_none());
+        let ctx_text = ctx_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(ctx_text.contains("[ALERT: GOTCHA_PREVENTION"));
+        assert!(ctx_text.contains("SQLAlchemy connection pool leak"));
+        assert!(ctx_text.contains("Always use context manager with SessionLocal() as db."));
+
+        // 6. Call ozy_memory action=export_markdown to export all lessons of kind gotcha
+        let export_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_memory",
+                "arguments": {
+                    "action": "export_markdown",
+                    "kind": "gotcha"
+                }
+            })),
+        };
+        let export_resp = handle_request(&backend_ref, export_req, None, None).await.unwrap().unwrap();
+        assert!(export_resp.error.is_none());
+        let export_text = export_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(export_text.contains("[STATUS: OK] Exported"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }

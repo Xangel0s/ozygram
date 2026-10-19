@@ -398,6 +398,73 @@ pub async fn handle_memory_tool(
                                 is_error: None,
                             }
                         }
+                        "sync_markdown" => {
+                            let synced = backend.sync_markdown_memories_to_sqlite()?;
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("[STATUS: OK] Synchronized {synced} markdown memories from .ozy/memories to SQLite"),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                        "export_markdown" => {
+                            let id = tool_call.arguments.get("id").and_then(Value::as_i64);
+                            if let Some(lesson_id) = id {
+                                let lesson = backend.get_lesson(lesson_id)?
+                                    .ok_or_else(|| anyhow::anyhow!("Lesson with id {lesson_id} not found"))?;
+                                let path = backend.export_lesson_to_markdown(&lesson)?;
+                                ToolCallResult {
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: format!("[STATUS: OK] Exported lesson #{lesson_id} to markdown: {}", path.to_string_lossy().replace('\\', "/")),
+                                    }],
+                                    is_error: None,
+                                }
+                            } else {
+                                let limit = tool_call.arguments.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+                                let lessons = backend.recent_lessons(Some(kind), limit).await?;
+                                let mut count = 0;
+                                for l in &lessons {
+                                    if backend.export_lesson_to_markdown(l).is_ok() {
+                                        count += 1;
+                                    }
+                                }
+                                ToolCallResult {
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: format!("[STATUS: OK] Exported {count} lessons of kind '{kind}' to .ozy/memories/"),
+                                    }],
+                                    is_error: None,
+                                }
+                            }
+                        }
+                        "scan_markdown" => {
+                            let memories = backend.scan_project_markdown_memories()?;
+                            let text = if memories.is_empty() {
+                                "[STATUS: EMPTY] No markdown memories found in .ozy/memories".to_string()
+                            } else {
+                                let mut out = format!("[STATUS: ACTIVE] Found {} markdown memories:\n", memories.len());
+                                for m in &memories {
+                                    out.push_str(&format!(
+                                        "- [{}] [{}] {} (file: {:?}, applies_to: {:?})\n",
+                                        m.metadata.kind.to_uppercase(),
+                                        m.metadata.severity.as_deref().unwrap_or("MEDIUM").to_uppercase(),
+                                        m.metadata.title,
+                                        m.file_path,
+                                        m.metadata.applies_to
+                                    ));
+                                }
+                                out
+                            };
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text,
+                                }],
+                                is_error: None,
+                            }
+                        }
                         _ => {
                             let query = tool_call
                                 .arguments

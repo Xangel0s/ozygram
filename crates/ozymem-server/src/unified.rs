@@ -59,13 +59,16 @@ pub async fn handle_unified_tool(
                         let neighbor_info = gb.get_graph_neighbors(file_path).await.ok();
                         let last_git = get_last_commit(file_path).await;
 
-                        let body = format_file_context_enriched(
+                        let mut body = format_file_context_enriched(
                             ctx.as_ref(),
                             file_path,
                             &history,
                             neighbor_info.as_ref(),
                             last_git.as_deref(),
                         );
+                        if let Some(gotchas_alert) = gb.format_applicable_gotchas_alert(file_path) {
+                            body = format!("{}\n\n{}", gotchas_alert, body);
+                        }
                         ToolCallResult {
                             content: vec![ContentBlock {
                                 kind: "text",
@@ -171,13 +174,16 @@ pub async fn handle_unified_tool(
                                 backend.get_historical_engram_solutions(file_path).await?;
                             let neighbors = backend.get_graph_neighbors(file_path).await.ok();
                             let last_git = get_last_commit(file_path).await;
-                            let base_text = format_file_context_enriched(
+                            let mut base_text = format_file_context_enriched(
                                 ctx.as_ref(),
                                 file_path,
                                 &history,
                                 neighbors.as_ref(),
                                 last_git.as_deref(),
                             );
+                            if let Some(gotchas_alert) = backend.format_applicable_gotchas_alert(file_path) {
+                                base_text = format!("{}\n\n{}", gotchas_alert, base_text);
+                            }
 
                             let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
                             let path_obj = std::path::Path::new(&resolved);
