@@ -139,15 +139,17 @@ impl McpBackend for GraphBackend {
     }
 
     async fn get_historical_engram_solutions(&self, file_path: &str) -> Result<Vec<String>> {
+        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = match inner.sqlite.prepare(
-            "SELECT DISTINCT solution FROM lessons WHERE file_path = ?1 AND tenant_id = ?2 AND solution != ''"
+            "SELECT DISTINCT solution FROM lessons WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND tenant_id = ?4 AND solution != ''"
         ) {
             Ok(s) => s,
             Err(_) => return Ok(vec![]),
         };
         let results: Vec<String> = stmt
-            .query_map(params![file_path, self.tenant_id], |row| row.get(0))?
+            .query_map(params![file_path, norm_path, resolved, self.tenant_id], |row| row.get(0))?
             .filter_map(|r| r.ok())
             .collect();
         Ok(results)

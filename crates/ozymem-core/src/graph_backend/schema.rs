@@ -560,10 +560,16 @@ impl GraphBackend {
                 }
             };
             if let Some(ref s) = nodes_sql {
-                if !s.contains("observation") {
+                if !s.contains("observation") || !s.contains("invariant") {
                     let _ = inner.sqlite.execute_batch(
-                        "BEGIN IMMEDIATE;
-                        CREATE TABLE memory_nodes_v2 (
+                        "DROP TRIGGER IF EXISTS lessons_sync_nodes_ai;
+                        DROP TRIGGER IF EXISTS lessons_sync_nodes_au;
+                        DROP TRIGGER IF EXISTS lessons_sync_nodes_ad;
+                        DROP TRIGGER IF EXISTS memory_nodes_ai;
+                        DROP TRIGGER IF EXISTS memory_nodes_au;
+                        DROP TRIGGER IF EXISTS memory_nodes_ad;
+                        BEGIN IMMEDIATE;
+                        CREATE TABLE IF NOT EXISTS memory_nodes_v2 (
                             id TEXT PRIMARY KEY,
                             kind TEXT NOT NULL DEFAULT 'lesson'
                                 CHECK(kind IN ('lesson','decision','convention','gotcha','module_rule','architecture','endpoint','table','invariant','observation')),

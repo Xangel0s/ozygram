@@ -559,22 +559,24 @@ impl GraphBackend {
     pub fn recent_lessons_sync(&self, kind: Option<&str>, limit: usize) -> Result<Vec<LessonEntry>> {
         let inner = self.inner.lock().unwrap();
         let limit = (limit as i64).min(10000).max(1);
+        let fwd_root = crate::normalize_path(&inner.workspace_root).replace('\\', "/");
+        let bck_root = fwd_root.replace('/', "\\");
 
         let (sql, kind_clause) = match kind {
             Some(_) => (
                 "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
                  FROM lessons
-                 WHERE tenant_id = ?1 AND kind = ?2 AND (workspace_root = ?3 OR workspace_root = '')
+                 WHERE tenant_id = ?1 AND kind = ?2 AND (workspace_root = ?3 OR workspace_root = ?4 OR workspace_root = '' OR REPLACE(workspace_root, '\\', '/') = ?3)
                  ORDER BY id DESC
-                 LIMIT ?4".to_string(),
+                 LIMIT ?5".to_string(),
                 true,
             ),
             None => (
                 "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
                  FROM lessons
-                 WHERE tenant_id = ?1 AND (workspace_root = ?2 OR workspace_root = '')
+                 WHERE tenant_id = ?1 AND (workspace_root = ?2 OR workspace_root = ?3 OR workspace_root = '' OR REPLACE(workspace_root, '\\', '/') = ?2)
                  ORDER BY id DESC
-                 LIMIT ?3".to_string(),
+                 LIMIT ?4".to_string(),
                 false,
             ),
         };
@@ -584,7 +586,7 @@ impl GraphBackend {
             let k = kind.unwrap();
             let results = stmt
                 .query_map(
-                    params![self.tenant_id, k, inner.workspace_root, limit],
+                    params![self.tenant_id, k, fwd_root, bck_root, limit],
                     |row| LessonEntry::from_row(row),
                 )?
                 .filter_map(|r| r.ok())
@@ -594,7 +596,7 @@ impl GraphBackend {
             let mut stmt = inner.sqlite.prepare(&sql)?;
             let results = stmt
                 .query_map(
-                    params![self.tenant_id, inner.workspace_root, limit],
+                    params![self.tenant_id, fwd_root, bck_root, limit],
                     |row| LessonEntry::from_row(row),
                 )?
                 .filter_map(|r| r.ok())

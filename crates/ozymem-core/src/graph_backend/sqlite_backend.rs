@@ -325,15 +325,16 @@ impl SqliteBackend {
         tenant_id: &str,
         file_path: &str,
     ) -> Result<Vec<String>> {
+        let norm_path = crate::normalize_path(file_path);
         let conn = self.conn.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT DISTINCT solution FROM lessons WHERE file_path = ?1 AND tenant_id = ?2 AND solution != ''"
+            "SELECT DISTINCT solution FROM lessons WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3 AND solution != ''"
         ) {
             Ok(s) => s,
             Err(_) => return Ok(vec![]),
         };
         let solutions = stmt
-            .query_map(params![file_path, tenant_id], |row| row.get::<_, String>(0))?
+            .query_map(params![file_path, norm_path, tenant_id], |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
             .collect();
         Ok(solutions)
