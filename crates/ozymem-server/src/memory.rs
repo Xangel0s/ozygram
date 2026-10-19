@@ -446,8 +446,10 @@ pub async fn handle_memory_tool(
                             } else {
                                 let mut out = format!("[STATUS: ACTIVE] Found {} markdown memories:\n", memories.len());
                                 for m in &memories {
+                                    let status_badge = m.metadata.status.as_deref().unwrap_or("ACTIVE").to_uppercase();
                                     out.push_str(&format!(
-                                        "- [{}] [{}] {} (file: {:?}, applies_to: {:?})\n",
+                                        "- [STATUS: {}] [{}] [{}] {} (file: {:?}, applies_to: {:?})\n",
+                                        status_badge,
                                         m.metadata.kind.to_uppercase(),
                                         m.metadata.severity.as_deref().unwrap_or("MEDIUM").to_uppercase(),
                                         m.metadata.title,
