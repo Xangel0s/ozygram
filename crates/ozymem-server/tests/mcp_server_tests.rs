@@ -4010,4 +4010,43 @@ Always use context manager with SessionLocal() as db.
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[test]
+    fn test_ozy_brain_format_compact_and_verbose_spanish() {
+        use ozymem_server::brain::format_ozy_brain_response;
+
+        let payload = json!({
+            "action": "plan",
+            "summary": "Plan de refactor topológico",
+            "confidence": 0.88,
+            "plan": [
+                "1. [PRE-FLIGHT] Verificación previa",
+                "2. [TOPOLOGÍA] Secuencia de edición"
+            ],
+            "execution_policy": {
+                "mode": "advisory",
+                "rust_authority": true,
+                "python_role": "consultative_copilot",
+                "can_do_without_confirmation": ["read_source", "search_literal"],
+                "requires_confirmation": ["write_source"],
+                "forbidden_for_python_worker": ["rm_rf"]
+            }
+        });
+
+        // 1. Compact / default mode (verbose false/omitted) -> NO Execution Policy boilerplate
+        let compact_output = format_ozy_brain_response(&payload);
+        assert!(compact_output.contains("## Plan Recomendado"));
+        assert!(compact_output.contains("Confianza: 0.88"));
+        assert!(!compact_output.contains("Execution Policy"));
+        assert!(!compact_output.contains("can_do_without_confirmation"));
+
+        // 2. Verbose mode -> Execution Policy included
+        let mut verbose_payload = payload.clone();
+        verbose_payload["verbose"] = json!(true);
+        let verbose_output = format_ozy_brain_response(&verbose_payload);
+        assert!(verbose_output.contains("## Política de Ejecución (Execution Policy)"));
+        assert!(verbose_output.contains("autoridad_rust: true"));
+        assert!(verbose_output.contains("Acciones sin Confirmación"));
+    }
+
+
 

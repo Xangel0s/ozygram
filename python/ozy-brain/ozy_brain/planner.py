@@ -117,17 +117,17 @@ def _topological_refactor_order(
     for idx, file_path in enumerate(sorted_files, start=1):
         weight = role_weights.get(file_path, 2)
         if weight == 0:
-            phase_name = "Base Contracts & Types"
-            action_desc = "Update type definitions, structs, and interfaces first."
+            phase_name = "[CONTRATOS] Tipos Base y Esquemas"
+            action_desc = "Actualizar definiciones de tipos, estructuras e interfaces primero."
         elif weight == 1:
-            phase_name = "Core Utilities & Indexing"
-            action_desc = "Implement low-level helpers and parsing logic."
+            phase_name = "[UTILIDADES] Helpers e Indexación Base"
+            action_desc = "Implementar funciones auxiliares y lógica de parsing de bajo nivel."
         elif weight == 2:
-            phase_name = "Domain Logic & State"
-            action_desc = "Update business rules, storage methods, and mutations."
+            phase_name = "[DOMINIO] Lógica de Negocio y Estado"
+            action_desc = "Actualizar reglas de negocio, métodos de persistencia y mutaciones."
         else:
-            phase_name = "API Dispatchers & Entrypoints"
-            action_desc = "Adapt public routing, MCP handlers, and CLI commands."
+            phase_name = "[ENTRYPOINTS] Enrutamiento Público y MCP"
+            action_desc = "Adaptar enrutamiento público, manejadores MCP y comandos CLI."
 
         sequence.append({
             "step": idx,
@@ -155,33 +155,33 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
         "blast_radius_analysis": blast_radius,
         "topological_edit_sequence": topological_sequence,
         "phases": [
-            {"name": "context", "objective": "Collect current-state evidence before edits", "exit_condition": "Relevant files, memories, graph summary, and risks are known"},
-            {"name": "leaf_contracts", "objective": "Refactor base types and schemas first", "exit_condition": "Core structs compile with no contract violations"},
-            {"name": "domain_services", "objective": "Propagate changes through domain logic", "exit_condition": "Internal mutations and helpers are synchronized"},
-            {"name": "entrypoints", "objective": "Adapt public API, MCP dispatchers, and CLI", "exit_condition": "Handlers align with new return contracts"},
-            {"name": "validation", "objective": "Prove behavior with focused and broad tests", "exit_condition": "Required validation commands pass (cargo test / pytest)"},
-            {"name": "learning", "objective": "Persist durable project knowledge", "exit_condition": "Decisions, gotchas, or patterns are saved when applicable"},
+            {"name": "context", "objective": "Recopilar evidencia del estado actual antes de editar", "exit_condition": "Archivos relevantes, memorias, grafo y riesgos identificados"},
+            {"name": "leaf_contracts", "objective": "Refactorizar contratos base y esquemas primero", "exit_condition": "Estructuras base compilan sin violaciones de contrato"},
+            {"name": "domain_services", "objective": "Propagar cambios a través de la lógica de dominio", "exit_condition": "Mutaciones internas y helpers sincronizados"},
+            {"name": "entrypoints", "objective": "Adaptar API pública, dispatchers MCP y CLI", "exit_condition": "Manejadores alineados con nuevos contratos de retorno"},
+            {"name": "validation", "objective": "Demostrar comportamiento con tests focalizados y generales", "exit_condition": "Comandos de validación pasan exitosamente (cargo test / pytest)"},
+            {"name": "learning", "objective": "Persistir conocimiento duradero del proyecto", "exit_condition": "Decisiones, gotchas o patrones guardados en memoria"},
         ],
         "candidate_files": cand_files,
         "suggested_commands": _validation_commands(payload),
         "validation_checks": [
-            "Confirm active project and branch",
-            "Inspect git status before and after changes",
-            "Verify no destructive operation is needed",
-            "Follow topological leaf-to-root edit sequence to avoid broken states",
-            "Run tests relevant to touched code",
+            "Confirmar proyecto activo y branch",
+            "Inspeccionar git status antes y después de cambios",
+            "Verificar que no se requieran operaciones destructivas",
+            "Seguir secuencia topológica de edición (hojas a raíz) para evitar estados rotos",
+            "Ejecutar tests relevantes al código modificado",
         ],
         "stop_conditions": [
-            "Required context is missing or contradictory",
-            "A destructive action would be needed without explicit approval",
-            "Validation fails in a way unrelated to the intended change",
-            "Touched file scope expands beyond the planned blast radius",
+            "Contexto requerido ausente o contradictorio",
+            "Se requeriría una acción destructiva sin aprobación explícita",
+            "Fallo de validación no relacionado con el cambio previsto",
+            "El alcance de archivos tocados excede el radio de impacto planificado",
         ],
         "what_not_to_touch": [
-            "Do not modify core state persistence or schema files unless explicitly requested",
-            "Do not edit files outside the candidate files scope without re-running graph impact",
-            "Do not alter security, auth, or credential configurations",
-            "Do not remove existing error handling or assertion contracts",
+            "No modificar persistencia de estado core ni esquemas salvo petición explícita",
+            "No editar archivos fuera del alcance de archivos candidatos sin recalcular impacto",
+            "No alterar configuraciones de seguridad, auth o credenciales",
+            "No remover manejo de errores existente ni contratos de aserción",
         ],
     }
 
@@ -197,33 +197,33 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
     topological_sequence = _topological_refactor_order(cand_files, dependencies)
 
     steps = [
-        f"1. Pre-flight check: Target goal '{goal}' | Blast Radius: {blast_radius['risk_tier'].upper()} ({blast_radius['total_blast_radius']} files).",
-        "2. Topological Leaf-to-Root Edit Sequence:",
+        f"1. [PRE-FLIGHT] Verificación previa: Objetivo '{goal}' | Radio de Impacto: {blast_radius['risk_tier'].upper()} ({blast_radius['total_blast_radius']} archivos).",
+        "2. [TOPOLOGÍA] Secuencia de Edición de Hojas a Raíz:",
     ]
 
     for item in topological_sequence[:5]:
-        steps.append(f"   • Step {item['step']} [{item['phase']}]: {item['file']} → {item['action']}")
+        steps.append(f"   • Paso {item['step']} [{item['phase']}]: {item['file']} → {item['action']}")
 
     steps.extend([
-        "3. Run focused unit tests first, then integration test suite (cargo test / pytest).",
-        "4. Validate that no contracts or invariants were broken along the dependency chain.",
-        "5. Record durable learnings and next steps in Ozy memory.",
+        "3. [TESTS] Ejecutar tests unitarios focalizados y luego suite de integración (cargo test / pytest).",
+        "4. [VALIDACIÓN] Validar que no se rompan contratos ni invariantes en la cadena de dependencias.",
+        "5. [MEMORIA] Registrar aprendizajes duraderos y decisiones clave en la memoria de Ozy.",
     ])
 
     if memories:
-        steps.insert(1, "Incorporate relevant project memories: " + "; ".join(memories))
+        steps.insert(1, "Incorporar lecciones relevantes de memoria: " + "; ".join(memories))
 
     return BrainResponse(
         action="plan",
         summary=_base_summary("topological plan", payload),
         plan=steps,
-        risks=_base_risks(payload) + ([f"High blast radius: {len(blast_radius['high_severity_files'])} critical file(s) affected."] if blast_radius["high_severity_files"] else []),
+        risks=_base_risks(payload) + ([f"Alto radio de impacto: {len(blast_radius['high_severity_files'])} archivo(s) crítico(s) afectado(s)."] if blast_radius["high_severity_files"] else []),
         recommendations=[
-            "Always refactor base contracts/types before editing public dispatchers.",
-            "Do not execute destructive operations without explicit confirmation.",
-            "Keep Rust as authority; use Python output as advisory guidance.",
+            "Refactorizar contratos base y tipos antes de modificar dispatchers públicos.",
+            "No ejecutar operaciones destructivas sin confirmación explícita.",
+            "Mantener Rust como autoridad de validación y Python como guía consultiva.",
         ],
-        memory_updates=["Save decisions, bugfixes, and non-obvious discoveries after validation."],
+        memory_updates=["Guardar decisiones, soluciones a bugs y descubrimientos no obvios tras validar."],
         confidence=0.88 if blast_radius["risk_tier"] != "critical" else 0.72,
         suggested_mcp_calls=_safe_mcp_calls(payload),
         structured_plan=_structured_plan(payload),
