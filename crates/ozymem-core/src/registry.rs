@@ -327,10 +327,11 @@ impl ProjectRegistry {
     /// Registers a new project. Returns the created Project.
     /// If a project with the same name or path already exists, returns an error.
     pub fn register(&self, name: &str, path: &str) -> Result<Project> {
+        let norm_path = normalize_path(path);
         self.db.execute(
             "INSERT INTO projects (name, path, status, last_opened, updated_at) \
              VALUES (?1, ?2, 'SLEEPING', datetime('now'), datetime('now'))",
-            params![name, path],
+            params![name, norm_path],
         )?;
 
         self.get_project_by_name(name)?
@@ -353,7 +354,7 @@ impl ProjectRegistry {
             .query_row(
                 "SELECT id, name, path, status, scale, file_count, vector_count, \
                  growth_rate, watcher_pid, last_opened, last_scan, created_at, updated_at \
-                 FROM projects WHERE LOWER(path) = LOWER(?1)",
+                 FROM projects WHERE REPLACE(LOWER(path), '\\', '/') = LOWER(?1)",
                 params![normalized],
                 |row| row_to_project(row),
             )
@@ -1081,16 +1082,28 @@ mod tests {
     fn normalize_path_strips_prefix() {
         assert_eq!(
             normalize_path(r"\\?\C:\Users\dev\project"),
-            r"C:\Users\dev\project"
+            "C:/Users/dev/project"
         );
         assert_eq!(
             normalize_path(r"C:\Users\dev\project\"),
-            r"C:\Users\dev\project"
+            "C:/Users/dev/project"
         );
         assert_eq!(
             normalize_path("C:/Users/dev/project/"),
             "C:/Users/dev/project"
         );
+        // Lowercase drive letter normalized to uppercase
+        assert_eq!(
+            normalize_path(r"c:\users\dev\project\sub\"),
+            "C:/users/dev/project/sub"
+        );
+        assert_eq!(
+            normalize_path("c:/users/dev/project"),
+            "C:/users/dev/project"
+        );
+        // Root path edge cases
+        assert_eq!(normalize_path("/"), "/");
+        assert_eq!(normalize_path(""), "");
     }
 
     #[test]

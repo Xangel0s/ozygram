@@ -75,16 +75,34 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     (dot / (norm_a * norm_b)).clamp(0.0, 1.0)
 }
 
-/// Normalizes a filesystem path for consistent storage.
-/// Strips the `\\?\` prefix that Windows canonicalization adds.
+/// Normalizes a filesystem path for consistent storage and cross-platform lookup.
+/// - Strips the `\\?\` prefix that Windows canonicalization adds.
+/// - Unifies all backslashes (`\`) to forward slashes (`/`).
+/// - Capitalizes the Windows drive letter (e.g. `c:/` -> `C:/`).
+/// - Trims trailing slashes (preserving the root slash if it is just `/`).
 pub fn normalize_path(path: &str) -> String {
     let cleaned = if path.starts_with(r"\\?\") {
         &path[4..]
     } else {
         path
     };
-    cleaned
-        .trim_end_matches('\\')
-        .trim_end_matches('/')
-        .to_string()
+
+    let mut s = cleaned.replace('\\', "/");
+
+    if s.len() >= 2 && s.as_bytes()[1] == b':' {
+        let drive = s.as_bytes()[0];
+        if drive.is_ascii_alphabetic() {
+            let upper = (drive.to_ascii_uppercase() as char).to_string();
+            s.replace_range(0..1, &upper);
+        }
+    }
+
+    if s.len() > 1 {
+        let trimmed = s.trim_end_matches('/');
+        if !trimmed.is_empty() {
+            s = trimmed.to_string();
+        }
+    }
+
+    s
 }
