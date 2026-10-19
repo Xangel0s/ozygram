@@ -25,7 +25,7 @@ class OzyBrainTests(unittest.TestCase):
         self.assertGreaterEqual(len(result["structured_plan"]["phases"]), 5)
         self.assertIn("cargo test", result["structured_plan"]["suggested_commands"])
         self.assertTrue(any("modify files" in item for item in result["execution_policy"]["requires_confirmation"]))
-        self.assertTrue(any("borrar archivos" in item for item in result["execution_policy"]["forbidden_for_python_worker"]))
+        self.assertTrue(any("delete files" in item for item in result["execution_policy"]["forbidden_for_python_worker"]))
         self.assertEqual(result["brain_version"], "0.2.0")
         self.assertEqual(result["brain_schema_version"], "v1")
         self.assertGreaterEqual(len(result["provenance"]), 1)
