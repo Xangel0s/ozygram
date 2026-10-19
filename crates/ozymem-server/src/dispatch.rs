@@ -280,6 +280,28 @@ pub async fn handle_request(
                             content: vec![ContentBlock { kind: "text", text: report }],
                             is_error: None,
                         }
+                    } else if action == "code" || action == "code_doctor" || action == "code_health" {
+                        backend.reload_if_stale();
+                        let min_lines = tool_call
+                            .arguments
+                            .get("min_duplicate_lines")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(6) as usize;
+                        let max_findings = tool_call
+                            .arguments
+                            .get("max_findings")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(20) as usize;
+                        let scope = tool_call.arguments.get("scope").and_then(Value::as_str);
+                        let report =
+                            crate::doctor::build_code_doctor_report(backend, scope, min_lines, max_findings).await?;
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: report,
+                            }],
+                            is_error: None,
+                        }
                     } else {
                         handle_ozy_doctor(Some(backend), &tool_call).await?
                     }

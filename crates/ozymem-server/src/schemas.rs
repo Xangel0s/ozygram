@@ -14,7 +14,12 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["task", "file", "project", "summary", "files", "recent"], "default": "task" },
+                            "action": {
+                                "type": "string",
+                                "enum": ["task", "file", "project", "summary", "files", "recent"],
+                                "default": "task",
+                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'task': query (req), [max_tokens, limit]\n- 'file': file_path (req), [lod='macro'|'contracts'|'full']\n- 'project': [project_name]\n- 'summary': visión general del grafo\n- 'files': [limit]\n- 'recent': [limit]"
+                            },
                             "query": { "type": "string", "description": "Task/search query for action=task" },
                             "file_path": { "type": "string", "description": "File path for action=file" },
                             "project_name": { "type": "string", "description": "Registered project name for action=project" },
@@ -31,7 +36,12 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["record", "search", "file", "symbol", "recent", "similar", "session_start", "session_end", "save", "get", "timeline", "delete", "prompt", "passive"], "default": "search" },
+                            "action": {
+                                "type": "string",
+                                "enum": ["record", "search", "file", "symbol", "recent", "similar", "session_start", "session_end", "save", "get", "timeline", "delete", "prompt", "passive"],
+                                "default": "search",
+                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'search': query (req), [min_score, limit]\n- 'get': id (req)\n- 'save' / 'record': title (req), content (req), [kind, topic_key]\n- 'session_start' / 'session_end': session_id (req)\n- 'file': file_path (req)\n- 'symbol': symbol_name (req), [file_path]\n- 'timeline': [topic_key, session_id, limit]\n- 'delete': id (req)"
+                            },
                             "kind": { "type": "string", "enum": ["lesson", "decision", "convention", "gotcha", "module_rule", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "session_summary"] },
                             "session_id": { "type": "string" },
                             "project": { "type": "string" },
@@ -59,7 +69,12 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["summary", "neighbors", "incoming", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid", "impact_mermaid", "endpoint_dependents", "api_routes", "table_lineage"], "default": "summary" },
+                            "action": {
+                                "type": "string",
+                                "enum": ["summary", "neighbors", "incoming", "impact", "path", "architecture_report", "memory_neighborhood", "render_mermaid", "mermaid", "impact_mermaid", "endpoint_dependents", "api_routes", "table_lineage"],
+                                "default": "summary",
+                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'summary': resumen general de la arquitectura\n- 'incoming': file_path (req) -> dependencias inversas (quién importa este archivo)\n- 'impact' / 'impact_mermaid': file_path (req), [max_hops=1..2]\n- 'neighbors': file_path (req)\n- 'endpoint_dependents': endpoint (req, ej. '/api/sig/sctr')\n- 'table_lineage': table (req, ej. 'control_probetas')\n- 'path': from (req), to (req)"
+                            },
                             "file_path": { "type": "string" },
                             "endpoint": { "type": "string", "description": "API route path (e.g. /api/sig/sctr) or backend file to query cross-language frontend dependents" },
                             "table": { "type": "string", "description": "Database table name (e.g. control_probetas) for DDL lineage analysis" },
@@ -79,7 +94,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_code_doctor",
-                    description: "Preview-safe code doctor: duplicates, redundancy, architecture smells, best-practice feedback, dependency risks, and refactor suggestions.",
+                    description: "[CONSOLIDATED: Prefer ozy_doctor(action='code')] Preview-safe code doctor: duplicates, redundancy, architecture smells, best-practice feedback, dependency risks, and refactor suggestions.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -93,14 +108,22 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_doctor",
-                    description: "Ozymem/Ozygram system doctor: DB, registry, projects, memories, embeddings, watchers, indexes, and preview-safe repair suggestions. Use action='audit_migrations' to lint SQL migration files for idempotency ([ALERT: NON_IDEMPOTENT_SQL]) and unguarded destructive statements ([ALERT: DESTRUCTIVE_UNGUARDED]).",
+                    description: "Ozymem/Ozygram system doctor: DB, registry, projects, memories, embeddings, watchers, indexes, and preview-safe repair suggestions. Use action='audit_migrations' to lint SQL migration files for idempotency ([ALERT: NON_IDEMPOTENT_SQL]) and unguarded destructive statements ([ALERT: DESTRUCTIVE_UNGUARDED]). Use action='code' to run static code analysis for duplicates and architectural smells.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["status", "audit_migrations"], "default": "status", "description": "audit_migrations: lint .sql files for idempotency and destructive statement guards" },
+                            "action": {
+                                "type": "string",
+                                "enum": ["status", "audit_migrations", "code"],
+                                "default": "status",
+                                "description": "Acción a ejecutar:\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)"
+                            },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
                             "include_projects": { "type": "boolean", "default": true },
-                            "migrations_path": { "type": "string", "description": "Optional directory to scan for .sql files (default: project root)" }
+                            "migrations_path": { "type": "string", "description": "Optional directory to scan for .sql files for action='audit_migrations' (default: project root)" },
+                            "scope": { "type": "string", "description": "Optional file or directory scope for action='code'" },
+                            "min_duplicate_lines": { "type": "integer", "default": 6, "description": "Min duplicate lines threshold for action='code'" },
+                            "max_findings": { "type": "integer", "default": 20, "description": "Max findings to return for action='code'" }
                         },
                         "additionalProperties": false
                     }),
@@ -125,7 +148,12 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review", "deep_semantic_search", "audit_changes_with_critic", "get_repository_hotspots", "consolidate_memory", "sync_outbox", "simulate_action", "critique_hypothesis"], "default": "plan" },
+                            "action": {
+                                "type": "string",
+                                "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review", "deep_semantic_search", "audit_changes_with_critic", "get_repository_hotspots", "consolidate_memory", "sync_outbox", "simulate_action", "critique_hypothesis"],
+                                "default": "plan",
+                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'plan': goal (req)\n- 'recall_deep' / 'deep_semantic_search': query (req)\n- 'simulate_action' / 'audit_changes_with_critic': file_path (req), proposed_action (req)\n- 'analyze_failure': failures (req)\n- 'consolidate_memory' / 'sync_outbox': sincronización offline"
+                            },
                             "goal": { "type": "string" },
                             "query": { "type": "string" },
                             "project": { "type": "string" },
@@ -1041,7 +1069,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_replace_symbol",
-                    description: "Edición quirúrgica de un símbolo basada en AST. Reemplaza el cuerpo de una función, componente o clase preservando formato y validando sintaxis previa con Tree-Sitter antes de escribir en disco.",
+                    description: "[DEPRECATED: Prefer ozy_ast_patch] Edición de símbolo por AST. Redirige internamente a ozy_ast_patch con auto-alineación e inspección sintáctica Tree-Sitter.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -1070,7 +1098,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_search_literal",
-                    description: "Búsqueda literal o regex ultrarrápida (< 15 ms) en Rust con Token Budgeting, normalización nativa de rutas Windows y filtrado automático de ruido. Evita saturar el contexto del agente.",
+                    description: "[RECOMMENDED] Búsqueda literal o regex ultrarrápida (< 15 ms) en Rust con Token Budgeting, normalización nativa de rutas Windows y filtrado automático de ruido. Evita saturar el contexto del agente.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -1088,7 +1116,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_ast_patch",
-                    description: "Reemplazo estructural AST a prueba de whitespace e indentación. Auto-alinea la sangría del código inyectado según el contexto circundante del archivo y valida la sintaxis con Tree-Sitter antes de escribir.",
+                    description: "[RECOMMENDED] Reemplazo estructural AST quirúrgico a prueba de whitespace e indentación. Auto-alinea la sangría del código inyectado según el contexto circundante del archivo y valida la sintaxis con Tree-Sitter antes de escribir.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {

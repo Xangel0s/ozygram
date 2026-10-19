@@ -3628,7 +3628,76 @@ class ControlProbeta(SQLModel, table=True):
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_ozy_doctor_code_action_consolidation() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_doctor_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
 
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/")),
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
 
+        // 1. Verify tools/list has updated schemas and descriptions
+        let list_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/list".to_string(),
+            params: None,
+        };
+        let list_resp = handle_request(&backend_ref, list_req, None, None).await.unwrap().unwrap();
+        let tools = list_resp.result.unwrap()["tools"].as_array().unwrap().clone();
 
+        let ozy_doc = tools.iter().find(|t| t["name"] == "ozy_doctor").expect("ozy_doctor must exist");
+        let desc = ozy_doc["description"].as_str().unwrap();
+        assert!(desc.contains("action='code'"));
 
+        let replace_sym = tools.iter().find(|t| t["name"] == "ozy_replace_symbol").expect("ozy_replace_symbol must exist");
+        assert!(replace_sym["description"].as_str().unwrap().contains("[DEPRECATED: Prefer ozy_ast_patch]"));
+
+        // 2. Call ozy_doctor with action="code" (consolidated path)
+        let call_doctor_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "code",
+                    "min_duplicate_lines": 4
+                }
+            })),
+        };
+        let doc_resp = handle_request(&backend_ref, call_doctor_req, None, None).await.unwrap().unwrap();
+        assert!(doc_resp.error.is_none());
+        let text = doc_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text.contains("# Ozy Doctor Code"));
+
+        // 3. Call legacy ozy_code_doctor to verify backwards compatibility
+        let call_legacy_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_code_doctor",
+                "arguments": {
+                    "min_duplicate_lines": 4
+                }
+            })),
+        };
+        let legacy_resp = handle_request(&backend_ref, call_legacy_req, None, None).await.unwrap().unwrap();
+        assert!(legacy_resp.error.is_none());
+        let legacy_text = legacy_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(legacy_text.contains("# Ozy Doctor Code"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
