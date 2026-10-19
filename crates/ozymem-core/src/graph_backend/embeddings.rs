@@ -201,7 +201,7 @@ impl GraphBackend {
             Ok((lesson, embedding_blob))
         })?;
 
-        let mut scored: Vec<SimilarLesson> = rows
+        let mut scored: Vec<(SimilarLesson, Vec<f32>)> = rows
             .filter_map(|r| r.ok())
             .filter_map(|(lesson, blob)| {
                 let blob = blob?;
@@ -217,21 +217,43 @@ impl GraphBackend {
                 if score < min_score {
                     return None;
                 }
-                Some(SimilarLesson {
-                    lesson,
-                    score,
-                    snippet: None,
-                })
+                Some((
+                    SimilarLesson {
+                        lesson,
+                        score,
+                        snippet: None,
+                    },
+                    vec,
+                ))
             })
             .collect();
 
-        scored.sort_by(|a, b| {
+        scored.sort_by(|(a, _), (b, _)| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        scored.truncate(limit.min(100));
-        Ok(scored)
+
+        // Maximal Marginal Relevance (MMR) / Diversidad: Suprimir lecciones redundantes
+        // Si dos lecciones tienen similitud coseno entre sí > 0.88, se conserva solo la de mayor ranking.
+        let mut deduplicated: Vec<SimilarLesson> = Vec::new();
+        let mut selected_vectors: Vec<Vec<f32>> = Vec::new();
+
+        for (candidate, vec) in scored {
+            let is_redundant = selected_vectors.iter().any(|selected| {
+                crate::cosine_similarity(selected, &vec) > 0.88
+            });
+
+            if !is_redundant {
+                selected_vectors.push(vec);
+                deduplicated.push(candidate);
+                if deduplicated.len() >= limit.min(100) {
+                    break;
+                }
+            }
+        }
+
+        Ok(deduplicated)
     }
 
     /// Extrae una ventana contextual de un archivo registrado o de disco (+/- 10 líneas)
@@ -404,5 +426,39 @@ mod tests {
         assert_eq!(snippet_pref.start_line, 2);
         assert_eq!(snippet_pref.end_line, 5);
         assert_eq!(snippet_pref.match_line, 4);
+    }
+
+    #[test]
+    fn test_mmr_deduplication_suppresses_redundant_vectors() {
+        let v1 = vec![1.0f32, 0.0, 0.0];
+        let v2_sister = vec![0.99f32, 0.05, 0.0]; // Cosine similarity > 0.99 with v1
+        let v3_diverse = vec![0.0f32, 1.0, 0.0]; // Cosine similarity 0.0 with v1
+
+        assert!(crate::cosine_similarity(&v1, &v2_sister) > 0.88);
+        assert!(crate::cosine_similarity(&v1, &v3_diverse) < 0.88);
+
+        let candidates = vec![
+            ("Lesson 1: Fidelidad Estricta", v1),
+            ("Lesson 2: Fidelidad Directa", v2_sister),
+            ("Lesson 3: Auth Token Expiry", v3_diverse),
+        ];
+
+        let mut deduplicated = Vec::new();
+        let mut selected_vectors: Vec<Vec<f32>> = Vec::new();
+
+        for (title, vec) in candidates {
+            let is_redundant = selected_vectors.iter().any(|selected| {
+                crate::cosine_similarity(selected, &vec) > 0.88
+            });
+            if !is_redundant {
+                selected_vectors.push(vec);
+                deduplicated.push(title);
+            }
+        }
+
+        assert_eq!(deduplicated.len(), 2);
+        assert_eq!(deduplicated[0], "Lesson 1: Fidelidad Estricta");
+        assert_eq!(deduplicated[1], "Lesson 3: Auth Token Expiry");
+        assert!(!deduplicated.contains(&"Lesson 2: Fidelidad Directa"));
     }
 }
