@@ -8,6 +8,7 @@ use crate::graph_backend::types::{GraphBackend, LessonEntry};
 pub struct MarkdownMemoryMetadata {
     pub id: String,
     pub kind: String, // "gotcha" | "convention" | "architecture" | "bugfix" | "decision" | "lesson"
+    pub status: Option<String>, // "active" | "resolved" | "archived" (defaults to "active")
     pub topic_key: String,
     pub title: String,
     pub author: Option<String>,
@@ -32,6 +33,25 @@ impl MarkdownMemory {
             metadata,
             body: body.into(),
             file_path: None,
+        }
+    }
+
+    /// Returns whether this memory is currently active (defaults to true if status is omitted).
+    pub fn is_active(&self) -> bool {
+        match self.metadata.status.as_deref().map(|s| s.to_lowercase()).as_deref() {
+            Some("resolved") | Some("archived") => false,
+            _ => true,
+        }
+    }
+
+    /// Numerical severity weight for ranking in pre-flight alerts (higher = more critical).
+    pub fn severity_weight(&self) -> u8 {
+        match self.metadata.severity.as_deref().map(|s| s.to_lowercase()).as_deref() {
+            Some("critical") => 4,
+            Some("high") => 3,
+            Some("medium") => 2,
+            Some("low") => 1,
+            _ => 2,
         }
     }
 
@@ -66,6 +86,9 @@ impl MarkdownMemory {
         out.push_str("---\n");
         out.push_str(&format!("id: \"{}\"\n", self.metadata.id));
         out.push_str(&format!("kind: \"{}\"\n", self.metadata.kind));
+        if let Some(ref status) = self.metadata.status {
+            out.push_str(&format!("status: \"{}\"\n", status));
+        }
         out.push_str(&format!("topic_key: \"{}\"\n", self.metadata.topic_key));
         out.push_str(&format!("title: \"{}\"\n", self.metadata.title));
 
@@ -198,6 +221,7 @@ pub fn scan_markdown_memories(base_dir: &Path) -> Result<Vec<MarkdownMemory>> {
 fn parse_yaml_frontmatter(raw: &str) -> Result<MarkdownMemoryMetadata> {
     let mut id = String::new();
     let mut kind = "gotcha".to_string();
+    let mut status: Option<String> = None;
     let mut topic_key = String::new();
     let mut title = String::new();
     let mut author: Option<String> = None;
@@ -239,6 +263,7 @@ fn parse_yaml_frontmatter(raw: &str) -> Result<MarkdownMemoryMetadata> {
         match key {
             "id" => id = strip_quotes(val_part).to_string(),
             "kind" => kind = strip_quotes(val_part).to_string(),
+            "status" => status = Some(strip_quotes(val_part).to_string()),
             "topic_key" => topic_key = strip_quotes(val_part).to_string(),
             "title" => title = strip_quotes(val_part).to_string(),
             "author" => author = Some(strip_quotes(val_part).to_string()),
@@ -277,6 +302,7 @@ fn parse_yaml_frontmatter(raw: &str) -> Result<MarkdownMemoryMetadata> {
     Ok(MarkdownMemoryMetadata {
         id,
         kind,
+        status,
         topic_key,
         title,
         author,
@@ -342,20 +368,40 @@ impl GraphBackend {
     }
 
     /// Formats a zero-emoji alert badge block if there are active gotchas or conventions
-    /// applicable to the specified file path.
+    /// applicable to the specified file path, protected by a Token Budget Guard (top 3 by severity/date).
     pub fn format_applicable_gotchas_alert(&self, file_path: &str) -> Option<String> {
-        let applicable = self.get_applicable_markdown_memories(file_path);
-        if applicable.is_empty() {
+        let all_applicable = self.get_applicable_markdown_memories(file_path);
+        let mut active_memories: Vec<MarkdownMemory> = all_applicable
+            .into_iter()
+            .filter(|mem| mem.is_active())
+            .collect();
+
+        if active_memories.is_empty() {
             return None;
         }
+
+        // Rank by severity_weight (descending), then by date (descending)
+        active_memories.sort_by(|a, b| {
+            b.severity_weight()
+                .cmp(&a.severity_weight())
+                .then_with(|| {
+                    let date_a = a.metadata.date.as_deref().unwrap_or("");
+                    let date_b = b.metadata.date.as_deref().unwrap_or("");
+                    date_b.cmp(date_a)
+                })
+        });
+
+        let total_active = active_memories.len();
+        const MAX_INJECTED_GOTCHAS: usize = 3;
 
         let mut out = String::new();
         out.push_str(&format!(
             "[ALERT: GOTCHA_PREVENTION: {} ACTIVE MEMORIES DETECTED FOR '{}']\n",
-            applicable.len(),
+            total_active,
             file_path
         ));
-        for mem in &applicable {
+
+        for mem in active_memories.iter().take(MAX_INJECTED_GOTCHAS) {
             let sev = mem.metadata.severity.as_deref().unwrap_or("HIGH").to_uppercase();
             let author = mem.metadata.author.as_deref().unwrap_or("team");
             let date = mem.metadata.date.as_deref().unwrap_or("unknown");
@@ -376,6 +422,15 @@ impl GraphBackend {
             for l in lines {
                 out.push_str(&format!("    {}\n", l.trim()));
             }
+        }
+
+        if total_active > MAX_INJECTED_GOTCHAS {
+            let omitted = total_active - MAX_INJECTED_GOTCHAS;
+            out.push_str(&format!(
+                "  [... {} older or lower-priority gotchas omitted to save tokens. Use ozy_memory(action=\"file\", file_path=\"{}\") to view all]\n",
+                omitted,
+                file_path
+            ));
         }
 
         Some(out)
@@ -467,6 +522,7 @@ impl GraphBackend {
         let meta = MarkdownMemoryMetadata {
             id,
             kind: lesson.kind.clone(),
+            status: Some("active".to_string()),
             topic_key,
             title,
             author: Some("agent".to_string()),
@@ -561,6 +617,7 @@ Always use batch deletion endpoints.
         let meta = MarkdownMemoryMetadata {
             id: "mem_test".to_string(),
             kind: "gotcha".to_string(),
+            status: Some("active".to_string()),
             topic_key: "pool-bug".to_string(),
             title: "Pool bug".to_string(),
             author: None,
@@ -592,6 +649,7 @@ Always use batch deletion endpoints.
         let meta = MarkdownMemoryMetadata {
             id: "mem_1".to_string(),
             kind: "gotcha".to_string(),
+            status: Some("active".to_string()),
             topic_key: "fastapi-pool-exhaustion".to_string(),
             title: "Pool".to_string(),
             author: None,
@@ -674,5 +732,101 @@ Always use context manager `with SessionLocal() as db:` to prevent leak.
         let read_back = std::fs::read_to_string(&exported_path).unwrap();
         assert!(read_back.contains("date-formatter"));
         assert!(read_back.contains("Use ISO-8601 strings"));
+    }
+
+    #[test]
+    fn test_lifecycle_status_and_token_budget_guard() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_budget.db");
+        let backend = GraphBackend::open(Some(&db_path.to_string_lossy())).unwrap();
+        backend.set_project_path(Some(&temp_dir.path().to_string_lossy()));
+
+        let gotcha_dir = temp_dir.path().join(".ozy").join("memories").join("gotcha");
+        std::fs::create_dir_all(&gotcha_dir).unwrap();
+
+        // 1. Create a resolved memory (should be excluded from pre-flight alert)
+        let resolved_md = r#"---
+id: "mem_resolved_01"
+kind: "gotcha"
+status: "resolved"
+topic_key: "old-migration-bug"
+title: "Old Alembic deadlock"
+severity: "critical"
+applies_to: ["app/database.py"]
+---
+Fixed in v2.0
+"#;
+        std::fs::write(gotcha_dir.join("01_resolved.md"), resolved_md).unwrap();
+
+        // 2. Create 4 active memories with different severities
+        let active1 = r#"---
+id: "mem_act_01"
+kind: "gotcha"
+status: "active"
+topic_key: "low-severity-rule"
+title: "Docstring formatting"
+severity: "low"
+date: "2026-01-01"
+applies_to: ["app/database.py"]
+---
+Use PEP 257.
+"#;
+        std::fs::write(gotcha_dir.join("02_low.md"), active1).unwrap();
+
+        let active2 = r#"---
+id: "mem_act_02"
+kind: "gotcha"
+status: "active"
+topic_key: "medium-severity-rule"
+title: "Timeout config"
+severity: "medium"
+date: "2026-02-01"
+applies_to: ["app/database.py"]
+---
+Set timeout to 30s.
+"#;
+        std::fs::write(gotcha_dir.join("03_medium.md"), active2).unwrap();
+
+        let active3 = r#"---
+id: "mem_act_03"
+kind: "gotcha"
+topic_key: "high-severity-rule"
+title: "N+1 query hazard"
+severity: "high"
+date: "2026-03-01"
+applies_to: ["app/database.py"]
+---
+Always use joinedload.
+"#;
+        std::fs::write(gotcha_dir.join("04_high.md"), active3).unwrap();
+
+        let active4 = r#"---
+id: "mem_act_04"
+kind: "gotcha"
+topic_key: "critical-severity-rule"
+title: "Connection pool exhaustion"
+severity: "critical"
+date: "2026-04-01"
+applies_to: ["app/database.py"]
+---
+Close all sessions.
+"#;
+        std::fs::write(gotcha_dir.join("05_critical.md"), active4).unwrap();
+
+        // 3. Format alert: resolved should be skipped, 4 active detected, top 3 shown, 1 omitted
+        let alert = backend.format_applicable_gotchas_alert("app/database.py").expect("Alert must exist");
+        assert!(alert.contains("[ALERT: GOTCHA_PREVENTION: 4 ACTIVE MEMORIES DETECTED FOR 'app/database.py']"));
+        // Critical must be present
+        assert!(alert.contains("Connection pool exhaustion"));
+        // High must be present
+        assert!(alert.contains("N+1 query hazard"));
+        // Medium must be present
+        assert!(alert.contains("Timeout config"));
+        // Low should be omitted due to Top 3 Token Budget Guard
+        assert!(!alert.contains("Docstring formatting"));
+        // Resolved must NOT be present
+        assert!(!alert.contains("Old Alembic deadlock"));
+        // Omission message must be present
+        assert!(alert.contains("1 older or lower-priority gotchas omitted to save tokens"));
     }
 }
