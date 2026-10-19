@@ -500,8 +500,8 @@ author: "diego"
 date: "2026-10-19"
 severity: "critical"
 applies_to:
-  - "crmnew/api-geofal-crm/app/database.py"
-  - "crmnew/api-geofal-crm/app/modules/**"
+  - "backend/api/database.py"
+  - "backend/api/modules/**"
 tags:
   - "database"
   - "sqlalchemy"
@@ -567,8 +567,8 @@ Always use batch deletion endpoints.
             date: None,
             severity: Some("critical".to_string()),
             applies_to: vec![
-                "crmnew/api-geofal-crm/app/database.py".to_string(),
-                "crmnew/api-geofal-crm/app/modules/**".to_string(),
+                "backend/api/database.py".to_string(),
+                "backend/api/modules/**".to_string(),
                 "utils/helpers.py".to_string(),
             ],
             tags: vec![],
@@ -576,15 +576,15 @@ Always use batch deletion endpoints.
         let memory = MarkdownMemory::new(meta, "body");
 
         // Exact match
-        assert!(memory.matches_file("crmnew/api-geofal-crm/app/database.py"));
+        assert!(memory.matches_file("backend/api/database.py"));
         // Windows backslash normalized match
-        assert!(memory.matches_file(r"crmnew\api-geofal-crm\app\database.py"));
+        assert!(memory.matches_file(r"backend\api\database.py"));
         // Glob match
-        assert!(memory.matches_file("crmnew/api-geofal-crm/app/modules/clientes/service.py"));
+        assert!(memory.matches_file("backend/api/modules/auth/service.py"));
         // Suffix match
         assert!(memory.matches_file("c:/repo/utils/helpers.py"));
         // Negative match
-        assert!(!memory.matches_file("crmnew/crm-geofal/src/index.tsx"));
+        assert!(!memory.matches_file("frontend/src/index.tsx"));
     }
 
     #[test]
