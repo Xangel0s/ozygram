@@ -16,6 +16,12 @@ New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $PyDir) | Out-Null
 
 Write-Host "[2/4] Building release binaries (cargo build --release)..." -ForegroundColor Yellow
+if (Test-Path "target\release\ozymem-server.exe") {
+    Move-Item -Force "target\release\ozymem-server.exe" "target\release\ozymem-server.exe.running" -ErrorAction SilentlyContinue
+}
+if (Test-Path "target\release\ozymem.exe") {
+    Move-Item -Force "target\release\ozymem.exe" "target\release\ozymem.exe.running" -ErrorAction SilentlyContinue
+}
 try {
     cargo build --release
 } catch {
