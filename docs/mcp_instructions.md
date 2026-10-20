@@ -40,26 +40,31 @@ To avoid context bloat, syntax breaks, and latency, agents must adhere to the fo
   - By default (`verbose: false`), static execution policies are omitted, saving ~600 tokens per call.
   - Set `verbose: true` only when explicit execution policy details are required.
 
-### `ozy_exploration` (Dream-RSI)
+### `ozy_exploration` (Dream-RSI & MCTS)
 - **Starting a Trajectory**:
-  - `action="start", task_description="<detailed task>"`: `task_description` is strictly mandatory.
+  - `action="start", goal="<detailed task>"`: Supports both `goal` and `task_description`.
 - **Recording Steps**:
-  - `action="record_step", action_type="tool_call" | "patch", observation="..."`:
+  - `action="step"` (or `record_step`), `action_type="tool_call" | "patch"`, `observation="..."`:
   - `trajectory_id` is **optional**: Ozygram auto-resolves the active `in_progress` trajectory for the current project.
   - Automatic objective rewards calibration (`[OBJECTIVE: TEST_PASSED]`, `[ALERT: TEST_FAILED]`, `[ALERT: SYNTAX_ERROR]`).
 - **Completing Trajectories**:
-  - `action="complete", status="completed"`: Auto-resolves active trajectory and renders Mermaid tree.
+  - `action="finish"` (or `complete`), `status="completed" | "failed" | "abandoned"`: Auto-resolves active trajectory and renders Mermaid tree.
 - **Rollback Protection**:
   - `action="rollback", node_id="<id>"`: Restores file snapshots to a known good state.
 
 ### `ozy_context`
+- **Ergonomic Auto-Inference**: Passing `file_path` automatically infers `action="file"`; passing `project_name` or `project_id` automatically infers `action="project"`.
 - **Actions**:
-  - `action="file", path="<path>", lod="contracts" | "macro" | "full"`: Extracts AST skeleton and prepends active gotchas.
+  - `action="file", file_path="<path>", lod="contracts" | "macro" | "full"`: Extracts AST skeleton and prepends active gotchas.
   - `action="task", query="<search query>"`: Injects relevant project memories, active conventions, and engrams.
+  - `action="project", project_name="<name>"`: Project metadata, registered schema, and dependencies.
 
 ### `ozy_memory`
 - **MMR Diversity Deduplication**: Semantic search automatically suppresses near-duplicate memories (>0.88 cosine similarity) to keep context concise.
-- **Actions**: `save`, `search`, `sync_markdown`, `export_markdown`.
+- **Unified Actions**:
+  - CRUD & Search: `save` / `record`, `search`, `get`, `delete`.
+  - Git Markdown Memories: `sync_markdown`, `export_markdown`, `scan_markdown` (`.ozy/memories/<kind>/*.md`).
+  - Consolidated Git Notes P2P: `export_git_notes`, `import_git_notes` (`commit_ref`, `note_ref`), replacing legacy standalone note tools.
 
 ---
 
