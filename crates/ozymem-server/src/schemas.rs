@@ -38,10 +38,12 @@ pub fn handle_tools_list(
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["record", "search", "file", "symbol", "recent", "similar", "session_start", "session_end", "save", "get", "timeline", "delete", "prompt", "passive", "sync_markdown", "export_markdown", "scan_markdown"],
+                                "enum": ["record", "search", "file", "symbol", "recent", "similar", "session_start", "session_end", "save", "get", "timeline", "delete", "prompt", "passive", "sync_markdown", "export_markdown", "scan_markdown", "export_git_notes", "import_git_notes"],
                                 "default": "search",
-                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'search': query (req), [min_score, limit]\n- 'get': id (req)\n- 'save' / 'record': title (req), content (req), [kind, topic_key]\n- 'session_start' / 'session_end': session_id (req)\n- 'file': file_path (req)\n- 'symbol': symbol_name (req), [file_path]\n- 'timeline': [topic_key, session_id, limit]\n- 'delete': id (req)\n- 'sync_markdown': sincroniza memorias Git (.ozy/memories) a SQLite\n- 'export_markdown': [id o kind, limit] -> exporta lecciones a .ozy/memories/<kind>/\n- 'scan_markdown': lista memorias Git Markdown activas"
+                                "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'search': query (req), [min_score, limit]\n- 'get': id (req)\n- 'save' / 'record': title (req), content (req), [kind, topic_key]\n- 'session_start' / 'session_end': session_id (req)\n- 'file': file_path (req)\n- 'symbol': symbol_name (req), [file_path]\n- 'timeline': [topic_key, session_id, limit]\n- 'delete': id (req)\n- 'sync_markdown': sincroniza memorias Git (.ozy/memories) a SQLite\n- 'export_markdown': [id o kind, limit] -> exporta lecciones a .ozy/memories/<kind>/\n- 'scan_markdown': lista memorias Git Markdown activas\n- 'export_git_notes': [commit_ref, note_ref] -> exporta memoria a Git Notes\n- 'import_git_notes': [commit_ref, note_ref] -> importa memoria desde Git Notes"
                             },
+                            "commit_ref": { "type": "string", "description": "Commit SHA or ref (default: HEAD) for action='export_git_notes' or 'import_git_notes'" },
+                            "note_ref": { "type": "string", "description": "Git notes ref (default: refs/notes/ozymem) for action='export_git_notes' or 'import_git_notes'" },
                             "kind": { "type": "string", "enum": ["lesson", "decision", "convention", "gotcha", "module_rule", "architecture", "bugfix", "pattern", "config", "discovery", "learning", "session_summary"] },
                             "session_id": { "type": "string" },
                             "project": { "type": "string" },
@@ -175,11 +177,12 @@ pub fn handle_tools_list(
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "action": { "type": "string", "enum": ["start", "record_step", "record_batch", "complete", "get_tree", "diagnose", "list", "delete", "resume", "rollback"], "default": "record_step" },
+                            "action": { "type": "string", "enum": ["start", "step", "record_step", "record_batch", "finish", "complete", "get_tree", "diagnose", "list", "delete", "resume", "rollback"], "default": "step", "description": "Acción del árbol de exploración: 'start' (iniciar trayectoria con goal), 'step' (registrar paso/observación), 'finish' (completar trayectoria), 'get_tree', 'diagnose', 'rollback'" },
                             "trajectory_id": { "type": "string", "description": "ID of the exploration trajectory" },
                             "node_id": { "type": "string", "description": "Node ID to rollback (for 'rollback')" },
                             "to_parent": { "type": "boolean", "description": "Whether to rollback to parent node snapshot (for 'rollback')" },
                             "parent_id": { "type": "string", "description": "Optional parent node ID for tree branching (auto-parents to last active leaf if omitted)" },
+                            "goal": { "type": "string", "description": "Objetivo de la tarea (alias para task_description en action='start')" },
                             "task_description": { "type": "string", "description": "Goal or bug to solve (for 'start')" },
                             "project_path": { "type": "string", "description": "Optional project path" },
                             "policy_version": { "type": "string", "description": "Version of the active exploration policy (e.g. 'v1.0.0')" },
@@ -1006,7 +1009,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_export_memory_notes",
-                    description: "Exporta y consolida el estado de memoria actual (lecciones, contratos y reglas procedimentales) en una Git Note vinculada al commit actual",
+                    description: "[CONSOLIDATED: Prefer ozy_memory(action='export_git_notes')] Exporta y consolida el estado de memoria actual (lecciones, contratos y reglas procedimentales) en una Git Note vinculada al commit actual",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -1018,7 +1021,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_import_memory_notes",
-                    description: "Importa y fusiona conocimiento, contratos Engram y reglas desde refs/notes/ozymem del commit especificado",
+                    description: "[CONSOLIDATED: Prefer ozy_memory(action='import_git_notes')] Importa y fusiona conocimiento, contratos Engram y reglas desde refs/notes/ozymem del commit especificado",
                     input_schema: json!({
                         "type": "object",
                         "properties": {

@@ -45,10 +45,11 @@ pub fn handle_exploration(
         "start" => {
             let task_description = args
                 .get("task_description")
+                .or_else(|| args.get("goal"))
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow!("[ERROR: MISSING_TASK_DESCRIPTION] Falta el parámetro 'task_description' para iniciar la trayectoria. Ejemplo: ozy_exploration(action=\"start\", task_description=\"Implementar X\")"))?;
+                .ok_or_else(|| anyhow!("[ERROR: MISSING_TASK_DESCRIPTION] Falta el parámetro 'task_description' o 'goal' para iniciar la trayectoria. Ejemplo: ozy_exploration(action=\"start\", goal=\"Implementar X\")"))?;
             let project_path = args
                 .get("project_path")
                 .and_then(Value::as_str)
@@ -77,7 +78,7 @@ pub fn handle_exploration(
             })
         }
 
-        "record_step" => {
+        "step" | "record_step" => {
             let trajectory_id = resolve_trajectory_id(backend, args)?;
 
             let parent_id = args
@@ -225,7 +226,7 @@ pub fn handle_exploration(
             })
         }
 
-        "complete" => {
+        "finish" | "complete" => {
             let trajectory_id = resolve_trajectory_id(backend, args)?;
             let status = args
                 .get("status")

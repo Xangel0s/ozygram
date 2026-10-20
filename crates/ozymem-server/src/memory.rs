@@ -467,6 +467,12 @@ pub async fn handle_memory_tool(
                                 is_error: None,
                             }
                         }
+                        "export_git_notes" | "export_notes" => {
+                            crate::git::handle_export_memory_notes(backend, tool_call).await?
+                        }
+                        "import_git_notes" | "import_notes" => {
+                            crate::git::handle_import_memory_notes(backend, tool_call).await?
+                        }
                         _ => {
                             let query = tool_call
                                 .arguments

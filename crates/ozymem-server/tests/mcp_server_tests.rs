@@ -4048,5 +4048,136 @@ Always use context manager with SessionLocal() as db.
         assert!(verbose_output.contains("Can Do Without Confirmation"));
     }
 
+    #[tokio::test]
+    async fn test_consolidated_mcp_actions_exploration_and_git_notes() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_consolidated_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 1. Git init for git notes test
+        let _ = std::process::Command::new("git").args(["init", "--initial-branch=main"]).arg(&tmp_root).output();
+        let _ = std::process::Command::new("git").args(["config", "user.email", "agent@test.com"]).current_dir(&tmp_root).output();
+        let _ = std::process::Command::new("git").args(["config", "user.name", "Agent Test"]).current_dir(&tmp_root).output();
+        std::fs::write(tmp_root.join("pool.rs"), "pub fn check_pool() -> bool { true }\n").unwrap();
+        let _ = std::process::Command::new("git").args(["add", "."]).current_dir(&tmp_root).output();
+        let _ = std::process::Command::new("git").args(["commit", "-m", "init pool"]).current_dir(&tmp_root).output();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // 2. Test ozy_exploration with action: "start" and goal (alias for task_description)
+        let start_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "start",
+                    "goal": "Refactor database pool to avoid lock contention"
+                }
+            })),
+        };
+        let start_resp = handle_request(&backend_ref, start_req, None, None).await.unwrap().unwrap();
+        assert!(start_resp.error.is_none());
+        let start_json: Value = serde_json::from_str(start_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(start_json["status"], "ok");
+        let traj_id = start_json["trajectory_id"].as_str().unwrap().to_string();
+
+        // 3. Test ozy_exploration with action: "step" (alias for record_step)
+        let step_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "step",
+                    "trajectory_id": traj_id,
+                    "action_type": "tool_call",
+                    "action_payload": "run_command",
+                    "observation": "Pool connection validated without contention"
+                }
+            })),
+        };
+        let step_resp = handle_request(&backend_ref, step_req, None, None).await.unwrap().unwrap();
+        assert!(step_resp.error.is_none());
+        let step_json: Value = serde_json::from_str(step_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(step_json["status"], "ok");
+
+        // 4. Test ozy_exploration with action: "finish" (alias for complete)
+        let finish_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_exploration",
+                "arguments": {
+                    "action": "finish",
+                    "trajectory_id": traj_id,
+                    "status": "completed"
+                }
+            })),
+        };
+        let finish_resp = handle_request(&backend_ref, finish_req, None, None).await.unwrap().unwrap();
+        assert!(finish_resp.error.is_none());
+        let finish_json: Value = serde_json::from_str(finish_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(finish_json["status"], "ok");
+        assert_eq!(finish_json["final_status"], "completed");
+
+        // 5. Test ozy_memory with consolidated action: "export_git_notes" and "import_git_notes"
+        {
+            let guard = backend_ref.lock().unwrap();
+            let gb = guard.as_ref().unwrap();
+            gb.record_lesson("pool.rs", Some("check_pool"), "lock timeout", "use non-blocking pool acquire").await.unwrap();
+        }
+
+        let export_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_memory",
+                "arguments": {
+                    "action": "export_git_notes"
+                }
+            })),
+        };
+        let export_resp = handle_request(&backend_ref, export_req, None, None).await.unwrap().unwrap();
+        assert!(export_resp.error.is_none());
+        let export_text = export_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(export_text.contains("[GIT_NOTES_EXPORTED]"));
+
+        let import_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(6)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_memory",
+                "arguments": {
+                    "action": "import_git_notes"
+                }
+            })),
+        };
+        let import_resp = handle_request(&backend_ref, import_req, None, None).await.unwrap().unwrap();
+        assert!(import_resp.error.is_none());
+        let import_text = import_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(import_text.contains("[GIT_NOTES_IMPORTED]"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+
 
 
