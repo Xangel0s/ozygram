@@ -32,6 +32,8 @@ pub async fn handle_request(
     notifier: Option<&Notifier>,
     subscribed: Option<&Arc<Mutex<HashSet<String>>>>,
 ) -> anyhow::Result<Option<mcp_common::JsonRpcResponse>> {
+    crate::idle_watcher::touch_activity();
+
     let log = |level: &str, msg: String| {
         if let Some(n) = notifier {
             n.log(level, msg);

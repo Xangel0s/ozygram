@@ -2987,4 +2987,36 @@ fn test_procedural_habits_storage_and_query() {
     assert_eq!(after_delete.len(), 0);
 }
 
+#[test]
+fn test_thalamus_focus_weights_lifecycle() {
+    use ozymem_core::graph_backend::thalamus::{FocusMode, ThalamicWeights};
+
+    // 1. Hotfix intent
+    let w_hotfix = ThalamicWeights::modulate("fix error panic crash in payment service");
+    assert_eq!(w_hotfix.mode, FocusMode::HotfixDebug);
+    assert_eq!(w_hotfix.beta_threat, 0.60);
+    assert_eq!(w_hotfix.gamma_topology, 0.10);
+    assert!(w_hotfix.badge.contains("HOTFIX_DEBUG"));
+
+    // 2. Refactor intent
+    let w_refactor = ThalamicWeights::modulate("refactor architecture and decouple modules");
+    assert_eq!(w_refactor.mode, FocusMode::ArchitectureRefactor);
+    assert_eq!(w_refactor.gamma_topology, 0.60);
+    assert_eq!(w_refactor.beta_threat, 0.10);
+    assert!(w_refactor.badge.contains("ARCHITECTURE_REFACTOR"));
+
+    // 3. Balanced intent
+    let w_balanced = ThalamicWeights::modulate("inspect status of workspace");
+    assert_eq!(w_balanced.mode, FocusMode::Balanced);
+    assert_eq!(w_balanced.alpha_lexical, 0.40);
+    assert_eq!(w_balanced.beta_threat, 0.30);
+    assert_eq!(w_balanced.gamma_topology, 0.30);
+    assert!(w_balanced.badge.contains("BALANCED"));
+
+    // 4. Mathematical combination verification
+    let combined_hotfix = w_hotfix.combine(1.0, 1.0, 0.0);
+    // 0.30 * 1.0 + 0.60 * 1.0 + 0.10 * 0.0 = 0.90
+    assert!((combined_hotfix - 0.90).abs() < 1e-4);
+}
+
 

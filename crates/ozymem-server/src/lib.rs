@@ -18,6 +18,7 @@ pub mod verifier;
 pub mod exploration;
 pub mod dispatch;
 pub mod symbols;
+pub mod idle_watcher;
 
 use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common;
@@ -33,6 +34,8 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
     let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
     let (notifier, rx) = Notifier::new();
     let subscribed: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
+    let _idle_watcher_handle = idle_watcher::start_idle_watcher(backend.clone());
 
     let mut stdin = BufReader::new(io::stdin());
 

@@ -198,3 +198,5 @@ class GlialHomeostasisEngine:
             "chroma_vectors_pruned": chroma_pruned,
             "duckdb_checkpointed": duckdb_checkpoint,
         }
+
+    run_homeostasis_cycle = run_metabolic_cleanup

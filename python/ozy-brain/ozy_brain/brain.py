@@ -279,6 +279,42 @@ def _dialectic_committee_handler(payload: dict[str, Any]) -> BrainResponse:
     return supervisor.deliberate_committee(payload)
 
 
+def _dream_offline_cycle_handler(payload: dict[str, Any]) -> BrainResponse:
+    from ozy_brain.dream.orchestrator import DreamOrchestrator
+
+    workspace_root = payload.get("workspace_root") or payload.get("project") or "."
+    db_path = payload.get("db_path")
+    tenant_id = str(payload.get("tenant_id") or "local")
+    chroma_dir = payload.get("chroma_dir")
+    max_commits = int(payload.get("max_commits", 100))
+
+    orchestrator = DreamOrchestrator(
+        workspace_root=workspace_root,
+        db_path=db_path,
+        tenant_id=tenant_id,
+        chroma_dir=chroma_dir,
+    )
+    res = orchestrator.run_dream_cycle(max_commits=max_commits)
+
+    return BrainResponse(
+        action="dream_offline_cycle",
+        summary=f"Offline dream consolidation complete in {res.get('duration_ms', 0)}ms. Status: {res.get('status')}.",
+        plan=res.get("top_insights", []),
+        risks=[],
+        recommendations=[
+            f"Fragile files tracked: {len(res.get('amygdala_reflexes', {}).get('top_fragile_files', []))}",
+            f"Procedural playbooks active: {len(res.get('basal_ganglia', {}).get('top_playbooks', []))}",
+        ],
+        memory_updates=[
+            f"Orphaned files purged: {res.get('glial_homeostasis', {}).get('orphaned_deleted_files_purged', 0)}",
+            f"Reflexes updated: {res.get('amygdala_reflexes', {}).get('reflexes_written', 0)}",
+            f"Playbooks mined: {res.get('basal_ganglia', {}).get('sqlite_habits_upserted', 0)}",
+        ],
+        confidence=0.99,
+        structured_plan=res,
+    )
+
+
 ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "plan": plan,
     "reflect": reflect,
@@ -299,6 +335,8 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "upsert_vector_memory": _upsert_vector_memory_handler,
     "sync_outbox": _sync_outbox_handler,
     "dream_rsi": _dream_rsi_handler,
+    "dream_offline_cycle": _dream_offline_cycle_handler,
+    "offline_dreaming": _dream_offline_cycle_handler,
     "simulate_action": _simulate_action_handler,
     "critique_hypothesis": _simulate_action_handler,
     "cognitive_route": _route_handler,

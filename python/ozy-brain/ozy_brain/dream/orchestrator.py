@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from ozy_brain.amygdala import AmygdalaReflexEngine
+from ozy_brain.glial import GlialHomeostasisEngine
+from ozy_brain.procedural_habits import BasalGangliaEngine
+from ozy_brain.vector_store import VectorMemoryStore
+
+logger = logging.getLogger("ozy_brain.dream.orchestrator")
+
+
+class DreamOrchestrator:
+    """Unified offline dreaming orchestrator.
+
+    Coordinates Glial cleanup, Amygdala pain updates, Basal Ganglia procedural mining,
+    and consolidates neuro-cognitive health into .ozymem/dream_latest_insights.json.
+    """
+
+    def __init__(
+        self,
+        workspace_root: str | Path,
+        db_path: Optional[str | Path] = None,
+        tenant_id: str = "local",
+        chroma_dir: Optional[str | Path] = None,
+    ) -> None:
+        self.workspace_root = Path(workspace_root).resolve()
+        self.db_path = Path(db_path) if db_path else self.workspace_root / ".ozymem" / "db.sqlite"
+        self.tenant_id = tenant_id
+        self.chroma_dir = Path(chroma_dir) if chroma_dir else self.workspace_root / ".ozymem" / "chroma"
+
+    def run_dream_cycle(self, max_commits: int = 100) -> Dict[str, Any]:
+        """Runs an end-to-end idle consolidation cycle."""
+        start_time = time.perf_counter()
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Ensure .ozymem directory exists
+        insights_dir = self.workspace_root / ".ozymem"
+        insights_dir.mkdir(parents=True, exist_ok=True)
+        insights_path = insights_dir / "dream_latest_insights.json"
+
+        # 1. Glial Homeostasis System
+        glial_engine = GlialHomeostasisEngine(
+            workspace_root=self.workspace_root,
+            db_path=self.db_path,
+            chroma_dir=self.chroma_dir,
+        )
+        glial_report = glial_engine.run_homeostasis_cycle()
+
+        # 2. Amygdala Pain & Threat Scars
+        amygdala_engine = AmygdalaReflexEngine(
+            db_path=self.db_path,
+            tenant_id=self.tenant_id,
+            workspace_root=self.workspace_root,
+        )
+        amygdala_report = amygdala_engine.run_amygdala_cycle(max_commits=max_commits)
+
+        # 3. Basal Ganglia Sequence Playbooks
+        basal_engine = BasalGangliaEngine(
+            workspace_root=self.workspace_root,
+            db_path=self.db_path,
+            tenant_id=self.tenant_id,
+        )
+        habits_report = basal_engine.run_basal_ganglia_cycle(max_commits=max_commits)
+
+        # 4. Vector Store status
+        vector_stats: Dict[str, Any] = {}
+        try:
+            _ = VectorMemoryStore(persist_dir=str(self.chroma_dir))
+            vector_stats["collections"] = [
+                "episodic_raw",
+                "code_graph_ast",
+                "semantic_heuristics",
+                "dream_insights",
+            ]
+            vector_stats["status"] = "online"
+        except Exception as e:
+            vector_stats["status"] = "offline_or_error"
+            vector_stats["error"] = str(e)
+
+        # 5. Extract top reflexes and habits from SQLite for insights
+        top_fragile_files: List[Dict[str, Any]] = []
+        top_playbooks: List[Dict[str, Any]] = []
+        if self.db_path.exists():
+            try:
+                conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+                cur = conn.cursor()
+                cur.execute(
+                    """SELECT file_path, symbol_name, threat_score, pain_trigger, antidote_directive
+                       FROM amygdala_reflexes
+                       WHERE tenant_id = ?
+                       ORDER BY threat_score DESC, occurrences DESC
+                       LIMIT 5""",
+                    (self.tenant_id,),
+                )
+                top_fragile_files = [
+                    {
+                        "file_path": r[0],
+                        "symbol": r[1],
+                        "threat_score": r[2],
+                        "pain_trigger": r[3],
+                        "antidote": r[4],
+                    }
+                    for r in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """SELECT trigger_file, choreography_json, confidence, occurrences
+                       FROM procedural_habits
+                       WHERE tenant_id = ?
+                       ORDER BY confidence DESC, occurrences DESC
+                       LIMIT 5""",
+                    (self.tenant_id,),
+                )
+                top_playbooks = [
+                    {
+                        "trigger_file": r[0],
+                        "subsequent_files": json.loads(r[1]) if r[1] else [],
+                        "confidence": r[2],
+                        "occurrences": r[3],
+                    }
+                    for r in cur.fetchall()
+                ]
+                conn.close()
+            except Exception as e:
+                logger.warning(f"Failed to query SQLite for top insights: {e}")
+
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+        # Synthesize strategic insights
+        top_insights: List[str] = []
+        if top_fragile_files:
+            most_fragile = top_fragile_files[0]
+            top_insights.append(
+                f"[ALERT: HIGH_FRAGILITY] '{most_fragile['file_path']}' has threat score {most_fragile['threat_score']}. {most_fragile['antidote']}"
+            )
+        if top_playbooks:
+            best_playbook = top_playbooks[0]
+            subsequent_count = len(best_playbook["subsequent_files"])
+            top_insights.append(
+                f"[PLAYBOOK_READY] Changes to '{best_playbook['trigger_file']}' reliably trigger {subsequent_count} subsequent files (confidence: {int(best_playbook['confidence']*100)}%)."
+            )
+        if glial_report.get("orphaned_deleted_files_purged", 0) > 0:
+            top_insights.append(
+                f"[GLIAL_CLEANUP] Homeostasis purged {glial_report['orphaned_deleted_files_purged']} dead file traces from memory."
+            )
+        if not top_insights:
+            top_insights.append("[SYSTEM_HEALTHY] Workspace memory substrate is clean, balanced, and free of regressions.")
+
+        consolidated: Dict[str, Any] = {
+            "status": "complete",
+            "cycle_type": "offline_dreaming",
+            "completed_at": now_iso,
+            "duration_ms": elapsed_ms,
+            "tenant_id": self.tenant_id,
+            "workspace_root": str(self.workspace_root),
+            "top_insights": top_insights,
+            "glial_homeostasis": glial_report,
+            "amygdala_reflexes": {
+                **amygdala_report,
+                "top_fragile_files": top_fragile_files,
+            },
+            "basal_ganglia": {
+                **habits_report,
+                "top_playbooks": top_playbooks,
+            },
+            "vector_store": vector_stats,
+        }
+
+        # Atomically write to dream_latest_insights.json
+        tmp_path = insights_path.with_suffix(".tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(consolidated, f, indent=2, ensure_ascii=False)
+            tmp_path.replace(insights_path)
+        except Exception as e:
+            logger.error(f"Failed to write dream_latest_insights.json via temp file: {e}")
+            try:
+                with open(insights_path, "w", encoding="utf-8") as f:
+                    json.dump(consolidated, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+        return consolidated

@@ -645,6 +645,91 @@ use std::sync::{Arc, Mutex};
     }
 
     #[tokio::test]
+    async fn test_resources_read_dream_insights() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_dream_insights_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1" },
+                "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
+            })),
+        };
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
+
+        // 1. Read before dream cycle runs
+        let read_req1 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(2)),
+            method: "resources/read".to_string(),
+            params: Some(serde_json::json!({ "uri": "ozygram://dream/insights" })),
+        };
+        let resp1 = handle_request(&backend, read_req1, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(resp1.error.is_none());
+        let contents1 = resp1.result.unwrap()["contents"].as_array().unwrap().clone();
+        assert_eq!(contents1.len(), 1);
+        assert!(contents1[0]["text"].as_str().unwrap().contains("awaiting_dream_cycle"));
+
+        // 2. Write synthetic dream_latest_insights.json
+        let ozymem_dir = tmp_root.join(".ozymem");
+        std::fs::create_dir_all(&ozymem_dir).unwrap();
+        let insights_file = ozymem_dir.join("dream_latest_insights.json");
+        std::fs::write(
+            &insights_file,
+            r#"{"status":"complete","top_insights":["[ALERT: HIGH_FRAGILITY] core/dispatch.rs has threat score 0.85"]}"#,
+        ).unwrap();
+
+        // 3. Read after dream cycle completed
+        let read_req2 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(3)),
+            method: "resources/read".to_string(),
+            params: Some(serde_json::json!({ "uri": "ozygram://dream/insights" })),
+        };
+        let resp2 = handle_request(&backend, read_req2, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(resp2.error.is_none());
+        let contents2 = resp2.result.unwrap()["contents"].as_array().unwrap().clone();
+        assert_eq!(contents2.len(), 1);
+        let text2 = contents2[0]["text"].as_str().unwrap();
+        assert!(text2.contains("complete"));
+        assert!(text2.contains("HIGH_FRAGILITY"));
+
+        // 4. Test ozymem://dream/insights alias
+        let read_req3 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(4)),
+            method: "resources/read".to_string(),
+            params: Some(serde_json::json!({ "uri": "ozymem://dream/insights" })),
+        };
+        let resp3 = handle_request(&backend, read_req3, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(resp3.error.is_none());
+        let contents3 = resp3.result.unwrap()["contents"].as_array().unwrap().clone();
+        assert!(contents3[0]["text"].as_str().unwrap().contains("HIGH_FRAGILITY"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
     async fn test_resources_read_file_context() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
         let tmp_root =

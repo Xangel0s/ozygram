@@ -13,6 +13,7 @@ pub mod memory_graph;
 pub mod markdown_memories;
 pub mod amygdala;
 pub mod habits;
+pub mod thalamus;
 
 pub use types::*;
 pub use helpers::*;
@@ -20,3 +21,4 @@ pub use sqlite_backend::SqliteBackend;
 pub use exploration::*;
 pub use markdown_memories::*;
 pub use amygdala::*;
+pub use thalamus::*;

@@ -281,9 +281,10 @@ class AmygdalaReflexEngine:
     def run_efferent_cycle(
         self,
         direct_errors: Optional[List[Dict[str, Any]]] = None,
+        max_commits: int = 100,
     ) -> Dict[str, Any]:
         """Runs the complete Amygdala efferent cycle: scans signals, computes threat scores, writes to SQLite."""
-        signals = self.scan_git_pain_signals()
+        signals = self.scan_git_pain_signals(max_commits=max_commits)
         reflexes = self.calculate_threat_scars(signals, direct_errors=direct_errors)
         written = self.write_reflexes_to_sqlite(reflexes)
 
@@ -294,3 +295,5 @@ class AmygdalaReflexEngine:
             "sqlite_rows_upserted": written,
             "db_path": str(self.db_path),
         }
+
+    run_amygdala_cycle = run_efferent_cycle

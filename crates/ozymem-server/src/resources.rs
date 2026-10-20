@@ -49,6 +49,13 @@ pub async fn handle_resources_list(
                     mime_type: Some("application/json".to_string()),
                     size: None,
                 },
+                mcp_common::ResourceDescription {
+                    uri: "ozygram://dream/insights".to_string(),
+                    name: "Offline Dream Insights".to_string(),
+                    description: "Consolidated neuro-cognitive insights from background dream cycles: Amygdala threat scars, Basal Ganglia procedural habits, and Glial homeostatic health.".to_string(),
+                    mime_type: Some("application/json".to_string()),
+                    size: None,
+                },
             ];
             // Pagination: only 3 resources, no cursor needed but support the protocol
             let _cursor = request
@@ -139,6 +146,35 @@ pub async fn handle_resources_read(
                         uri: params.uri,
                         mime_type: "application/json".to_string(),
                         text: serde_json::to_string_pretty(&context)?,
+                    }]
+                }
+                "ozygram://dream/insights" | "ozymem://dream/insights" => {
+                    let insights_content = if let Some(root) = gb.project_path() {
+                        let path = std::path::Path::new(&root).join(".ozymem").join("dream_latest_insights.json");
+                        if path.exists() {
+                            std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                                serde_json::json!({
+                                    "status": "error_reading_insights",
+                                    "message": "Failed to read .ozymem/dream_latest_insights.json from disk."
+                                }).to_string()
+                            })
+                        } else {
+                            serde_json::json!({
+                                "status": "awaiting_dream_cycle",
+                                "message": "Offline dreaming cycle has not completed yet. Will trigger automatically after 30 minutes of idle time."
+                            }).to_string()
+                        }
+                    } else {
+                        serde_json::json!({
+                            "status": "no_project_root",
+                            "message": "Project workspace root is not configured."
+                        }).to_string()
+                    };
+
+                    vec![mcp_common::ResourceContents::Text {
+                        uri: params.uri,
+                        mime_type: "application/json".to_string(),
+                        text: insights_content,
                     }]
                 }
                 _ if uri.starts_with("ozymem://file/") => {
