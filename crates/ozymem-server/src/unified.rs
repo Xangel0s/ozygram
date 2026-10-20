@@ -108,6 +108,18 @@ pub async fn handle_unified_tool(
                         .arguments
                         .get("action")
                         .and_then(Value::as_str)
+                        .or_else(|| {
+                            if tool_call.arguments.get("file_path").is_some() {
+                                Some("file")
+                            } else if tool_call.arguments.get("project_name").is_some()
+                                || tool_call.arguments.get("project_id").is_some()
+                                || tool_call.arguments.get("project").is_some()
+                            {
+                                Some("project")
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or("task");
                     match action {
                         "summary" => {
@@ -221,10 +233,25 @@ pub async fn handle_unified_tool(
                             }
                         }
                         "project" => {
-                            let project_name = tool_call
+                            let mut project_name_resolved = tool_call
                                 .arguments
                                 .get("project_name")
-                                .and_then(Value::as_str);
+                                .or_else(|| tool_call.arguments.get("project"))
+                                .and_then(Value::as_str)
+                                .map(|s| s.to_string());
+
+                            if project_name_resolved.is_none() {
+                                if let Some(id_val) = tool_call.arguments.get("project_id").and_then(Value::as_i64) {
+                                    if let Ok(reg) = ozymem_core::registry::ProjectRegistry::open() {
+                                        if let Ok(projects) = reg.list_projects() {
+                                            if let Some(p) = projects.into_iter().find(|p| p.id == id_val) {
+                                                project_name_resolved = Some(p.name);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let project_name = project_name_resolved.as_deref();
                             let query = tool_call.arguments.get("query").and_then(Value::as_str);
                             let limit = tool_call
                                 .arguments

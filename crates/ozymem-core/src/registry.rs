@@ -384,9 +384,28 @@ impl ProjectRegistry {
              FROM projects ORDER BY name",
         )?;
 
-        let projects = stmt
+        let mut projects = stmt
             .query_map([], |row| row_to_project(row))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        for p in &mut projects {
+            if p.file_count == 0 {
+                let mem_db_path = Path::new(&p.path).join(".ozymem").join("memory.db");
+                if mem_db_path.exists() {
+                    if let Ok(conn) = Connection::open_with_flags(&mem_db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                        let fc: i64 = conn.query_row("SELECT count(*) FROM files", [], |r| r.get(0)).unwrap_or(0);
+                        let vc: i64 = conn.query_row("SELECT count(*) FROM lessons", [], |r| r.get(0)).unwrap_or(0);
+                        if fc > 0 {
+                            p.file_count = fc;
+                            p.vector_count = vc;
+                            p.scale = Scale::from_file_count(fc);
+                            let _ = self.update_stats(&p.name, fc, vc);
+                            let _ = self.update_scale(&p.name, p.scale, fc);
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(projects)
     }

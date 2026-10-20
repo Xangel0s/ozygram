@@ -52,9 +52,13 @@ pub async fn print_status(context: &AppContext, json_output: bool) -> anyhow::Re
                 let estado = match p.status {
                     ozymem_core::registry::ProjectStatus::Active => {
                         if let Some(pid) = p.watcher_pid {
-                            format!("ACTIVO (PID: {})", pid)
+                            if pid > 0 && is_pid_alive(pid) {
+                                format!("ACTIVO (PID: {})", pid)
+                            } else {
+                                "STANDBY / GIT_DRIVEN".to_string()
+                            }
                         } else {
-                            "ACTIVO".to_string()
+                            "STANDBY / GIT_DRIVEN".to_string()
                         }
                     }
                     ozymem_core::registry::ProjectStatus::Sleeping => "SUSPENDIDO".to_string(),
