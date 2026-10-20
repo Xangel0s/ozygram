@@ -25,14 +25,26 @@ except Exception:
 class VectorMemoryStore:
     """Persistent ChromaDB vector store for Ozy-Brain.
 
-    Provides dense semantic embeddings, topic collections, and cross-similarity reranking.
+    Provides dense semantic embeddings, 4 specialized neuro-cognitive collections:
+    1. episodic_raw: Ingestion buffer for MCP calls and raw errors.
+    2. code_graph_ast: Embeddings of functions/classes enriched with AST metadata.
+    3. semantic_heuristics: Distilled rules and architectural gotchas.
+    4. dream_insights: Proactive audit reports and recommendations.
     """
+
+    PRIMARY_COLLECTIONS = (
+        "episodic_raw",
+        "code_graph_ast",
+        "semantic_heuristics",
+        "dream_insights",
+    )
 
     def __init__(self, persist_dir: str | Path | None = None):
         self.persist_dir = Path(persist_dir or Path.home() / ".ozymem" / "chroma")
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         self.client = None
         self.collection = None
+        self._collections: dict[str, Any] = {}
 
         if HAS_CHROMADB:
             try:
@@ -40,13 +52,21 @@ class VectorMemoryStore:
                     path=str(self.persist_dir),
                     settings=Settings(anonymized_telemetry=False),
                 )
-                self.collection = self.client.get_or_create_collection(
+                for name in self.PRIMARY_COLLECTIONS:
+                    self._collections[name] = self.client.get_or_create_collection(
+                        name=name,
+                        metadata={"hnsw:space": "cosine"},
+                    )
+                # Backward-compatibility alias
+                self.collection = self._collections.get("semantic_heuristics") or self.client.get_or_create_collection(
                     name="ozy_lessons",
                     metadata={"hnsw:space": "cosine"},
                 )
+                self._collections["ozy_lessons"] = self.collection
             except Exception:
                 self.client = None
                 self.collection = None
+                self._collections = {}
 
         self._embedder = None
         if HAS_FASTEMBED:
@@ -58,21 +78,40 @@ class VectorMemoryStore:
     def is_available(self) -> bool:
         return self.client is not None and self.collection is not None
 
+    def get_collection(self, name: str) -> Any | None:
+        """Retrieves or creates a named ChromaDB collection."""
+        if not self.client:
+            return None
+        if name in self._collections:
+            return self._collections[name]
+        try:
+            coll = self.client.get_or_create_collection(
+                name=name,
+                metadata={"hnsw:space": "cosine"},
+            )
+            self._collections[name] = coll
+            return coll
+        except Exception:
+            return None
+
     def close(self):
         """Releases Chroma client references for safe cleanup on Windows."""
         self.collection = None
+        self._collections.clear()
         if self.client is not None:
             del self.client
             self.client = None
 
-    def upsert_lesson(
+    def upsert_item(
         self,
-        lesson_id: str,
+        collection_name: str,
+        item_id: str,
         content: str,
         metadata: dict[str, Any] | None = None,
     ) -> bool:
-        """Upserts a sanitized memory into the vector collection."""
-        if not self.is_available():
+        """Upserts a sanitized memory document into a target collection."""
+        coll = self.get_collection(collection_name)
+        if coll is None:
             return False
 
         clean_meta: dict[str, str | int | float | bool] = {}
@@ -84,8 +123,8 @@ class VectorMemoryStore:
                     clean_meta[k] = str(v)
 
         try:
-            self.collection.upsert(
-                ids=[str(lesson_id)],
+            coll.upsert(
+                ids=[str(item_id)],
                 documents=[content],
                 metadatas=[clean_meta] if clean_meta else None,
             )
@@ -93,12 +132,61 @@ class VectorMemoryStore:
         except Exception:
             return False
 
-    def delete_item(self, entity_id: str) -> bool:
+    def upsert_lesson(
+        self,
+        lesson_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Upserts a sanitized memory into semantic_heuristics (and ozy_lessons)."""
+        ok = self.upsert_item("semantic_heuristics", lesson_id, content, metadata)
+        if self.collection is not None and self.collection.name == "ozy_lessons":
+            self.upsert_item("ozy_lessons", lesson_id, content, metadata)
+        return ok
+
+    def ingest_episodic_event(
+        self,
+        event_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Ingests raw MCP tool calls and terminal logs into episodic_raw."""
+        return self.upsert_item("episodic_raw", event_id, content, metadata)
+
+    def upsert_code_ast(
+        self,
+        symbol_id: str,
+        code_content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Upserts function/class embedding enriched with AST metadata into code_graph_ast."""
+        return self.upsert_item("code_graph_ast", symbol_id, code_content, metadata)
+
+    def upsert_heuristic(
+        self,
+        rule_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Upserts distilled architectural rule into semantic_heuristics."""
+        return self.upsert_item("semantic_heuristics", rule_id, content, metadata)
+
+    def upsert_insight(
+        self,
+        insight_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Upserts proactive diagnostic insight into dream_insights."""
+        return self.upsert_item("dream_insights", insight_id, content, metadata)
+
+    def delete_item(self, entity_id: str, collection_name: str | None = None) -> bool:
         """Deletes a document from the vector collection by ID."""
-        if not self.is_available():
+        coll = self.get_collection(collection_name) if collection_name else self.collection
+        if coll is None:
             return False
         try:
-            self.collection.delete(ids=[str(entity_id)])
+            coll.delete(ids=[str(entity_id)])
             return True
         except Exception:
             return False
@@ -108,17 +196,19 @@ class VectorMemoryStore:
         query: str,
         limit: int = 5,
         where: dict[str, Any] | None = None,
+        collection_name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Queries ChromaDB for semantic similarity using cosine distance."""
-        if not self.is_available():
+        coll = self.get_collection(collection_name) if collection_name else self.collection
+        if coll is None:
             return []
 
         try:
-            count = self.collection.count()
+            count = coll.count()
             if count == 0:
                 return []
 
-            results = self.collection.query(
+            results = coll.query(
                 query_texts=[query],
                 n_results=min(limit, count),
                 where=where,
@@ -145,6 +235,7 @@ class VectorMemoryStore:
             return output
         except Exception:
             return []
+
 
     def rerank(
         self,
