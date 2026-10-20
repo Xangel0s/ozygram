@@ -56,7 +56,7 @@ pub async fn scan_directory(
 
     println!("Scanning directory: {}", canonical_target.display());
 
-    let mut rust_dependency_batches: Vec<RustDependencyBatch> = Vec::new();
+    let mut dependency_batches: Vec<DependencyBatch> = Vec::new();
     let project_root = resolve_project_root(&canonical_target);
     let ignore_patterns = load_ignore_patterns_for_project(&project_root);
     
@@ -202,7 +202,7 @@ pub async fn scan_directory(
                     eprintln!("Failed to persist {}: {error}", map.file_path);
                 }
 
-                if matches!(language, SupportedLanguage::Rust) {
+                if !matches!(language, SupportedLanguage::Unknown | SupportedLanguage::SQL) {
                     match extract_dependency_hints(&absolute_file_path, language, &source_code) {
                         Ok(hints) => {
                             let internal_hints: Vec<_> = hints
@@ -211,14 +211,14 @@ pub async fn scan_directory(
                                 .collect();
 
                             if !internal_hints.is_empty() {
-                                rust_dependency_batches.push(RustDependencyBatch {
+                                dependency_batches.push(DependencyBatch {
                                     origin_path: absolute_file_path.clone(),
                                     hints: internal_hints,
                                 });
                             }
                         }
                         Err(error) => eprintln!(
-                            "Failed to extract Rust dependency hints for {}: {error}",
+                            "Failed to extract dependency hints for {}: {error}",
                             absolute_file_path
                         ),
                     }
@@ -230,7 +230,7 @@ pub async fn scan_directory(
         }
     }
 
-    for batch in &rust_dependency_batches {
+    for batch in &dependency_batches {
         for hint in &batch.hints {
             let Some(destination_path) = resolve_dependency_target(hint, &batch.origin_path) else {
                 continue;
@@ -248,6 +248,13 @@ pub async fn scan_directory(
                     destination_path.display()
                 );
             }
+        }
+    }
+
+    // Sincronizar automáticamente registry.db al finalizar (elimina el split-brain)
+    if let Ok(summary) = connection.get_graph_summary().await {
+        if let Err(e) = sync_registry_stats(&canonical_target, summary.file_count, summary.engram_count) {
+            eprintln!("[Registry] Advertencia al sincronizar registro global: {e}");
         }
     }
 
@@ -830,9 +837,41 @@ pub fn get_language_from_path(path: &Path) -> SupportedLanguage {
     }
 }
 
-struct RustDependencyBatch {
+struct DependencyBatch {
     origin_path: String,
     hints: Vec<ParsedDependencyHint>,
+}
+
+pub fn sync_registry_stats(target_path: &Path, file_count: i64, engram_count: i64) -> anyhow::Result<()> {
+    let reg = ozymem_core::registry::ProjectRegistry::open()?;
+    let target_str = target_path.to_string_lossy();
+
+    let project = reg.get_project_by_path(&target_str)?
+        .or_else(|| {
+            if let Ok((_, config)) = load_config() {
+                for (name, reg_path) in &config.projects {
+                    if let Ok(p) = PathBuf::from(reg_path).canonicalize() {
+                        if p == target_path {
+                            return reg.get_project_by_name(name).ok().flatten();
+                        }
+                    }
+                }
+            }
+            if let Some(folder_name) = target_path.file_name().and_then(|s| s.to_str()) {
+                reg.get_project_by_name(folder_name).ok().flatten()
+            } else {
+                None
+            }
+        });
+
+    if let Some(proj) = project {
+        let scale = ozymem_core::registry::Scale::from_file_count(file_count);
+        reg.update_scale(&proj.name, scale, file_count)?;
+        reg.update_stats(&proj.name, file_count, engram_count)?;
+        reg.mark_scanned(&proj.name)?;
+        println!("[Registry] Sincronizado: {} ({} archivos, {} vectores/engrams)", proj.name, file_count, engram_count);
+    }
+    Ok(())
 }
 
 pub fn is_critical_root(path: &Path) -> bool {

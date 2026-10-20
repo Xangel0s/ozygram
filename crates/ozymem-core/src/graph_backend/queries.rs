@@ -1219,6 +1219,11 @@ impl GraphBackend {
         let pattern = format!(r"\b{}\b", escaped);
         let re = regex::Regex::new(&pattern)
             .with_context(|| format!("Failed to build regex for symbol '{}'", symbol_name))?;
+        let def_pattern = format!(
+            r"(?i)\b(?:def|async\s+def|class|interface|type|struct|enum|fn|pub\s+fn|function|const|let|var)\s+{}\b",
+            escaped
+        );
+        let def_re = regex::Regex::new(&def_pattern).ok();
 
         let root_dir = if let Some(root) = self.project_path() {
             std::path::PathBuf::from(root)
@@ -1282,7 +1287,13 @@ impl GraphBackend {
                     let trimmed = line.trim();
                     let trimmed_lower = trimmed.to_lowercase();
 
-                    let is_def_keyword = trimmed_lower.starts_with("def ")
+                    let is_declaring_symbol = def_re
+                        .as_ref()
+                        .map(|r| r.is_match(trimmed))
+                        .unwrap_or(false);
+
+                    let is_def_keyword = is_declaring_symbol
+                        || trimmed_lower.starts_with("def ")
                         || trimmed_lower.starts_with("async def ")
                         || trimmed_lower.starts_with("fn ")
                         || trimmed_lower.starts_with("pub fn ")
@@ -1292,6 +1303,8 @@ impl GraphBackend {
                         || trimmed_lower.starts_with("export class ")
                         || trimmed_lower.starts_with("interface ")
                         || trimmed_lower.starts_with("export interface ")
+                        || trimmed_lower.starts_with("type ")
+                        || trimmed_lower.starts_with("export type ")
                         || trimmed_lower.starts_with("struct ")
                         || trimmed_lower.starts_with("pub struct ")
                         || trimmed_lower.starts_with("enum ")
@@ -1303,14 +1316,16 @@ impl GraphBackend {
                         .map(|s| line_num as i64 >= s && def_end_line.map(|e| (line_num as i64) <= e).unwrap_or(true))
                         .unwrap_or(true);
 
-                    let kind = if is_defining_file && is_def_keyword && within_def_range {
-                        "definition".to_string()
-                    } else if trimmed_lower.starts_with("import ")
+                    let is_import = (trimmed_lower.starts_with("import ")
                         || trimmed_lower.starts_with("from ")
                         || trimmed_lower.contains("require(")
                         || trimmed_lower.starts_with("use ")
-                        || (trimmed_lower.starts_with("export ") && (trimmed_lower.contains(" from ") || trimmed_lower.contains('{')))
-                    {
+                        || (trimmed_lower.starts_with("export ") && trimmed_lower.contains(" from ")))
+                        && !is_declaring_symbol;
+
+                    let kind = if is_declaring_symbol || (is_defining_file && is_def_keyword && within_def_range) {
+                        "definition".to_string()
+                    } else if is_import {
                         "import".to_string()
                     } else {
                         "call_or_usage".to_string()
