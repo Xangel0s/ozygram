@@ -7,26 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.4] - 2026-10-20
 
 ### Added
-- **Consolidación del Catálogo MCP (14 Herramientas Núcleo)**:
-  - Unificación de notas Git dentro de `ozy_memory` con las acciones `export_git_notes` e `import_git_notes` (con soporte para `commit_ref` y `note_ref`).
-  - Ciclo de vida ágil en `ozy_exploration`: alias `goal` en `action="start"`, y alias naturales `action="step"` y `action="finish"`.
-  - Suite de integración completa `test_consolidated_mcp_actions_exploration_and_git_notes` (70 tests pasando).
-- **Auto-Hidratación del Registry y Sync en Scan**:
-  - `ozymem scan` sincroniza y persiste estadísticas (`file_count`, `vector_count`, `last_scan`) en `~/.ozymem/registry.db`.
-  - `list_projects` implementa auto-reparación hidratando los conteos desde el `.ozymem/memory.db` local si el registro central está en cero.
-- **Parsing Multilingüe Preciso de Definiciones AST**:
-  - Distinción estricta de regex en Tree-Sitter entre definiciones (`interface`, `type`, `class`, `function`) e importaciones, eliminando falsos positivos.
-  - Habilitada la extracción de dependencias de importación para TypeScript/JavaScript y Python durante escaneos.
-- **Protección contra Bloqueos de Ejecutables en Windows**:
-  - `install.ps1` implementa renombramiento preventivo (`.exe.running`) para evitar errores `LNK1104` del linker cuando hay procesos MCP activos en segundo plano.
+- **MCP Catalog Consolidation (14 Core Tools)**:
+  - Unified Git notes memory persistence into `ozy_memory` with actions `export_git_notes` and `import_git_notes` (supporting `commit_ref` and `note_ref`).
+  - Streamlined exploration lifecycle in `ozy_exploration`: added `goal` alias in `action="start"`, and natural aliases `action="step"` and `action="finish"`.
+  - Added full end-to-end integration test `test_consolidated_mcp_actions_exploration_and_git_notes`.
+- **Registry Auto-Hydration & Scan Sync**:
+  - `ozymem scan` now writes back synchronized stats (`file_count`, `vector_count`, `last_scan`) directly to `~/.ozymem/registry.db`.
+  - `list_projects` automatically self-heals by hydrating project file counts directly from project `.ozymem/memory.db` when central stats are unpopulated.
+- **Accurate AST Definition Parsing**:
+  - Enhanced Tree-Sitter regex definitions in `queries.rs` to strictly distinguish definitions (`interface`, `type`, `class`, `function`) from imports, eliminating false positive fallback to imports.
+  - Enabled multilingual import dependency parsing for TypeScript/JavaScript and Python during full scans.
+- **Windows Linker Protection in Installer**:
+  - `install.ps1` now performs safe pre-build renames (`.exe.running`) to prevent linker conflicts (`LNK1104`) on Windows when background MCP servers or IDE instances are active.
 
 ### Changed
-- **Indicadores de Servicio en Ozy Doctor**:
-  - Reemplazado el estado fantasma `ACTIVO (PID: 0)` por la etiqueta limpia `STANDBY / GIT_DRIVEN`.
-- **Auto-Inferencia en `ozy_context`**:
-  - Inferencia automática de `action="file"` al enviar `file_path`, y `action="project"` al enviar `project_name` o `project_id`.
-- **Badges de Consolidación**:
-  - Herramientas secundarias (`ozy_export_memory_notes`, `ozy_import_memory_notes`, `ozy_replace_symbol`, `ozy_code_doctor`) señalizadas con `[CONSOLIDATED]` sin romper retrocompatibilidad.
+- **Ozy Doctor Service Indicators**:
+  - Replaced phantom `ACTIVO (PID: 0)` watcher state with clean `STANDBY / GIT_DRIVEN` status badge when no continuous watcher PID is alive.
+- **Context Action Auto-Inference**:
+  - `ozy_context` now auto-infers `action="file"` when `file_path` is passed, and `action="project"` when `project_name` or numeric `project_id` is supplied.
+- **Consolidation Badges**:
+  - Deprecated and consolidated tools (`ozy_export_memory_notes`, `ozy_import_memory_notes`, `ozy_replace_symbol`, `ozy_code_doctor`) now feature clear deprecation notices pointing to their unified counterparts.
 
 ## [0.1.3] - 2026-10-19
 
