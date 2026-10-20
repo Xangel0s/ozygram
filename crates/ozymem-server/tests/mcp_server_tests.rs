@@ -4256,3 +4256,82 @@ Always use context manager with SessionLocal() as db.
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
+
+    #[tokio::test]
+    async fn test_ozy_context_procedural_playbook_interception() {
+        let backend_ref = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_habits_mcp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(tmp_root.join("src")).unwrap();
+
+        let trigger_file = tmp_root.join("src").join("router.rs");
+        std::fs::write(&trigger_file, "pub fn route() {}\n").unwrap();
+
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+
+        // Initialize MCP
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test-client", "version": "1" },
+                "workspaceFolders": [{
+                    "uri": proj_uri,
+                    "name": "habits-test"
+                }]
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap().unwrap();
+
+        // Insert procedural habit
+        {
+            let guard = backend_ref.lock().unwrap();
+            let b = guard.as_ref().unwrap();
+            let habit = ozymem_core::graph_backend::types::ProceduralHabitEntry {
+                id: String::new(),
+                trigger_file: "src/router.rs".to_string(),
+                subsequent_files: vec![
+                    "src/handlers.rs".to_string(),
+                    "src/schemas.rs".to_string(),
+                ],
+                confidence: 0.95,
+                occurrences: 6,
+                updated_at: "2026-10-20T17:00:00Z".to_string(),
+                tenant_id: "local".to_string(),
+                workspace_root: tmp_root.to_string_lossy().to_string(),
+            };
+            b.record_procedural_habit(&habit).unwrap();
+        }
+
+        // Call ozy_context with action="file"
+        let ctx_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "file",
+                    "file_path": "src/router.rs",
+                    "lod": "contracts"
+                }
+            })),
+        };
+
+        let ctx_resp = handle_request(&backend_ref, ctx_req, None, None).await.unwrap().unwrap();
+        assert!(ctx_resp.error.is_none());
+
+        let text = ctx_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(
+            text.contains("[PROCEDURAL_PLAYBOOK_DETECTED (Confidence: 95% | Occurrences: 6)]"),
+            "Expected Procedural Playbook badge in response, got:\n{}", text
+        );
+        assert!(text.contains("1. src/router.rs (Current)"));
+        assert!(text.contains("2. src/handlers.rs (Pending)"));
+        assert!(text.contains("3. src/schemas.rs (Pending)"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }

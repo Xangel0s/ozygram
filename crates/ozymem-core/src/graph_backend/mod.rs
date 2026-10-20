@@ -12,6 +12,7 @@ pub mod exploration;
 pub mod memory_graph;
 pub mod markdown_memories;
 pub mod amygdala;
+pub mod habits;
 
 pub use types::*;
 pub use helpers::*;

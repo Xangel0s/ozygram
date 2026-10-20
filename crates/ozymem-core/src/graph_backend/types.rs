@@ -617,3 +617,16 @@ pub struct AmygdalaReflexEntry {
     pub tenant_id: String,
     pub workspace_root: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProceduralHabitEntry {
+    pub id: String,
+    pub trigger_file: String,
+    pub subsequent_files: Vec<String>,
+    pub confidence: f64,
+    pub occurrences: i64,
+    pub updated_at: String,
+    pub tenant_id: String,
+    pub workspace_root: String,
+}
+

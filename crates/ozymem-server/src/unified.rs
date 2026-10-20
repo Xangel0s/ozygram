@@ -217,6 +217,24 @@ pub async fn handle_unified_tool(
                                 }
                             }
 
+                            if let Ok(habits) = backend.get_procedural_habits_for_file(file_path) {
+                                let active_habits: Vec<_> = habits.into_iter().filter(|h| h.confidence >= 0.70 && !h.subsequent_files.is_empty()).collect();
+                                if let Some(habit) = active_habits.first() {
+                                    let mut playbook = format!(
+                                        "[PROCEDURAL_PLAYBOOK_DETECTED (Confidence: {:.0}% | Occurrences: {})]\nWhen modifying '{}', this repository follows the sequential workflow:\n1. {} (Current)\n",
+                                        habit.confidence * 100.0,
+                                        habit.occurrences,
+                                        file_path,
+                                        file_path
+                                    );
+                                    for (idx, sub_file) in habit.subsequent_files.iter().enumerate() {
+                                        playbook.push_str(&format!("{}. {} (Pending)\n", idx + 2, sub_file));
+                                    }
+                                    playbook.push_str("──────────────────────────────────────────────────────────────────────────────");
+                                    base_text = format!("{}\n\n{}", playbook, base_text);
+                                }
+                            }
+
                             let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
                             let path_obj = std::path::Path::new(&resolved);
                             let effective = if path_obj.exists() {

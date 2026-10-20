@@ -2929,3 +2929,62 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
     assert!(per_query_us < 2000, "Latency must be < 2000µs (2ms), was {}µs", per_query_us);
 }
 
+#[test]
+fn test_procedural_habits_storage_and_query() {
+    let dir = TempDir::new().unwrap();
+    let backend = GraphBackend::open_for_project(dir.path()).unwrap();
+
+    // 1. Record procedural habit
+    let habit = ozymem_core::graph_backend::types::ProceduralHabitEntry {
+        id: String::new(),
+        trigger_file: "crates\\ozymem-server\\src\\dispatch.rs".to_string(),
+        subsequent_files: vec![
+            "crates/ozymem-server/src/schemas.rs".to_string(),
+            "crates/ozymem-server/src/server.rs".to_string(),
+        ],
+        confidence: 0.92,
+        occurrences: 4,
+        updated_at: "2026-10-20T17:00:00Z".to_string(),
+        tenant_id: "local".to_string(),
+        workspace_root: dir.path().to_string_lossy().to_string(),
+    };
+    backend.record_procedural_habit(&habit).unwrap();
+
+    // 2. Query with normalized POSIX path
+    let results = backend
+        .get_procedural_habits_for_file("crates/ozymem-server/src/dispatch.rs")
+        .unwrap();
+    assert_eq!(results.len(), 1, "Should find 1 habit playbook");
+    assert_eq!(results[0].subsequent_files.len(), 2);
+    assert_eq!(results[0].subsequent_files[0], "crates/ozymem-server/src/schemas.rs");
+    assert_eq!(results[0].occurrences, 4);
+    assert!((results[0].confidence - 0.92).abs() < 1e-4);
+
+    // 3. Upsert with higher confidence
+    let mut habit_update = habit.clone();
+    habit_update.confidence = 0.95;
+    backend.record_procedural_habit(&habit_update).unwrap();
+
+    let updated = backend
+        .get_procedural_habits_for_file("crates/ozymem-server/src/dispatch.rs")
+        .unwrap();
+    assert_eq!(updated.len(), 1);
+    assert_eq!(updated[0].occurrences, 5, "Occurrences must increment to 5");
+    assert!((updated[0].confidence - 0.95).abs() < 1e-4);
+
+    // 4. Query active habits with threshold
+    let active = backend.list_active_habits(0.80).unwrap();
+    assert_eq!(active.len(), 1);
+    let active_none = backend.list_active_habits(0.99).unwrap();
+    assert_eq!(active_none.len(), 0);
+
+    // 5. Delete habit
+    let deleted = backend.delete_procedural_habit(&updated[0].id).unwrap();
+    assert!(deleted);
+    let after_delete = backend
+        .get_procedural_habits_for_file("crates/ozymem-server/src/dispatch.rs")
+        .unwrap();
+    assert_eq!(after_delete.len(), 0);
+}
+
+

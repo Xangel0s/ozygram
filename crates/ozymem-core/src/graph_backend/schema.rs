@@ -315,6 +315,18 @@ impl GraphBackend {
             CREATE INDEX IF NOT EXISTS idx_amygdala_file ON amygdala_reflexes(file_path, tenant_id);
             CREATE INDEX IF NOT EXISTS idx_amygdala_lookup ON amygdala_reflexes(file_path, symbol_name, tenant_id);
 
+            CREATE TABLE IF NOT EXISTS procedural_habits (
+                id TEXT PRIMARY KEY,
+                trigger_file TEXT NOT NULL,
+                choreography_json TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                occurrences INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL,
+                tenant_id TEXT NOT NULL DEFAULT 'local',
+                workspace_root TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_habits_trigger ON procedural_habits(trigger_file, tenant_id);
+
             INSERT OR IGNORE INTO tenants (id, name) VALUES ('local', 'Local Tenant');"
         )?;
 
