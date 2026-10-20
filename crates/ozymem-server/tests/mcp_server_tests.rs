@@ -4178,6 +4178,81 @@ Always use context manager with SessionLocal() as db.
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[tokio::test]
+    async fn test_ozy_context_amygdala_reflex_interception() {
+        let backend_ref = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_amygdala_mcp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(tmp_root.join("src")).unwrap();
 
+        let target_file = tmp_root.join("src").join("service.rs");
+        std::fs::write(&target_file, "pub fn process_order() { println!(\"ok\"); }\n").unwrap();
 
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
 
+        // Initialize MCP
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test-client", "version": "1" },
+                "workspaceFolders": [{
+                    "uri": proj_uri,
+                    "name": "amygdala-test"
+                }]
+            })),
+        };
+        let init_resp = handle_request(&backend_ref, init_req, None, None).await.unwrap().unwrap();
+        assert!(init_resp.error.is_none());
+
+        // Insert Amygdala reflex directly into backend
+        {
+            let guard = backend_ref.lock().unwrap();
+            let b = guard.as_ref().unwrap();
+            let reflex = ozymem_core::graph_backend::types::AmygdalaReflexEntry {
+                id: String::new(),
+                file_path: "src/service.rs".to_string(),
+                symbol_name: "process_order".to_string(),
+                threat_score: 0.85,
+                pain_trigger: "Deadlock in service dispatch under concurrent orders".to_string(),
+                antidote_directive: "Always verify locks before dispatching concurrent transactions".to_string(),
+                occurrences: 2,
+                last_triggered: "2026-10-20T16:00:00Z".to_string(),
+                created_at: "2026-10-20T16:00:00Z".to_string(),
+                tenant_id: "local".to_string(),
+                workspace_root: tmp_root.to_string_lossy().to_string(),
+            };
+            b.record_amygdala_reflex(&reflex).unwrap();
+        }
+
+        // Call ozy_context with action="file"
+        let ctx_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "file",
+                    "file_path": "src/service.rs",
+                    "lod": "contracts"
+                }
+            })),
+        };
+
+        let ctx_resp = handle_request(&backend_ref, ctx_req, None, None).await.unwrap().unwrap();
+        assert!(ctx_resp.error.is_none());
+
+        let text = ctx_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(
+            text.contains("[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]"),
+            "Expected Amygdala reflex alert badge in response, got:\n{}", text
+        );
+        assert!(text.contains("Deadlock in service dispatch under concurrent orders"));
+        assert!(text.contains("Always verify locks before dispatching concurrent transactions"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }

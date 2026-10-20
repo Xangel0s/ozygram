@@ -11,9 +11,11 @@ pub mod sqlite_backend;
 pub mod exploration;
 pub mod memory_graph;
 pub mod markdown_memories;
+pub mod amygdala;
 
 pub use types::*;
 pub use helpers::*;
 pub use sqlite_backend::SqliteBackend;
 pub use exploration::*;
 pub use markdown_memories::*;
+pub use amygdala::*;

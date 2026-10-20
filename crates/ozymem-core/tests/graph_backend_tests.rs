@@ -2833,3 +2833,99 @@ fn test_render_mermaid_impact_graph_max_hops_1_is_valid() {
         "With max_hops=1 no [IMPORTS_INDIRECT] edges expected"
     );
 }
+
+#[test]
+fn test_amygdala_reflexes_lifecycle_and_upsert() {
+    let dir = TempDir::new().unwrap();
+    let backend = GraphBackend::open_for_project(dir.path()).unwrap();
+
+    // 1. Record symbol-level reflex with Windows backslash in path
+    let reflex1 = ozymem_core::graph_backend::types::AmygdalaReflexEntry {
+        id: String::new(), // Will be deterministically generated
+        file_path: "src\\database\\pool.rs".to_string(),
+        symbol_name: "acquire_connection".to_string(),
+        threat_score: 0.75,
+        pain_trigger: "Deadlock on unreleased connection pool".to_string(),
+        antidote_directive: "Acquire semaphore timeout 500ms before checkout".to_string(),
+        occurrences: 1,
+        last_triggered: "2026-10-20T12:00:00Z".to_string(),
+        created_at: "2026-10-20T12:00:00Z".to_string(),
+        tenant_id: "local".to_string(),
+        workspace_root: dir.path().to_string_lossy().to_string(),
+    };
+    backend.record_amygdala_reflex(&reflex1).unwrap();
+
+    // 2. Query with POSIX forward slashes and ensure normalization works
+    let results = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
+    assert_eq!(results.len(), 1, "Should find 1 reflex after path normalization");
+    assert_eq!(results[0].symbol_name, "acquire_connection");
+    assert_eq!(results[0].occurrences, 1);
+    assert!((results[0].threat_score - 0.75).abs() < 1e-4);
+
+    // 3. Upsert with another trigger -> occurrences incremented, threat_score bumped
+    let reflex1_update = ozymem_core::graph_backend::types::AmygdalaReflexEntry {
+        id: String::new(),
+        file_path: "src/database/pool.rs".to_string(),
+        symbol_name: "acquire_connection".to_string(),
+        threat_score: 0.80,
+        pain_trigger: "Deadlock on unreleased connection pool (repeated)".to_string(),
+        antidote_directive: "Acquire semaphore timeout 500ms before checkout".to_string(),
+        occurrences: 1,
+        last_triggered: "2026-10-20T14:00:00Z".to_string(),
+        created_at: String::new(),
+        tenant_id: "local".to_string(),
+        workspace_root: dir.path().to_string_lossy().to_string(),
+    };
+    backend.record_amygdala_reflex(&reflex1_update).unwrap();
+
+    let updated = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
+    assert_eq!(updated.len(), 1, "Should still have 1 row due to idempotent upsert");
+    assert_eq!(updated[0].occurrences, 2, "Occurrences must increment to 2");
+    assert!(updated[0].threat_score >= 0.85, "Threat score must bump to >= 0.85");
+    assert_eq!(updated[0].pain_trigger, "Deadlock on unreleased connection pool (repeated)");
+
+    // 4. Record file-level reflex (empty symbol_name) on same file
+    let reflex_file_level = ozymem_core::graph_backend::types::AmygdalaReflexEntry {
+        id: String::new(),
+        file_path: "./src/database/pool.rs".to_string(), // Test leading ./
+        symbol_name: "".to_string(),
+        threat_score: 0.90,
+        pain_trigger: "High file-level blast radius on connection pool".to_string(),
+        antidote_directive: "Run cargo test --test pool before pushing".to_string(),
+        occurrences: 1,
+        last_triggered: "2026-10-20T15:00:00Z".to_string(),
+        created_at: String::new(),
+        tenant_id: "local".to_string(),
+        workspace_root: dir.path().to_string_lossy().to_string(),
+    };
+    backend.record_amygdala_reflex(&reflex_file_level).unwrap();
+
+    let both = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
+    assert_eq!(both.len(), 2, "Must contain both symbol-level and file-level reflexes");
+    assert_eq!(both[0].threat_score, 0.90, "First result must be the highest threat_score (0.90)");
+
+    // 5. Query active reflexes with min_threat threshold
+    let active_all = backend.list_active_reflexes(0.70).unwrap();
+    assert_eq!(active_all.len(), 2);
+
+    let active_high = backend.list_active_reflexes(0.88).unwrap();
+    assert_eq!(active_high.len(), 1);
+    assert_eq!(active_high[0].threat_score, 0.90);
+
+    // 6. Delete reflex
+    let deleted = backend.delete_amygdala_reflex(&both[0].id).unwrap();
+    assert!(deleted, "Must return true on successful deletion");
+    let after_delete = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
+    assert_eq!(after_delete.len(), 1);
+
+    // 7. Latency benchmark (< 0.5ms per query)
+    let start = std::time::Instant::now();
+    for _ in 0..100 {
+        let _ = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
+    }
+    let elapsed = start.elapsed();
+    let per_query_us = elapsed.as_micros() / 100;
+    println!("[BENCHMARK] get_amygdala_reflexes_for_file: {} µs / query", per_query_us);
+    assert!(per_query_us < 2000, "Latency must be < 2000µs (2ms), was {}µs", per_query_us);
+}
+

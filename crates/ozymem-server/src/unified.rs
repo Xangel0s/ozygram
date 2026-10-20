@@ -197,6 +197,26 @@ pub async fn handle_unified_tool(
                                 base_text = format!("{}\n\n{}", gotchas_alert, base_text);
                             }
 
+                            if let Ok(reflexes) = backend.get_amygdala_reflexes_for_file(file_path) {
+                                let active: Vec<_> = reflexes.into_iter().filter(|r| r.threat_score >= 0.70).collect();
+                                if !active.is_empty() {
+                                    let mut alert = String::from("[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]\n");
+                                    for reflex in active {
+                                        let symbol_label = if reflex.symbol_name.trim().is_empty() {
+                                            "file-level"
+                                        } else {
+                                            &reflex.symbol_name
+                                        };
+                                        alert.push_str(&format!(
+                                            "• Symbol: '{}' | Threat Score: {:.2} (Occurrences: {})\n  Pain Trigger: {}\n  Antidote Directive: {}\n",
+                                            symbol_label, reflex.threat_score, reflex.occurrences, reflex.pain_trigger, reflex.antidote_directive
+                                        ));
+                                    }
+                                    alert.push_str("──────────────────────────────────────────────────────────────────────────────");
+                                    base_text = format!("{}\n\n{}", alert, base_text);
+                                }
+                            }
+
                             let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
                             let path_obj = std::path::Path::new(&resolved);
                             let effective = if path_obj.exists() {

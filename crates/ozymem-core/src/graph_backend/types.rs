@@ -603,6 +603,17 @@ pub struct SimulationResult {
     pub isolation_guarantee: String,
 }
 
-
-
-
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmygdalaReflexEntry {
+    pub id: String,
+    pub file_path: String,
+    pub symbol_name: String,
+    pub threat_score: f64,
+    pub pain_trigger: String,
+    pub antidote_directive: String,
+    pub occurrences: i64,
+    pub last_triggered: String,
+    pub created_at: String,
+    pub tenant_id: String,
+    pub workspace_root: String,
+}

@@ -299,6 +299,22 @@ impl GraphBackend {
             CREATE INDEX IF NOT EXISTS idx_nodes_traj_depth ON exploration_nodes(trajectory_id, depth);
             CREATE INDEX IF NOT EXISTS idx_nodes_parent ON exploration_nodes(parent_id);
 
+            CREATE TABLE IF NOT EXISTS amygdala_reflexes (
+                id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                symbol_name TEXT NOT NULL DEFAULT '',
+                threat_score REAL NOT NULL,
+                pain_trigger TEXT NOT NULL,
+                antidote_directive TEXT NOT NULL,
+                occurrences INTEGER NOT NULL DEFAULT 1,
+                last_triggered TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                tenant_id TEXT NOT NULL DEFAULT 'local',
+                workspace_root TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_amygdala_file ON amygdala_reflexes(file_path, tenant_id);
+            CREATE INDEX IF NOT EXISTS idx_amygdala_lookup ON amygdala_reflexes(file_path, symbol_name, tenant_id);
+
             INSERT OR IGNORE INTO tenants (id, name) VALUES ('local', 'Local Tenant');"
         )?;
 
