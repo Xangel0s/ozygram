@@ -101,6 +101,12 @@
   - **Git-First Markdown Memories**: Stores team gotchas, conventions, and architectural lessons in atomic files under `.ozy/memories/<kind>/*.md` with YAML Frontmatter (`id`, `kind`, `topic_key`, `title`, `author`, `date`, `severity`, `applies_to`, `tags`). Merge-conflict-free across concurrent branches and 100% human-reviewable in Pull Requests.
   - **Preventive Gotchas Injection**: Automatic pre-flight inspection in `ozy_context(action="file")` prepends structured `[ALERT: GOTCHA_PREVENTION]` alerts for any matching file before the agent reads code, preventing known bugs.
   - **Bi-directional Git-SQLite Synchronization (`ozy_memory`)**: Sincronización instantánea (`sync_markdown`), escaneo en caliente (`scan_markdown`) y exportación declarativa (`export_markdown`) integradas al ciclo de vida del agente.
+- **Neuro-Cognitive Architecture & Offline Dreaming (v2.2.0)**:
+  - **Amygdala Pain Reflexes**: Preemptive SQLite WAL reflex substrate (`amygdala_reflexes`) with sub-millisecond (< 1ms) `ozy_context` interception (`[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]`) warning agents before touching regression-prone files.
+  - **Glial & Glymphatic Homeostasis**: Background metabolic cleanup (`GlialHomeostasisEngine`) performing microglial phagocytosis of orphaned vectors/synapses across SQLite and ChromaDB, plus periodic DuckDB compaction (`CHECKPOINT;`).
+  - **Basal Ganglia Sequence Playbooks & STDP**: Polars sequence mining over Git commit choreographies with automatic sequence injection (`[PROCEDURAL_PLAYBOOK_DETECTED]`) and Spike-Timing-Dependent Plasticity ($\Delta w_{ij} = A_+ e^{-\Delta t / \tau_+}$) in `analytics.duckdb`.
+  - **Autonomous 30-Minute Inactivity Watcher**: Low-overhead Rust daemon (`idle_watcher.rs`) with edge-triggered idle latch triggering `DreamOrchestrator` to generate `.ozymem/dream_latest_insights.json`, exposed proactively via `ozygram://dream/insights` MCP resource.
+  - **Thalamic Selective Attention**: Dynamic attention modulation (`thalamus.rs`) balancing lexical BM25 ($\alpha$), Amygdala threat scars ($\beta$), and AST graph topology ($\gamma$) according to active task intent (`HOTFIX_DEBUG` vs `ARCHITECTURE_REFACTOR` vs `BALANCED`).
 
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
