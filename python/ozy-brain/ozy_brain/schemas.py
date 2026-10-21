@@ -122,6 +122,9 @@ def _is_noise_path(path: str) -> bool:
         "node_modules",
         "/.git/",
         "/target/",
+        "/backups/",
+        "/.backup/",
+        "/.agents/",
         "/.cache/",
         "/build/",
         "/dist/",
@@ -190,6 +193,7 @@ def _git_status_files(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
     goal_tokens = {token for token in _goal(payload).lower().replace("/", " ").replace("-", " ").replace("_", " ").split() if len(token) >= 4}
+    is_doc_goal = any(tok in goal_tokens for tok in ("docs", "documentation", "readme", "guide", "rule", "markdown", "agent"))
     scores: dict[str, dict[str, Any]] = {}
 
     def bump(path: str, points: int, reason: str) -> None:
@@ -203,15 +207,28 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
         text = str(path)
         if _is_noise_path(text):
             continue
-        lower = text.lower().replace("\\", "/")
+        clean = text.replace("\\", "/")
+        if not is_doc_goal and (clean.endswith((".md", ".txt", ".rst")) or "/.agents/" in clean):
+            continue
+        lower = clean.lower()
         overlap = sorted(token for token in goal_tokens if token in lower)
         bump(text, 2 + min(len(overlap), 4), "indexed candidate" + (f" matches {', '.join(overlap[:3])}" if overlap else ""))
 
     for item in _git_status_files(payload):
         path = str(item.get("path", "")).strip()
         status = str(item.get("status", "")).strip()
-        if path:
-            bump(path, 8, f"dirty git status {status}".strip())
+        if path and not _is_noise_path(path):
+            clean = path.replace("\\", "/")
+            if not is_doc_goal and (clean.endswith((".md", ".txt", ".rst")) or "/.agents/" in clean):
+                continue
+            lower = clean.lower()
+            overlap = sorted(token for token in goal_tokens if token in lower)
+            if overlap:
+                bump(path, 6 + min(len(overlap), 3), f"dirty git status {status} with goal overlap ({', '.join(overlap)})")
+            elif any(c.lower() in lower for c in _items(payload, "changes")):
+                bump(path, 5, f"dirty git status {status} in explicit changes")
+            else:
+                bump(path, 1, f"dirty git status {status} unrelated to goal")
 
     for change in _items(payload, "changes"):
         text = str(change)
@@ -234,18 +251,87 @@ def _risk_level(payload: dict[str, Any], dirty_files: list[dict[str, str]], cand
     goal = _goal(payload).lower()
     if any(word in goal for word in ["auth", "security", "database", "migration", "delete", "deploy", "drop", "truncate"]):
         return "high"
-    if len(dirty_files) >= 8 or len(candidate_scores) >= 8 or any(word in goal for word in ["refactor", "architecture", "cross"]):
+    relevant_candidates = [c for c in candidate_scores if int(c.get("score", 0)) >= 4]
+    if len(relevant_candidates) >= 8 or any(word in goal for word in ["refactor", "architecture", "cross"]):
         return "medium"
     return "low"
 
 
+def _detect_stack(payload: dict[str, Any]) -> dict[str, bool]:
+    all_files = [str(f).lower().replace("\\", "/") for f in _items(payload, "files")]
+    for item in _git_status_files(payload):
+        if p := item.get("path"):
+            all_files.append(str(p).lower().replace("\\", "/"))
+    for c in _items(payload, "changes"):
+        all_files.append(str(c).lower().replace("\\", "/"))
+    file_str = " ".join(all_files)
+    project = str(payload.get("project", "")).lower()
+
+    has_rust = (
+        "cargo.toml" in file_str
+        or any(f.endswith(".rs") for f in all_files)
+        or project == "ozygram"
+    )
+    has_node = (
+        "package.json" in file_str
+        or "tsconfig.json" in file_str
+        or any(f.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")) for f in all_files)
+    )
+    has_python = (
+        "pyproject.toml" in file_str
+        or "requirements.txt" in file_str
+        or "setup.py" in file_str
+        or any(f.endswith(".py") for f in all_files)
+    )
+    has_go = (
+        "go.mod" in file_str
+        or any(f.endswith(".go") for f in all_files)
+    )
+    return {
+        "rust": has_rust,
+        "node": has_node,
+        "python": has_python,
+        "go": has_go,
+    }
+
+
 def _validation_commands(payload: dict[str, Any]) -> list[str]:
-    files = " ".join(str(f).lower() for f in _items(payload, "files"))
-    commands = ["cargo test"]
-    if "package.json" in files or any(str(f).endswith((".ts", ".tsx", ".js", ".jsx")) for f in _items(payload, "files")):
-        commands.append("npm test or pnpm test if available")
+    stack = _detect_stack(payload)
+    commands: list[str] = []
+    if stack["rust"]:
+        commands.append("cargo test")
+    if stack["node"]:
+        commands.append("npm test (or pnpm test / bun test)")
+        commands.append("npm run build (typecheck & asset verification)")
+    if stack["python"]:
+        commands.append("pytest (or python -m pytest)")
+    if stack["go"]:
+        commands.append("go test ./...")
+    if not commands:
+        commands.append("Run project test suite and static typecheck")
     commands.append("Run focused validation for changed files before broad validation")
     return commands
+
+
+def _authority_recommendation(payload: dict[str, Any]) -> str:
+    stack = _detect_stack(payload)
+    if stack["rust"] and not (stack["node"] or stack["python"]):
+        return "Maintain Rust as the validation authority and test runner."
+    if stack["node"] and stack["python"]:
+        return "Maintain TypeScript compiler (npm run build) and pytest as the validation authorities."
+    if stack["node"]:
+        return "Maintain TypeScript compiler and test runner (npm/pnpm test) as the validation authority."
+    if stack["python"]:
+        return "Maintain Python test suite (pytest) and type checker as the validation authority."
+    if stack["rust"]:
+        return "Maintain Rust as the validation authority and Python as consultative advisory."
+    return "Maintain project toolchain and automated test suite as the validation authority."
+
+
+def _validation_summary_label(payload: dict[str, Any]) -> str:
+    commands = _validation_commands(payload)
+    valid_cmds = [cmd.split()[0] for cmd in commands if not cmd.startswith("Run")]
+    return " / ".join(valid_cmds) if valid_cmds else "automated test suite"
 
 
 def _execution_policy(payload: dict[str, Any], autonomy: str = "advisory") -> dict[str, Any]:

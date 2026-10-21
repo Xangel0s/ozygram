@@ -16,6 +16,8 @@ from ozy_brain.schemas import (
     _goal,
     _safe_mcp_calls,
     _validation_commands,
+    _authority_recommendation,
+    _validation_summary_label,
 )
 
 
@@ -159,7 +161,7 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
             {"name": "leaf_contracts", "objective": "Refactor base contracts, models, and schemas first", "exit_condition": "Base structures compile cleanly without contract violations"},
             {"name": "domain_services", "objective": "Propagate changes through domain and persistence logic", "exit_condition": "Internal mutations and service helpers synchronized"},
             {"name": "entrypoints", "objective": "Adapt public API, MCP dispatchers, and CLI interfaces", "exit_condition": "Handlers aligned with updated return contracts"},
-            {"name": "validation", "objective": "Verify behavior with focused unit tests followed by test suite", "exit_condition": "Validation commands pass cleanly (cargo test / pytest)"},
+            {"name": "validation", "objective": "Verify behavior with focused unit tests followed by test suite", "exit_condition": f"Validation commands pass cleanly ({_validation_summary_label(payload)})"},
             {"name": "learning", "objective": "Persist durable project knowledge", "exit_condition": "Key decisions, gotchas, or patterns recorded in memory"},
         ],
         "candidate_files": cand_files,
@@ -205,7 +207,7 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
         steps.append(f"   • Step {item['step']} [{item['phase']}]: {item['file']} → {item['action']}")
 
     steps.extend([
-        "3. [TESTS] Run focused unit tests followed by integration test suite (cargo test / pytest).",
+        f"3. [TESTS] Run focused unit tests followed by integration test suite ({_validation_summary_label(payload)}).",
         "4. [VALIDATION] Verify no broken contracts or invariant violations across the dependency chain.",
         "5. [MEMORY] Record durable learnings, bug solutions, and architectural decisions in Ozy memory.",
     ])
@@ -221,7 +223,7 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
         recommendations=[
             "Refactor base contracts and types before modifying public dispatchers.",
             "Do not execute destructive operations without explicit confirmation.",
-            "Maintain Rust as the validation authority and Python as consultative advisory.",
+            _authority_recommendation(payload),
         ],
         memory_updates=["Save decisions, bug resolutions, and non-obvious discoveries after verification."],
         confidence=0.88 if blast_radius["risk_tier"] != "critical" else 0.72,
