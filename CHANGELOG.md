@@ -4,6 +4,29 @@ All notable changes to Ozygram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-10-21
+
+### Added
+- **Distributed Neural Mesh & Collective Intelligence (Fase 6 — OzyBrain v2.4.0)**:
+  - **Git-Native Heuristics Transport (`refs/notes/ozy-heuristics`)**: Deterministic line-by-line JSONL notes transport sorted by `pattern_id`, enabling conflict-free peer merges (`cat_sort_uniq`) without polluting the working tree or commit messages.
+  - **Network Immunological Blood-Brain Barrier (BBB) & Anti-Injection Defense**: SHA-256 cryptographic provenance verification per tenant/author, antiseptic prompt-injection linter (`scan_context_poisoning`) neutralizing context-hijacking vectors (`ignore previous instructions`, `curl | sh`, `eval`), and quarantine isolation with `[ALERT: UNVERIFIED_HEURISTIC_QUARANTINE]`.
+  - **Bayesian Consensus Reputation & Heuristic Apoptosis**: Distributed trust scoring ($R_{\text{consenso}} = \frac{\alpha_0 + V_{\text{success}}}{\alpha_0 + \beta_0 + V_{\text{success}} + F_{\text{failure}}}$) with automated apoptosis purging rules when $R_{\text{consenso}} < 0.35$ or when Amygdala threat scars are detected across $\ge 2$ peer environments (`[ALERT: HEURISTIC_APOPTOSIS_PURGED]`).
+  - **Distributed Semantic Merger & Deduplication**: Token-cosine similarity engine in ChromaDB ($\cos \ge 0.88$) that merges complementary rules, suppresses duplicate node creation, increments peer confirmation counters, and reinforces synaptic weights ($w_{\text{new}} = \min(1.0, w_{\text{old}} + 0.08)$).
+  - **Autonomous Dream-RSI Federated Synchronization**: Non-blocking offline-safe Git fetch with 4.0s timeout during the 30-minute idle sleep cycle, reconciling peer heuristics, updating `.ozymem/dream_latest_insights.json`, and exposing action `corpus_federated_sync` in MCP stdio.
+
+- **Neuro-Cognitive Substrate, STDP Plasticity & Cerebellar Kinematics (Fase 5 — OzyBrain v2.3.0)**:
+  - **Continuous STDP Hebbian Plasticity & SQLite Export**: Chronological Git commit sequence mining in DuckDB with automatic materialization of strong causal synapses ($w \ge 0.65$) into SQLite `memory_edges` (`COUPLED_WITH`) for sub-millisecond graph traversals.
+  - **Neuromodulator Chemical Regulation**: Global 4D vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$ dynamically modulating RPE reward, flashbulb one-shot consolidation ($D \ge 0.75$), and Amygdala threat sensitivity ($NE \ge 0.60$).
+  - **Cerebellar Forward Model & Code Dysmetria**: Kinematic motor model with Kullback-Leibler divergence ($D_{KL}$) detecting motor overshoot (`[ALERT: CODE_DYSMETRIA - MOTOR_OVERSHOOT]`) and missing coupled dependencies (`[ALERT: CODE_DYSMETRIA - UNDER_COUPLED]`).
+  - **Corpus Callosum & Blood-Brain Barrier (BBB)**: Multi-workspace meta-pattern transfer between `crmnew` and `default` protected by Shannon entropy filtering ($H(S) \ge 4.5$) and regex secret/path scrubbing.
+
+- **Neuro-Cognitive Architecture & Offline Dreaming (Fases 1–4 — v2.2.0)**:
+  - **Amygdala Reflex Substrate**: Preemptive SQLite WAL reflex cache (`amygdala_reflexes`) with sub-millisecond (< 1ms) `ozy_context` interception (`[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]`).
+  - **Glial & Glymphatic Homeostasis**: Background phagocytosis of dead file vectors/synapses across SQLite and ChromaDB, plus periodic DuckDB WAL compaction (`CHECKPOINT;`).
+  - **Basal Ganglia Sequence Playbooks & STDP**: Co-occurrence choreography mining over Git commits with automatic sequence injection (`[PROCEDURAL_PLAYBOOK_DETECTED]`) and Spike-Timing-Dependent Plasticity in `analytics.duckdb`.
+  - **Autonomous 30-Minute Idle Dreaming Watcher**: Zero-CPU Rust inactivity watcher (`idle_watcher.rs`) with edge-triggered latch triggering `DreamOrchestrator` to generate `.ozymem/dream_latest_insights.json`, exposed proactively via `ozygram://dream/insights` MCP resource.
+  - **Thalamic Selective Attention**: Dynamic attention modulation (`thalamus.rs`) balancing lexical BM25 ($\alpha$), Amygdala threat scars ($\beta$), and AST graph topology ($\gamma$) based on task intent (`HOTFIX_DEBUG` vs `ARCHITECTURE_REFACTOR` vs `BALANCED`).
+
 ## [0.1.4] - 2026-10-20
 
 ### Added
