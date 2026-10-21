@@ -315,6 +315,57 @@ def _dream_offline_cycle_handler(payload: dict[str, Any]) -> BrainResponse:
     )
 
 
+def _neuromodulator_handler(payload: dict[str, Any]) -> BrainResponse:
+    from ozy_brain.neuromodulators import NeuromodulatorEngine
+
+    workspace_root = payload.get("workspace_root") or payload.get("project") or "."
+    engine = NeuromodulatorEngine(workspace_root=workspace_root)
+
+    sub_action = payload.get("sub_action") or payload.get("event") or "get_state"
+    if sub_action == "reward":
+        reward = float(payload.get("reward", 1.0))
+        expected = float(payload.get("expected", 0.5))
+        res = engine.record_reward_event(reward=reward, expected_reward=expected)
+    elif sub_action in ("pain", "stress", "error"):
+        penalty = float(payload.get("penalty", 0.5))
+        res = engine.record_pain_event(penalty=penalty, error_context=str(payload.get("error_context", "")))
+    elif sub_action == "novelty":
+        is_new = bool(payload.get("is_new_subsystem", False))
+        visits = int(payload.get("visit_count", 0))
+        res = engine.record_code_novelty(is_new_subsystem=is_new, visit_count=visits)
+    elif sub_action == "reset":
+        engine.reset_to_homeostasis()
+        res = {"status": "reset_to_homeostasis"}
+    else:
+        res = {}
+
+    hyperparams = engine.get_effective_hyperparameters()
+
+    return BrainResponse(
+        action="neuromodulators",
+        summary=f"Neuromodulator balance: {hyperparams['badge']}",
+        plan=[hyperparams["badge"]],
+        risks=[
+            "Noradrenaline high: Amygdala threshold lowered to sensitive state"
+            if hyperparams["neurochemical_vector"]["noradrenaline"] >= 0.60
+            else "Chemical baseline stable."
+        ],
+        recommendations=[
+            "One-shot flashbulb consolidation active (Dopamine >= 0.75)"
+            if hyperparams["flashbulb_consolidation"]
+            else "Standard multi-hop memory consolidation."
+        ],
+        memory_updates=[
+            f"D: {hyperparams['neurochemical_vector']['dopamine']:.2f}",
+            f"NE: {hyperparams['neurochemical_vector']['noradrenaline']:.2f}",
+            f"ACh: {hyperparams['neurochemical_vector']['acetylcholine']:.2f}",
+            f"5HT: {hyperparams['neurochemical_vector']['serotonin']:.2f}",
+        ],
+        confidence=0.99,
+        structured_plan={**hyperparams, "event_result": res},
+    )
+
+
 ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "plan": plan,
     "reflect": reflect,
@@ -337,6 +388,8 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "dream_rsi": _dream_rsi_handler,
     "dream_offline_cycle": _dream_offline_cycle_handler,
     "offline_dreaming": _dream_offline_cycle_handler,
+    "neuromodulators": _neuromodulator_handler,
+    "neuro_state": _neuromodulator_handler,
     "simulate_action": _simulate_action_handler,
     "critique_hypothesis": _simulate_action_handler,
     "cognitive_route": _route_handler,

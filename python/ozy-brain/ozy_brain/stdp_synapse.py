@@ -3,7 +3,8 @@ Spike-Timing-Dependent Plasticity (STDP) Synapse Engine for OzyBrain.
 Calculates directional synaptic weight updates between code modules based on temporal causality:
 LTP (Long-Term Potentiation): Delta_w = A_+ * exp(-Delta_t / tau_+) if Delta_t > 0
 LTD (Long-Term Depression):   Delta_w = -A_- * exp(Delta_t / tau_-) if Delta_t <= 0
-Persists synaptic matrices in analytics.duckdb to discover implicit cross-module coupling.
+Persists synaptic matrices in analytics.duckdb and exports strong virtual Hebbian
+edges into SQLite memory_edges (edge_type='COUPLED_WITH') for sub-millisecond graph traversal.
 Zero-emoji compliant.
 """
 
@@ -11,6 +12,8 @@ from __future__ import annotations
 
 import math
 import os
+import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,9 +45,13 @@ class StdpSynapseEngine:
         self,
         workspace_root: Optional[str | Path] = None,
         duckdb_path: Optional[str | Path] = None,
+        db_path: Optional[str | Path] = None,
+        tenant_id: str = "local",
     ):
         self.workspace_root = Path(workspace_root or os.getcwd()).resolve()
         self.duckdb_path = Path(duckdb_path) if duckdb_path else self._resolve_duckdb_path()
+        self.db_path = Path(db_path) if db_path else self.workspace_root / ".ozymem" / "db.sqlite"
+        self.tenant_id = tenant_id
         self._init_duckdb_schema()
 
     def _resolve_duckdb_path(self) -> Path:
@@ -65,7 +72,8 @@ class StdpSynapseEngine:
                     weight DOUBLE NOT NULL,
                     sample_count BIGINT NOT NULL DEFAULT 1,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY(source_file, target_file)
+                    tenant_id VARCHAR NOT NULL DEFAULT 'local',
+                    PRIMARY KEY(source_file, target_file, tenant_id)
                 );"""
             )
             con.close()
@@ -87,10 +95,12 @@ class StdpSynapseEngine:
         source_file: str,
         target_file: str,
         dt_seconds: float,
+        tenant_id: Optional[str] = None,
     ) -> float:
         """Records an observed pair transition and updates the synaptic weight in DuckDB."""
         src = normalize_rel_path(source_file)
         tgt = normalize_rel_path(target_file)
+        tenant = tenant_id or self.tenant_id
         if src == tgt or not HAS_DUCKDB:
             return 0.0
 
@@ -100,8 +110,8 @@ class StdpSynapseEngine:
             con = duckdb.connect(str(self.duckdb_path))
             cur = con.cursor()
             cur.execute(
-                "SELECT weight, sample_count FROM stdp_synapses WHERE source_file = ? AND target_file = ?",
-                [src, tgt],
+                "SELECT weight, sample_count FROM stdp_synapses WHERE source_file = ? AND target_file = ? AND tenant_id = ?",
+                [src, tgt, tenant],
             )
             row = cur.fetchone()
 
@@ -111,15 +121,15 @@ class StdpSynapseEngine:
                 cur.execute(
                     """UPDATE stdp_synapses
                        SET weight = ?, sample_count = sample_count + 1, last_updated = CURRENT_TIMESTAMP
-                       WHERE source_file = ? AND target_file = ?""",
-                    [new_w, src, tgt],
+                       WHERE source_file = ? AND target_file = ? AND tenant_id = ?""",
+                    [new_w, src, tgt, tenant],
                 )
             else:
                 initial_w = max(0.05, min(1.0, 0.50 + self.LEARNING_RATE * delta_w))
                 cur.execute(
-                    """INSERT INTO stdp_synapses (source_file, target_file, weight, sample_count)
-                       VALUES (?, ?, ?, 1)""",
-                    [src, tgt, initial_w],
+                    """INSERT INTO stdp_synapses (source_file, target_file, weight, sample_count, tenant_id)
+                       VALUES (?, ?, ?, 1, ?)""",
+                    [src, tgt, initial_w, tenant],
                 )
                 new_w = initial_w
 
@@ -133,7 +143,6 @@ class StdpSynapseEngine:
         if len(trace_events) < 2 or not HAS_DUCKDB:
             return {"synapses_updated": 0}
 
-        # Sort events by timestamp
         sorted_events = sorted(trace_events, key=lambda e: float(e.get("timestamp", 0.0)))
         updated_count = 0
 
@@ -157,9 +166,11 @@ class StdpSynapseEngine:
         file_path: str,
         min_weight: float = 0.50,
         limit: int = 5,
+        tenant_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Retrieves downstream files with strongest synaptic coupling."""
         src = normalize_rel_path(file_path)
+        tenant = tenant_id or self.tenant_id
         if not HAS_DUCKDB:
             return []
 
@@ -169,10 +180,10 @@ class StdpSynapseEngine:
             cur.execute(
                 """SELECT target_file, weight, sample_count
                    FROM stdp_synapses
-                   WHERE source_file = ? AND weight >= ?
+                   WHERE source_file = ? AND weight >= ? AND tenant_id = ?
                    ORDER BY weight DESC, sample_count DESC
                    LIMIT ?""",
-                [src, min_weight, limit],
+                [src, min_weight, tenant, limit],
             )
             rows = cur.fetchall()
             con.close()
@@ -183,8 +194,153 @@ class StdpSynapseEngine:
                     "target_file": r[0],
                     "weight": round(float(r[1]), 3),
                     "sample_count": int(r[2]),
+                    "tenant_id": tenant,
                 }
                 for r in rows
             ]
         except Exception:
             return []
+
+    def export_hebbian_edges_to_sqlite(self, min_weight: float = 0.65) -> int:
+        """Exports strong Hebbian synapses (weight >= min_weight) from DuckDB to SQLite memory_edges table.
+
+        Materializes virtual edges as edge_type='COUPLED_WITH' so the Rust fast-lane and ozy_graph
+        can navigate causal dependencies at sub-millisecond speeds.
+        """
+        if not HAS_DUCKDB or not self.db_path.parent.exists():
+            return 0
+
+        # 1. Fetch strong synapses from DuckDB
+        try:
+            con = duckdb.connect(str(self.duckdb_path))
+            cur = con.cursor()
+            cur.execute(
+                """SELECT source_file, target_file, weight
+                   FROM stdp_synapses
+                   WHERE weight >= ? AND tenant_id = ?
+                   ORDER BY weight DESC""",
+                [min_weight, self.tenant_id],
+            )
+            strong_synapses = cur.fetchall()
+            con.close()
+        except Exception:
+            return 0
+
+        if not strong_synapses:
+            return 0
+
+        # 2. Write to SQLite memory_edges
+        exported = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            conn = sqlite3.connect(str(self.db_path), timeout=5.0)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS memory_edges (
+                    source_type TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    edge_type TEXT NOT NULL,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    created_at TEXT NOT NULL,
+                    tenant_id TEXT NOT NULL,
+                    workspace_root TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (source_type, source_id, target_type, target_id, edge_type, tenant_id)
+                );"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memory_edges_src ON memory_edges(source_type, source_id, tenant_id);"
+            )
+
+            upsert_edge_sql = """
+            INSERT INTO memory_edges (
+                source_type, source_id, target_type, target_id, edge_type,
+                weight, created_at, tenant_id, workspace_root
+            ) VALUES ('file', ?, 'file', ?, 'COUPLED_WITH', ?, ?, ?, ?)
+            ON CONFLICT(source_type, source_id, target_type, target_id, edge_type, tenant_id)
+            DO UPDATE SET
+                weight = excluded.weight,
+                created_at = excluded.created_at;
+            """
+
+            for src, tgt, w in strong_synapses:
+                conn.execute(
+                    upsert_edge_sql,
+                    (
+                        src,
+                        tgt,
+                        round(float(w), 3),
+                        now_iso,
+                        self.tenant_id,
+                        str(self.workspace_root),
+                    ),
+                )
+                exported += 1
+
+            conn.commit()
+            conn.close()
+            return exported
+        except Exception:
+            return 0
+
+    def mine_git_history_stdp(self, max_commits: int = 100) -> Dict[str, Any]:
+        """Extracts chronological commit file transitions from Git log, applies STDP, and exports to SQLite."""
+        if not HAS_DUCKDB:
+            return {"status": "duckdb_unavailable", "synapses_recorded": 0, "edges_exported": 0}
+
+        cmd = [
+            "git",
+            "log",
+            f"-n{max_commits}",
+            "--name-only",
+            "--pretty=format:COMMIT_MARKER|%H|%at",
+            "--reverse",  # Chronological order
+        ]
+
+        try:
+            res = subprocess.run(
+                cmd,
+                cwd=str(self.workspace_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+            )
+            if res.returncode != 0 or not res.stdout.strip():
+                return {"status": "no_git_commits", "synapses_recorded": 0, "edges_exported": 0}
+
+            commits_raw = res.stdout.split("COMMIT_MARKER|")
+            commit_events: List[Dict[str, Any]] = []
+
+            for chunk in commits_raw:
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                lines = chunk.splitlines()
+                header = lines[0].strip()
+                files = [
+                    normalize_rel_path(f.strip())
+                    for f in lines[1:]
+                    if f.strip() and not f.strip().endswith((".png", ".jpg", ".md", ".json", ".lock"))
+                ]
+                parts = header.split("|")
+                epoch_sec = float(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0.0
+
+                for f in files:
+                    commit_events.append({"file_path": f, "timestamp": epoch_sec})
+
+            trace_res = self.process_event_trace(commit_events)
+            exported = self.export_hebbian_edges_to_sqlite(min_weight=0.60)
+
+            return {
+                "status": "ok",
+                "events_processed": len(commit_events),
+                "synapses_recorded": trace_res.get("synapses_updated", 0),
+                "hebbian_edges_exported": exported,
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e), "synapses_recorded": 0, "edges_exported": 0}

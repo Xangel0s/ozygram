@@ -89,10 +89,14 @@ class TestStdpSynapseEngine(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.workspace = Path(self.temp_dir.name)
         self.duckdb_path = self.workspace / "analytics.duckdb"
+        self.db_path = self.workspace / ".ozymem" / "db.sqlite"
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.engine = StdpSynapseEngine(
             workspace_root=self.workspace,
             duckdb_path=self.duckdb_path,
+            db_path=self.db_path,
+            tenant_id="test_tenant",
         )
 
     def tearDown(self):
@@ -146,6 +150,33 @@ class TestStdpSynapseEngine(unittest.TestCase):
         ]
         res = self.engine.process_event_trace(trace)
         self.assertGreaterEqual(res["synapses_updated"], 2)
+
+    def test_export_hebbian_edges_to_sqlite(self):
+        # Reinforce strong causal synapse
+        self.engine.record_synapse_spike("backend/auth.py", "frontend/login.tsx", 5.0)
+        self.engine.record_synapse_spike("backend/auth.py", "frontend/login.tsx", 3.0)
+
+        # Export to SQLite
+        exported_count = self.engine.export_hebbian_edges_to_sqlite(min_weight=0.60)
+        self.assertGreaterEqual(exported_count, 1)
+
+        # Verify record in SQLite memory_edges
+        conn = sqlite3.connect(str(self.db_path))
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT source_id, target_id, edge_type, weight, tenant_id
+               FROM memory_edges
+               WHERE source_id = 'backend/auth.py' AND target_id = 'frontend/login.tsx'"""
+        )
+        row = cur.fetchone()
+        conn.close()
+
+        self.assertIsNotNone(row, "Hebbian edge must be present in SQLite memory_edges")
+        self.assertEqual(row[0], "backend/auth.py")
+        self.assertEqual(row[1], "frontend/login.tsx")
+        self.assertEqual(row[2], "COUPLED_WITH")
+        self.assertGreaterEqual(row[3], 0.60)
+        self.assertEqual(row[4], "test_tenant")
 
 
 if __name__ == "__main__":

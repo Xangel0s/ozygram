@@ -69,6 +69,21 @@ class DreamOrchestrator:
         )
         habits_report = basal_engine.run_basal_ganglia_cycle(max_commits=max_commits)
 
+        # 3b. STDP Hebbian Synapse Plasticity & SQLite Export
+        from ozy_brain.stdp_synapse import StdpSynapseEngine
+        stdp_engine = StdpSynapseEngine(
+            workspace_root=self.workspace_root,
+            db_path=self.db_path,
+            tenant_id=self.tenant_id,
+        )
+        stdp_report = stdp_engine.mine_git_history_stdp(max_commits=max_commits)
+
+        # 3c. Neuromodulator Chemical Regulation
+        from ozy_brain.neuromodulators import NeuromodulatorEngine
+        neuro_engine = NeuromodulatorEngine(workspace_root=self.workspace_root)
+        neuro_engine.reset_to_homeostasis()
+        neuro_status = neuro_engine.get_effective_hyperparameters()
+
         # 4. Vector Store status
         vector_stats: Dict[str, Any] = {}
         try:
@@ -170,6 +185,8 @@ class DreamOrchestrator:
                 **habits_report,
                 "top_playbooks": top_playbooks,
             },
+            "stdp_synapses": stdp_report,
+            "neuromodulators": neuro_status,
             "vector_store": vector_stats,
         }
 
