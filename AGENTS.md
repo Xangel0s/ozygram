@@ -107,6 +107,11 @@
   - **Basal Ganglia Sequence Playbooks & STDP**: Polars sequence mining over Git commit choreographies with automatic sequence injection (`[PROCEDURAL_PLAYBOOK_DETECTED]`) and Spike-Timing-Dependent Plasticity ($\Delta w_{ij} = A_+ e^{-\Delta t / \tau_+}$) in `analytics.duckdb`.
   - **Autonomous 30-Minute Inactivity Watcher**: Low-overhead Rust daemon (`idle_watcher.rs`) with edge-triggered idle latch triggering `DreamOrchestrator` to generate `.ozymem/dream_latest_insights.json`, exposed proactively via `ozygram://dream/insights` MCP resource.
   - **Thalamic Selective Attention**: Dynamic attention modulation (`thalamus.rs`) balancing lexical BM25 ($\alpha$), Amygdala threat scars ($\beta$), and AST graph topology ($\gamma$) according to active task intent (`HOTFIX_DEBUG` vs `ARCHITECTURE_REFACTOR` vs `BALANCED`).
+- **Neuro-Cognitive Substrate v2.3.0 (Fase 5)**:
+  - **Continuous STDP Hebbian Plasticity & SQLite Export**: Chronological Git commit sequence mining in DuckDB with automatic materialization of strong causal synapses ($w \ge 0.65$) into SQLite `memory_edges` (`COUPLED_WITH`) for sub-millisecond graph traversals.
+  - **Neuromodulator Chemical Regulation**: Global 4D vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$ dynamically modulating RPE reward, flashbulb one-shot consolidation ($D \ge 0.75$), and Amygdala threat sensitivity ($NE \ge 0.60$).
+  - **Cerebellar Forward Model & Code Dysmetria**: Kinematic motor model with Kullback-Leibler divergence ($D_{KL}$) detecting motor overshoot (`[ALERT: CODE_DYSMETRIA - MOTOR_OVERSHOOT]`) and missing coupled dependencies (`[ALERT: CODE_DYSMETRIA - UNDER_COUPLED]`).
+  - **Corpus Callosum & Blood-Brain Barrier (BBB)**: Multi-workspace meta-pattern transfer between `crmnew` and `default` protected by Shannon entropy filtering ($H(S) \ge 4.5$) and regex secret/path scrubbing.
 
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
