@@ -102,4 +102,62 @@ impl GraphBackend {
 
         Ok(results)
     }
+
+    /// Lee las heurísticas de equipo en formato JSONL desde `refs/notes/ozy-heuristics`.
+    pub fn read_federated_heuristics(
+        &self,
+        commit_ref: Option<&str>,
+        note_ref: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let project_path = self.project_path()
+            .ok_or_else(|| anyhow::anyhow!("No project path configured in GraphBackend"))?;
+        let git = crate::git_backend::GitBackend::open(std::path::Path::new(&project_path))
+            .map_err(|e| anyhow::anyhow!("Git repository not found: {e}"))?;
+
+        let target_ref = note_ref.unwrap_or(OZY_HEURISTICS_NOTE_REF);
+        let note_text = match git.read_note(commit_ref, Some(target_ref)) {
+            Ok(Some(t)) => t,
+            _ => return Ok(Vec::new()),
+        };
+
+        let mut heuristics = Vec::new();
+        for line in note_text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                heuristics.push(val);
+            }
+        }
+        Ok(heuristics)
+    }
+
+    /// Escribe una lista de heurísticas como JSONL en `refs/notes/ozy-heuristics`.
+    pub fn write_federated_heuristics(
+        &self,
+        commit_ref: Option<&str>,
+        note_ref: Option<&str>,
+        heuristics: &[serde_json::Value],
+        force: bool,
+    ) -> Result<String> {
+        let project_path = self.project_path()
+            .ok_or_else(|| anyhow::anyhow!("No project path configured in GraphBackend"))?;
+        let git = crate::git_backend::GitBackend::open(std::path::Path::new(&project_path))
+            .map_err(|e| anyhow::anyhow!("Git repository not found: {e}"))?;
+
+        let target_ref = note_ref.unwrap_or(OZY_HEURISTICS_NOTE_REF);
+        let mut lines = Vec::new();
+        for h in heuristics {
+            lines.push(serde_json::to_string(h)?);
+        }
+        lines.sort();
+        let payload = lines.join("\n");
+
+        git.write_note(commit_ref, Some(target_ref), &payload, force)
+            .map_err(|e| anyhow::anyhow!("Failed to write federated heuristics note: {e}"))
+    }
 }
+
+pub const OZY_HEURISTICS_NOTE_REF: &str = "refs/notes/ozy-heuristics";
+

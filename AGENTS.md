@@ -112,6 +112,11 @@
   - **Neuromodulator Chemical Regulation**: Global 4D vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$ dynamically modulating RPE reward, flashbulb one-shot consolidation ($D \ge 0.75$), and Amygdala threat sensitivity ($NE \ge 0.60$).
   - **Cerebellar Forward Model & Code Dysmetria**: Kinematic motor model with Kullback-Leibler divergence ($D_{KL}$) detecting motor overshoot (`[ALERT: CODE_DYSMETRIA - MOTOR_OVERSHOOT]`) and missing coupled dependencies (`[ALERT: CODE_DYSMETRIA - UNDER_COUPLED]`).
   - **Corpus Callosum & Blood-Brain Barrier (BBB)**: Multi-workspace meta-pattern transfer between `crmnew` and `default` protected by Shannon entropy filtering ($H(S) \ge 4.5$) and regex secret/path scrubbing.
+- **Distributed Neural Mesh & Collective Intelligence v2.4.0 (Fase 6)**:
+  - **Git-Native Heuristics Transport (`refs/notes/ozy-heuristics`)**: Decentralized note ref (`OZY_HEURISTICS_NOTE_REF`) with deterministic JSONL sorting (`cat_sort_uniq`), allowing conflict-free cross-team heuristic distribution over Git without touching working tree or commit history.
+  - **Immunological BBB & Anti-Injection Defense**: Three-layer network immune filter with SHA-256 cryptographic provenance signatures, anti-prompt injection linter (`scan_context_poisoning`), and Bayesian consensus reputation ($R_{\text{consenso}}$) automatically purging low-confidence or harmful rules via apoptosis (`[ALERT: HEURISTIC_APOPTOSIS_PURGED]`).
+  - **Distributed Semantic Merger & Deduplication**: Vector and token-level cosine similarity engine (`SemanticHeuristicMerger`, $\cos \ge 0.88$) that fuses duplicate peer heuristics, merges complementary rules, and boosts synaptic confidence weights ($w_{\text{new}} = \min(1.0, w_{\text{old}} + 0.08)$).
+  - **Autonomous Dream-RSI Federated Synchronization**: Non-blocking offline-safe Git fetch with 4.0s timeout during the 30-minute idle sleep cycle, reconciling peer heuristics, updating `.ozymem/dream_latest_insights.json`, and exposing action `corpus_federated_sync` in MCP stdio.
 
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).

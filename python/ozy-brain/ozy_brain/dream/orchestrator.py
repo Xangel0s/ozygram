@@ -84,6 +84,36 @@ class DreamOrchestrator:
         neuro_engine.reset_to_homeostasis()
         neuro_status = neuro_engine.get_effective_hyperparameters()
 
+        # 3d. Federated Corpus Callosum Sync (refs/notes/ozy-heuristics)
+        from ozy_brain.corpus_callosum import CorpusCallosumEngine, OZY_HEURISTICS_REF
+        corpus_engine = CorpusCallosumEngine(
+            workspace_root=self.workspace_root,
+            tenant_id=self.tenant_id,
+        )
+        try:
+            import subprocess
+            subprocess.run(
+                ["git", "fetch", "origin", f"{OZY_HEURISTICS_REF}:{OZY_HEURISTICS_REF}"],
+                cwd=str(self.workspace_root),
+                capture_output=True,
+                timeout=4.0,
+                check=False,
+            )
+        except Exception:
+            pass  # Offline-safe graceful fallback
+
+        federated_import = corpus_engine.import_from_git_notes(note_ref=OZY_HEURISTICS_REF, limit=50)
+        federated_export = corpus_engine.export_to_git_notes(note_ref=OZY_HEURISTICS_REF)
+        federated_report = {
+            "sync_status": federated_import.get("status", "ok"),
+            "imported_count": federated_import.get("imported_count", 0),
+            "fused_count": federated_import.get("fused_count", 0),
+            "quarantined_count": federated_import.get("quarantined_count", 0),
+            "apoptosis_count": federated_import.get("apoptosis_count", 0),
+            "exported_count": federated_export.get("patterns_count", 0),
+            "total_active_patterns": federated_import.get("total_active_patterns", 0),
+        }
+
         # 4. Vector Store status
         vector_stats: Dict[str, Any] = {}
         try:
@@ -187,6 +217,7 @@ class DreamOrchestrator:
             },
             "stdp_synapses": stdp_report,
             "neuromodulators": neuro_status,
+            "federated_mesh": federated_report,
             "vector_store": vector_stats,
         }
 

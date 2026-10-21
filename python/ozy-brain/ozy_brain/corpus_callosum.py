@@ -13,10 +13,13 @@ import json
 import math
 import os
 import re
+import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+OZY_HEURISTICS_REF = "refs/notes/ozy-heuristics"
 
 
 def calculate_shannon_entropy(data: str) -> float:
@@ -138,6 +141,8 @@ class CorpusCallosumEngine:
             clean_rules.append(c_rule)
             all_violations.extend(v)
 
+        from ozy_brain.bbb_immune import ImmunologicalBBB
+
         record = {
             "pattern_id": pattern_id,
             "title": clean_title,
@@ -147,8 +152,13 @@ class CorpusCallosumEngine:
             "source_tenant": src_tenant,
             "bbb_inspected": True,
             "bbb_violations_redacted": len(all_violations),
+            "peer_confirmations": 0,
+            "validation_successes": 1,
+            "validation_failures": 0,
+            "amygdala_trigger_count": 0,
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+        record["signature_sha256"] = ImmunologicalBBB.compute_pattern_signature(record)
 
         patterns = self._load_patterns()
         patterns[pattern_id] = record
@@ -158,6 +168,7 @@ class CorpusCallosumEngine:
             "status": "pattern_exported",
             "badge": "[STATUS: CORPUS_CALLOSUM_TRANSFERRED]",
             "pattern_id": pattern_id,
+            "signature_sha256": record["signature_sha256"],
             "bbb_violations_count": len(all_violations),
             "record": record,
         }
@@ -173,13 +184,221 @@ class CorpusCallosumEngine:
 
         results: List[Dict[str, Any]] = []
         for p_id, p_data in patterns.items():
-            # Allow patterns from other workspaces or global catalog
             if category and p_data.get("category") != category:
                 continue
 
             results.append(p_data)
 
         return results
+
+    def export_to_git_notes(
+        self,
+        note_ref: str = OZY_HEURISTICS_REF,
+        commit_ref: str = "HEAD",
+    ) -> Dict[str, Any]:
+        """Serializes patterns to deterministic JSONL sorted by pattern_id and attaches to Git note."""
+        patterns = self._load_patterns()
+        if not patterns:
+            return {"status": "empty", "patterns_count": 0, "badge": "[STATUS: NO_PATTERNS]"}
+
+        lines = []
+        for p_id in sorted(patterns.keys()):
+            p_data = patterns[p_id]
+            lines.append(json.dumps(p_data, sort_keys=True, ensure_ascii=False))
+        jsonl_content = "\n".join(lines)
+
+        try:
+            cmd = ["git", "notes", f"--ref={note_ref}", "add", "-f", "-m", jsonl_content, commit_ref]
+            res = subprocess.run(
+                cmd,
+                cwd=str(self.workspace_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+            )
+            if res.returncode != 0:
+                return {
+                    "status": "error",
+                    "error": res.stderr.strip(),
+                    "badge": "[ALERT: GIT_NOTES_EXPORT_FAILED]",
+                }
+            return {
+                "status": "ok",
+                "badge": "[STATUS: CORPUS_GIT_NOTES_EXPORTED]",
+                "patterns_count": len(patterns),
+                "ref": note_ref,
+                "commit": commit_ref,
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e), "badge": "[ALERT: GIT_NOTES_EXPORT_FAILED]"}
+
+    def import_from_git_notes(
+        self,
+        note_ref: str = OZY_HEURISTICS_REF,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Imports peer heuristics from Git note ref, validates through ImmunologicalBBB, and merges."""
+        from ozy_brain.bbb_immune import ImmunologicalBBB
+
+        try:
+            cmd = ["git", "notes", f"--ref={note_ref}", "list"]
+            res = subprocess.run(
+                cmd,
+                cwd=str(self.workspace_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                check=False,
+            )
+            if res.returncode != 0 or not res.stdout.strip():
+                return {
+                    "status": "no_notes",
+                    "imported_count": 0,
+                    "quarantined_count": 0,
+                    "apoptosis_count": 0,
+                    "badge": "[STATUS: NO_REMOTE_NOTES]",
+                }
+
+            commit_hashes = [
+                line.strip().split()[-1]
+                for line in res.stdout.strip().splitlines()
+                if line.strip()
+            ][:limit]
+
+            immune_bbb = ImmunologicalBBB(workspace_root=self.workspace_root)
+            from ozy_brain.semantic_merger import SemanticHeuristicMerger
+            merger = SemanticHeuristicMerger()
+
+            imported_count = 0
+            fused_count = 0
+            quarantined_count = 0
+            apoptosis_count = 0
+            local_patterns = self._load_patterns()
+
+            for c_hash in commit_hashes:
+                show_cmd = ["git", "notes", f"--ref={note_ref}", "show", c_hash]
+                show_res = subprocess.run(
+                    show_cmd,
+                    cwd=str(self.workspace_root),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                    check=False,
+                )
+                if show_res.returncode != 0 or not show_res.stdout.strip():
+                    continue
+
+                for line in show_res.stdout.strip().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        pat = json.loads(line)
+                    except Exception:
+                        continue
+
+                    # 1. Immunological inspection (Signature + Injection scan)
+                    inspection = immune_bbb.inspect_heuristic_safety(pat)
+                    if not inspection["is_safe"]:
+                        immune_bbb.quarantine_heuristic(pat, reason="; ".join(inspection["violations"]))
+                        quarantined_count += 1
+                        continue
+
+                    # 2. Apoptosis evaluation
+                    should_purge, r_score, _ = immune_bbb.evaluate_apoptosis(pat)
+                    if should_purge:
+                        apoptosis_count += 1
+                        p_id = pat.get("pattern_id")
+                        if p_id in local_patterns:
+                            del local_patterns[p_id]
+                        continue
+
+                    # 3. Semantic deduplication & fusion
+                    best_match, sim = merger.find_most_similar_pattern(
+                        pat, list(local_patterns.values())
+                    )
+                    if best_match and sim >= merger.similarity_threshold:
+                        canonical_id = best_match.get("pattern_id")
+                        if canonical_id and canonical_id in local_patterns:
+                            fused = merger.fuse_duplicate_patterns(local_patterns[canonical_id], pat)
+                            local_patterns[canonical_id] = fused
+                            fused_count += 1
+                    else:
+                        p_id = pat.get("pattern_id")
+                        if p_id in local_patterns:
+                            fused = merger.fuse_duplicate_patterns(local_patterns[p_id], pat)
+                            local_patterns[p_id] = fused
+                            fused_count += 1
+                        elif p_id:
+                            local_patterns[p_id] = pat
+                            imported_count += 1
+
+            self._save_patterns(local_patterns)
+            return {
+                "status": "ok",
+                "badge": "[STATUS: FEDERATED_HEURISTICS_SYNCED]",
+                "imported_count": imported_count,
+                "fused_count": fused_count,
+                "quarantined_count": quarantined_count,
+                "apoptosis_count": apoptosis_count,
+                "total_active_patterns": len(local_patterns),
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e), "badge": "[ALERT: GIT_NOTES_IMPORT_FAILED]"}
+
+    def record_peer_feedback(
+        self,
+        pattern_id: str,
+        success: bool,
+        error_context: str = "",
+    ) -> Dict[str, Any]:
+        """Records validation outcome for a pattern and triggers apoptosis if confidence degrades."""
+        from ozy_brain.bbb_immune import ImmunologicalBBB
+
+        patterns = self._load_patterns()
+        if pattern_id not in patterns:
+            return {"status": "not_found", "pattern_id": pattern_id}
+
+        pat = patterns[pattern_id]
+        if success:
+            pat["validation_successes"] = pat.get("validation_successes", 0) + 1
+        else:
+            pat["validation_failures"] = pat.get("validation_failures", 0) + 1
+            if error_context:
+                pat["last_failure_context"] = error_context
+
+        immune_bbb = ImmunologicalBBB(workspace_root=self.workspace_root)
+        should_purge, r_score, badge = immune_bbb.evaluate_apoptosis(pat)
+        pat["reputation_score"] = r_score
+
+        if should_purge:
+            del patterns[pattern_id]
+            self._save_patterns(patterns)
+            immune_bbb.quarantine_heuristic(pat, reason=f"Apoptosis: reputation dropped to {r_score:.2f}")
+            return {
+                "status": "apoptosis_purged",
+                "badge": badge,
+                "pattern_id": pattern_id,
+                "reputation_score": r_score,
+            }
+
+        patterns[pattern_id] = pat
+        self._save_patterns(patterns)
+        return {
+            "status": "feedback_recorded",
+            "badge": badge,
+            "pattern_id": pattern_id,
+            "reputation_score": r_score,
+            "successes": pat.get("validation_successes", 0),
+            "failures": pat.get("validation_failures", 0),
+        }
 
     def inspect_safety(self, text: str) -> Dict[str, Any]:
         """Evaluates whether arbitrary text or patch content passes the Blood-Brain Barrier."""
@@ -194,3 +413,4 @@ class CorpusCallosumEngine:
             "violations": violations,
             "sanitized_text": sanitized,
         }
+

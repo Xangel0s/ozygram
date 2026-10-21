@@ -409,7 +409,13 @@ def _corpus_callosum_handler(payload: dict[str, Any]) -> BrainResponse:
     tenant_id = payload.get("tenant_id") or "default"
     engine = CorpusCallosumEngine(workspace_root=workspace_root, tenant_id=tenant_id)
 
-    sub_action = payload.get("sub_action") or payload.get("event") or "import"
+    sub_action = payload.get("sub_action") or payload.get("event")
+    if not sub_action:
+        if payload.get("ref") or payload.get("_action") == "corpus_federated_sync":
+            sub_action = "federated_sync"
+        else:
+            sub_action = "import"
+
     if sub_action in ("export", "export_pattern"):
         pattern_id = payload.get("pattern_id") or "unnamed_pattern"
         title = payload.get("title") or ""
@@ -446,6 +452,25 @@ def _corpus_callosum_handler(payload: dict[str, Any]) -> BrainResponse:
             memory_updates=[f"BBB Safe: {safety['is_safe']}"],
             confidence=0.98,
             structured_plan=safety,
+        )
+    elif sub_action in ("git_sync", "federated_sync", "sync"):
+        ref = payload.get("ref") or "refs/notes/ozy-heuristics"
+        import_res = engine.import_from_git_notes(note_ref=ref)
+        export_res = engine.export_to_git_notes(note_ref=ref)
+        sync_res = {
+            "import": import_res,
+            "export": export_res,
+            "badge": import_res.get("badge", "[STATUS: FEDERATED_HEURISTICS_SYNCED]"),
+        }
+        return BrainResponse(
+            action="corpus_federated_sync",
+            summary=f"Federated Heuristics Git Sync: {import_res.get('imported_count', 0)} imported, {import_res.get('fused_count', 0)} fused.",
+            plan=[sync_res["badge"]],
+            risks=[f"Quarantined heuristics: {import_res.get('quarantined_count', 0)}"] if import_res.get("quarantined_count") else [],
+            recommendations=["Federated heuristics synced with refs/notes/ozy-heuristics."],
+            memory_updates=[f"Imported: {import_res.get('imported_count', 0)}", f"Active: {import_res.get('total_active_patterns', 0)}"],
+            confidence=0.96,
+            structured_plan=sync_res,
         )
     else:
         # Import patterns
@@ -524,6 +549,7 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "cerebellum_predict": _cerebellum_handler,
     "corpus_callosum": _corpus_callosum_handler,
     "cross_workspace_transfer": _corpus_callosum_handler,
+    "corpus_federated_sync": _corpus_callosum_handler,
     "cognitive_route": _route_handler,
     "route": _route_handler,
     "dialectic_committee": _dialectic_committee_handler,
@@ -533,7 +559,9 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
 
 def run(action: str, payload: dict[str, Any]) -> dict[str, Any]:
     handler = ACTIONS.get(action, plan)
-    response = handler(payload).to_dict()
+    payload_copy = dict(payload)
+    payload_copy["_action"] = action
+    response = handler(payload_copy).to_dict()
     response["engine"] = "ozy-brain-python"
     response["safe_mode"] = True
     return response
