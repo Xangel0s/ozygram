@@ -204,8 +204,8 @@ class AmygdalaReflexEngine:
                         "occurrences": count,
                         "last_triggered": now,
                         "created_at": now,
-                        "tenant_id": self.tenant_id,
-                        "workspace_root": self.workspace_root,
+                        "tenant_id": str(self.tenant_id or "local"),
+                        "workspace_root": str(self.workspace_root or ""),
                     })
 
         return reflexes
@@ -267,8 +267,8 @@ class AmygdalaReflexEngine:
                         r.get("occurrences", 1),
                         r["last_triggered"],
                         r["created_at"],
-                        r.get("tenant_id", self.tenant_id),
-                        r.get("workspace_root", self.workspace_root),
+                        str(r.get("tenant_id", self.tenant_id) or "local"),
+                        str(r.get("workspace_root", self.workspace_root) or ""),
                     ),
                 )
                 count += 1

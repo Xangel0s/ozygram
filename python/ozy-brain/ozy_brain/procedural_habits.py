@@ -120,8 +120,11 @@ class BasalGangliaEngine:
         sessions: List[Dict[str, Any]],
         min_confidence: float = 0.50,
         min_co_occurrences: int = 2,
+        min_support: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Mines frequent file transition rules (File A -> [File B, File C]) using co-occurrence statistics."""
+        if min_support is not None:
+            min_co_occurrences = min_support
         if not sessions:
             return []
 

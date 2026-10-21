@@ -50,7 +50,7 @@ class StdpSynapseEngine:
     ):
         self.workspace_root = Path(workspace_root or os.getcwd()).resolve()
         self.duckdb_path = Path(duckdb_path) if duckdb_path else self._resolve_duckdb_path()
-        self.db_path = Path(db_path) if db_path else self.workspace_root / ".ozymem" / "db.sqlite"
+        self.db_path = Path(db_path) if db_path else self._resolve_db_path()
         self.tenant_id = tenant_id
         self._init_duckdb_schema()
 
@@ -58,6 +58,15 @@ class StdpSynapseEngine:
         local_dir = self.workspace_root / ".ozymem"
         local_dir.mkdir(parents=True, exist_ok=True)
         return local_dir / "analytics.duckdb"
+
+    def _resolve_db_path(self) -> Path:
+        local_db = self.workspace_root / ".ozymem" / "memory.db"
+        if local_db.exists():
+            return local_db
+        local_db_sqlite = self.workspace_root / ".ozymem" / "db.sqlite"
+        if local_db_sqlite.exists():
+            return local_db_sqlite
+        return self.workspace_root / ".ozymem" / "memory.db"
 
     def _init_duckdb_schema(self):
         """Initializes stdp_synapses table in DuckDB."""
@@ -96,6 +105,7 @@ class StdpSynapseEngine:
         target_file: str,
         dt_seconds: float,
         tenant_id: Optional[str] = None,
+        con: Optional[Any] = None,
     ) -> float:
         """Records an observed pair transition and updates the synaptic weight in DuckDB."""
         src = normalize_rel_path(source_file)
@@ -105,9 +115,12 @@ class StdpSynapseEngine:
             return 0.0
 
         delta_w = self.calculate_stdp_delta(dt_seconds)
+        close_con = False
 
         try:
-            con = duckdb.connect(str(self.duckdb_path))
+            if con is None:
+                con = duckdb.connect(str(self.duckdb_path))
+                close_con = True
             cur = con.cursor()
             cur.execute(
                 "SELECT weight, sample_count FROM stdp_synapses WHERE source_file = ? AND target_file = ? AND tenant_id = ?",
@@ -133,9 +146,15 @@ class StdpSynapseEngine:
                 )
                 new_w = initial_w
 
-            con.close()
+            if close_con:
+                con.close()
             return new_w
         except Exception:
+            if close_con and con is not None:
+                try:
+                    con.close()
+                except Exception:
+                    pass
             return 0.0
 
     def process_event_trace(self, trace_events: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -146,18 +165,23 @@ class StdpSynapseEngine:
         sorted_events = sorted(trace_events, key=lambda e: float(e.get("timestamp", 0.0)))
         updated_count = 0
 
-        for i in range(len(sorted_events) - 1):
-            e1 = sorted_events[i]
-            e2 = sorted_events[i + 1]
-            f1 = e1.get("file_path", "")
-            f2 = e2.get("file_path", "")
-            if not f1 or not f2 or f1 == f2:
-                continue
+        try:
+            con = duckdb.connect(str(self.duckdb_path))
+            for i in range(len(sorted_events) - 1):
+                e1 = sorted_events[i]
+                e2 = sorted_events[i + 1]
+                f1 = e1.get("file_path", "")
+                f2 = e2.get("file_path", "")
+                if not f1 or not f2 or f1 == f2:
+                    continue
 
-            dt = float(e2.get("timestamp", 0.0)) - float(e1.get("timestamp", 0.0))
-            if abs(dt) <= self.TAU_PLUS * 2:  # within correlation horizon
-                self.record_synapse_spike(f1, f2, dt)
-                updated_count += 1
+                dt = float(e2.get("timestamp", 0.0)) - float(e1.get("timestamp", 0.0))
+                if abs(dt) <= self.TAU_PLUS * 2:  # within correlation horizon
+                    self.record_synapse_spike(f1, f2, dt, con=con)
+                    updated_count += 1
+            con.close()
+        except Exception:
+            pass
 
         return {"synapses_updated": updated_count}
 
@@ -194,6 +218,44 @@ class StdpSynapseEngine:
                     "target_file": r[0],
                     "weight": round(float(r[1]), 3),
                     "sample_count": int(r[2]),
+                    "tenant_id": tenant,
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    def get_strongest_synapses(
+        self,
+        min_weight: float = 0.50,
+        limit: int = 10,
+        tenant_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retrieves global strongest synaptic couplings across all files."""
+        tenant = tenant_id or self.tenant_id
+        if not HAS_DUCKDB:
+            return []
+
+        try:
+            con = duckdb.connect(str(self.duckdb_path))
+            cur = con.cursor()
+            cur.execute(
+                """SELECT source_file, target_file, weight, sample_count
+                   FROM stdp_synapses
+                   WHERE weight >= ? AND tenant_id = ?
+                   ORDER BY weight DESC, sample_count DESC
+                   LIMIT ?""",
+                [min_weight, tenant, limit],
+            )
+            rows = cur.fetchall()
+            con.close()
+
+            return [
+                {
+                    "source_file": r[0],
+                    "target_file": r[1],
+                    "weight": round(float(r[2]), 3),
+                    "sample_count": int(r[3]),
                     "tenant_id": tenant,
                 }
                 for r in rows

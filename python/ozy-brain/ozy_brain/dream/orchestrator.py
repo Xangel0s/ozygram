@@ -31,7 +31,12 @@ class DreamOrchestrator:
         chroma_dir: Optional[str | Path] = None,
     ) -> None:
         self.workspace_root = Path(workspace_root).resolve()
-        self.db_path = Path(db_path) if db_path else self.workspace_root / ".ozymem" / "db.sqlite"
+        if db_path:
+            self.db_path = Path(db_path)
+        elif (self.workspace_root / ".ozymem" / "memory.db").exists():
+            self.db_path = self.workspace_root / ".ozymem" / "memory.db"
+        else:
+            self.db_path = self.workspace_root / ".ozymem" / "db.sqlite"
         self.tenant_id = tenant_id
         self.chroma_dir = Path(chroma_dir) if chroma_dir else self.workspace_root / ".ozymem" / "chroma"
 
