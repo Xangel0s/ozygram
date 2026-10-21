@@ -166,12 +166,22 @@ def _is_noise_path(path: str) -> bool:
     return False
 
 
+def _is_directory_path(path: str) -> bool:
+    clean = path.replace("\\", "/").strip()
+    if clean.endswith("/"):
+        return True
+    last = clean.split("/")[-1]
+    if not last or ("." not in last and last.lower() not in ("dockerfile", "makefile", "license", "procfile")):
+        return True
+    return False
+
+
 def _candidate_files(payload: dict[str, Any], limit: int = 8) -> list[str]:
     files: list[str] = []
     goal = _goal(payload).lower()
     for item in _items(payload, "files"):
         text = str(item)
-        if _is_noise_path(text):
+        if _is_noise_path(text) or _is_directory_path(text):
             continue
         lower = text.lower().replace("\\", "/")
         if any(token in lower for token in goal.replace("/", " ").replace("-", " ").split() if len(token) >= 4):
@@ -205,7 +215,7 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
 
     for path in _items(payload, "files"):
         text = str(path)
-        if _is_noise_path(text):
+        if _is_noise_path(text) or _is_directory_path(text):
             continue
         clean = text.replace("\\", "/")
         if not is_doc_goal and (clean.endswith((".md", ".txt", ".rst")) or "/.agents/" in clean):
@@ -217,7 +227,7 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
     for item in _git_status_files(payload):
         path = str(item.get("path", "")).strip()
         status = str(item.get("status", "")).strip()
-        if path and not _is_noise_path(path):
+        if path and not _is_noise_path(path) and not _is_directory_path(path):
             clean = path.replace("\\", "/")
             if not is_doc_goal and (clean.endswith((".md", ".txt", ".rst")) or "/.agents/" in clean):
                 continue
@@ -232,7 +242,7 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
 
     for change in _items(payload, "changes"):
         text = str(change)
-        if "/" in text or "\\" in text or "." in text:
+        if ("/" in text or "\\" in text or "." in text) and not _is_directory_path(text):
             bump(text, 5, "explicit change input")
 
     for memory in _items(payload, "relevant_memories") + _items(payload, "relevant_lessons"):
@@ -249,7 +259,11 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
 
 def _risk_level(payload: dict[str, Any], dirty_files: list[dict[str, str]], candidate_scores: list[dict[str, Any]]) -> str:
     goal = _goal(payload).lower()
-    if any(word in goal for word in ["auth", "security", "database", "migration", "delete", "deploy", "drop", "truncate"]):
+    high_risk_words = (
+        "auth", "security", "database", "migration", "delete", "deploy", "drop", "truncate", "secret", "credential", "production",
+        "seguridad", "autenticacion", "autenticación", "base de datos", "migracion", "migración", "eliminar", "desplegar", "borrar", "secreto", "credencial", "produccion", "producción"
+    )
+    if any(word in goal for word in high_risk_words):
         return "high"
     relevant_candidates = [c for c in candidate_scores if int(c.get("score", 0)) >= 4]
     if len(relevant_candidates) >= 8 or any(word in goal for word in ["refactor", "architecture", "cross"]):
@@ -258,34 +272,47 @@ def _risk_level(payload: dict[str, Any], dirty_files: list[dict[str, str]], cand
 
 
 def _detect_stack(payload: dict[str, Any]) -> dict[str, bool]:
-    all_files = [str(f).lower().replace("\\", "/") for f in _items(payload, "files")]
-    for item in _git_status_files(payload):
-        if p := item.get("path"):
-            all_files.append(str(p).lower().replace("\\", "/"))
+    target_files = [str(f).lower().replace("\\", "/") for f in _items(payload, "files")]
     for c in _items(payload, "changes"):
-        all_files.append(str(c).lower().replace("\\", "/"))
-    file_str = " ".join(all_files)
+        target_files.append(str(c).lower().replace("\\", "/"))
+
+    cand_scores = _candidate_file_scores(payload)
+    for cs in cand_scores:
+        if cs.get("score", 0) >= 4:
+            target_files.append(str(cs.get("path", "")).lower().replace("\\", "/"))
+
+    target_files = [f for f in target_files if not _is_directory_path(f)]
+
+    if not target_files:
+        goal_tokens = {token for token in _goal(payload).lower().replace("/", " ").replace("-", " ").replace("_", " ").split() if len(token) >= 4}
+        for item in _git_status_files(payload):
+            if p := item.get("path"):
+                clean = str(p).lower().replace("\\", "/")
+                if any(t in clean for t in goal_tokens) and not _is_directory_path(clean):
+                    target_files.append(clean)
+
+    file_str = " ".join(target_files)
     project = str(payload.get("project", "")).lower()
 
     has_rust = (
         "cargo.toml" in file_str
-        or any(f.endswith(".rs") for f in all_files)
+        or any(f.endswith(".rs") for f in target_files)
         or project == "ozygram"
     )
     has_node = (
         "package.json" in file_str
         or "tsconfig.json" in file_str
-        or any(f.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")) for f in all_files)
+        or any(f.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")) for f in target_files)
     )
     has_python = (
         "pyproject.toml" in file_str
         or "requirements.txt" in file_str
         or "setup.py" in file_str
-        or any(f.endswith(".py") for f in all_files)
+        or any(f.endswith(".py") for f in target_files)
     )
     has_go = (
         "go.mod" in file_str
-        or any(f.endswith(".go") for f in all_files)
+        or any(f.endswith(".go") for f in target_files)
     )
     return {
         "rust": has_rust,

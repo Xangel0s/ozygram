@@ -85,14 +85,14 @@ def _topological_refactor_order(
     role_weights: dict[str, int] = {}
     for f in candidate_files:
         f_lower = f.lower()
-        if any(kw in f_lower for kw in ("types", "schema", "contract", "models", "entity", "dto")):
-            role_weights[f] = 0  # Phase 1: Base contracts
+        if any(kw in f_lower for kw in ("types", "schema", "contract", "models", "entity", "dto", "migration", ".sql")):
+            role_weights[f] = 0  # Phase 1: Base contracts & DB migrations
         elif any(kw in f_lower for kw in ("helpers", "utils", "reader", "indexing", "parser")):
             role_weights[f] = 1  # Phase 2: Core algorithms & helpers
         elif any(kw in f_lower for kw in ("store", "backend", "service", "memory", "planner")):
             role_weights[f] = 2  # Phase 3: Domain services
-        elif any(kw in f_lower for kw in ("dispatch", "server", "main", "cli", "router", "api")):
-            role_weights[f] = 3  # Phase 4: Entrypoints and routers
+        elif any(kw in f_lower for kw in ("dispatch", "server", "main", "cli", "router", "api", "form", "page", "view", "component")):
+            role_weights[f] = 3  # Phase 4: Entrypoints, UI forms, and routers
         else:
             role_weights[f] = 2
 
