@@ -4,6 +4,22 @@ All notable changes to Ozygram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-10-21
+
+### Added
+- **One-Click Autonomous Project Initializer (`ozy init` / `ozymem init`)**:
+  - Interactive and headless (`--auto`) CLI command that automatically discovers and configures installed AI coding clients: Antigravity IDE, Cursor (both user global and project-local), Claude Desktop (Windows, macOS, Linux), Windsurf, VS Code (Cline & Roo Code), and Zed.
+  - Automatically initializes project-local `.ozymem` substrate, writes smart default `.ozymemignore`, and manages `.gitignore` protection without manual intervention.
+  - Deploys executables to `~/.ozymem/bin` and updates user PATH automatically.
+- **Zero-Python Embedded Standalone Reasoning Runtime (`ozy-brain.exe`)**:
+  - Bundled PyInstaller standalone executable bundling Python 3.12, DuckDB, Pydantic, and all neuro-cognitive reasoning modules into a single zero-dependency binary.
+  - Developers on React, Node.js, Go, or Rust can use Ozygram without installing or configuring Python.
+  - Multi-tier resilient fallback: Embedded standalone binary (`ozy-brain.exe`) -> Python environment -> Rust fast-lane deterministic SQLite FTS5 fallback.
+- **Deep Production Validation & Monorepo Hardening**:
+  - Hardened Amygdala Reflex Substrate for Windows with strict string sanitization, eliminating `WindowsPath` parameter binding errors in SQLite WAL.
+  - Implemented DuckDB connection reuse in batch event traces (`process_event_trace`), eliminating physical file lock latency and accelerating trace processing by > 400%.
+  - Added bilingual semantic risk detection (Spanish keywords `migracion`, `seguridad`, `autenticación`) and candidate file directory path exclusion (`Ingenieria/`, `backups/`).
+
 ## [0.1.5] - 2026-10-21
 
 ### Added

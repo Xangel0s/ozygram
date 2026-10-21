@@ -47,6 +47,27 @@ jobs:
       - name: Build Release Binaries
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build Standalone Ozy Brain
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e python/ozy-brain
+          pyinstaller --clean --noconfirm --distpath dist_brain ozy-brain.spec
+          if [ -f "dist_brain/ozy-brain.exe" ]; then
+            mkdir -p target/${{ matrix.target }}/release
+            cp dist_brain/ozy-brain.exe target/${{ matrix.target }}/release/
+          elif [ -f "dist_brain/ozy-brain" ]; then
+            mkdir -p target/${{ matrix.target }}/release
+            cp dist_brain/ozy-brain target/${{ matrix.target }}/release/
+          fi
+        continue-on-error: true
+
       - name: Package Release Assets (Unix)
         if: matrix.os != 'windows-latest'
         run: |
@@ -54,6 +75,9 @@ jobs:
           cp target/${{ matrix.target }}/release/ozymem-server dist/
           cp target/${{ matrix.target }}/release/ozymem dist/
           cp target/${{ matrix.target }}/release/ozygram dist/
+          if [ -f target/${{ matrix.target }}/release/ozy-brain ]; then
+            cp target/${{ matrix.target }}/release/ozy-brain dist/
+          fi
           cp install.sh dist/
           cp README.md dist/
           tar -czvf ${{ matrix.asset_name }} -C dist .
@@ -68,6 +92,10 @@ jobs:
           Copy-Item target/${{ matrix.target }}/release/ozymem-server.exe dist/
           Copy-Item target/${{ matrix.target }}/release/ozymem.exe dist/
           Copy-Item target/${{ matrix.target }}/release/ozygram.exe dist/
+          if (Test-Path target/${{ matrix.target }}/release/ozy-brain.exe) {
+            Copy-Item target/${{ matrix.target }}/release/ozy-brain.exe dist/
+            Copy-Item target/${{ matrix.target }}/release/ozy-brain.exe upload/ozy-brain.exe
+          }
           Copy-Item install.ps1 dist/
           Copy-Item README.md dist/
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset_name }}
@@ -119,3 +147,5 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
             artifacts/**/ozygram.exe
+            artifacts/**/ozy-brain.exe
+            artifacts/**/ozy-brain

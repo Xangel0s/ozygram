@@ -19,7 +19,15 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="Ozy Brain local worker")
     parser.add_argument("--action", default="plan")
+    parser.add_argument("--server", action="store_true", help="Run as persistent TCP/JSON-RPC server")
+    parser.add_argument("--host", default="127.0.0.1", help="TCP server host")
+    parser.add_argument("--port", type=int, default=9473, help="TCP server port")
     args = parser.parse_args(argv)
+
+    if args.server:
+        from ozy_brain.server import start_server
+        start_server(args.host, args.port)
+        return 0
     try:
         raw = sys.stdin.read().strip() or "{}"
         payload = json.loads(raw)

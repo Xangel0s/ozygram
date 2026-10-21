@@ -4,9 +4,9 @@
 
 ### *Persistent Cognitive Memory, Code Graph & Autonomous Self-Improvement for AI Coding Agents*
 
-[![Release](https://img.shields.io/badge/Release-v0.1.5-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
+[![Release](https://img.shields.io/badge/Release-v0.1.6-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
 [![Fast Lane](https://img.shields.io/badge/Fast_Lane-Rust_<5ms-orange?style=for-the-badge&logo=rust)](crates/ozymem-server)
-[![Power Lane](https://img.shields.io/badge/Power_Lane-Python_Cognitive-blue?style=for-the-badge&logo=python)](python/ozy-brain)
+[![Standalone Brain](https://img.shields.io/badge/Brain-Standalone_Zero--Python-blue?style=for-the-badge)](python/ozy-brain)
 [![Storage](https://img.shields.io/badge/Storage-SQLite_ACID_+_Outbox-003B57?style=for-the-badge&logo=sqlite)](docs/architecture.md)
 [![Vector](https://img.shields.io/badge/Search-FastEmbed_ONNX_+_RRF-success?style=for-the-badge)](docs/semantic-search.md)
 [![Self-Improvement](https://img.shields.io/badge/MCTS-Dream--RSI-purple?style=for-the-badge)](docs/dream-rsi.md)
@@ -136,13 +136,41 @@ chmod +x ./install.sh && ./install.sh
 curl -fsSL https://raw.githubusercontent.com/Xangel0s/ozygram/main/install.sh | bash
 ```
 
-The installer builds the native Rust release binaries (`ozymem` CLI and `ozymem-server` MCP daemon), places them in `~/.ozymem/bin/` (automatically added to your system `PATH`), and sets up the local Python cognitive environment.
+The installer installs the native binaries (`ozymem`, `ozygram`, `ozymem-server`, and the standalone `ozy-brain` runtime) to `~/.ozymem/bin/`, adds it to `PATH`, and automatically runs `ozymem init --auto` to configure your installed AI editors.
+
+> [!TIP]
+> **Zero-Python Standalone Runtime**: `ozy-brain` is distributed as a self-contained executable. Developers no longer need Python, DuckDB, or pip installed on their systems.
 
 ---
 
-## [WORKS WITH YOUR AGENT: MCP CONFIGURATION]
+## [ONE-CLICK SETUP: OZY INIT]
 
-Add Ozygram to your agent's MCP settings configuration:
+Ozygram includes an interactive and autonomous setup wizard that detects your installed AI editors and automatically injects the MCP configuration:
+
+```bash
+ozymem init
+# or simply:
+ozy init
+```
+
+To run in completely hands-off auto mode (recommended for CI or quick install):
+```bash
+ozymem init --auto
+```
+
+This automatically scans, detects, and configures:
+- **Cursor** (Global `~/.cursor/mcp.json` and Workspace `.cursor/mcp.json`)
+- **Antigravity IDE** (`~/.gemini/antigravity-ide/mcp_config.json`)
+- **Claude Desktop** (`claude_desktop_config.json` on macOS/Windows)
+- **Windsurf** (`~/.codeium/windsurf/mcp_config.json`)
+- **VS Code** (Cline `cline_mcp_settings.json` and Roo Code `mcp_settings.json`)
+- **Zed** (`~/.config/zed/settings.json`)
+
+---
+
+## [MANUAL MCP CONFIGURATION]
+
+If you prefer to configure your client manually, add Ozygram to your agent's MCP settings configuration:
 
 ### Antigravity IDE
 File: `~/.gemini/antigravity-ide/mcp_config.json`

@@ -344,6 +344,28 @@ pub fn ensure_ozy_brain_running() {
     if try_call_ozy_brain_persistent("health", &dummy, 150).is_ok() {
         return;
     }
+
+    // 1. Prioritize standalone embedded binary if present (zero Python dependency)
+    if let Some(standalone_bin) = resolve_standalone_ozy_brain() {
+        if Command::new(&standalone_bin)
+            .args(["--server", "--port", "9473"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            for _ in 0..12 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if try_call_ozy_brain_persistent("health", &dummy, 150).is_ok() {
+                    eprintln!("[ozymem] auto-spawned persistent standalone ozy-brain daemon");
+                    return;
+                }
+            }
+        }
+    }
+
+    // 2. Fall back to Python module execution
     if let Some(brain_dir) = resolve_ozy_brain_dir() {
         for candidate in python_candidates() {
             if Command::new(&candidate)
@@ -508,13 +530,87 @@ pub fn call_ozy_brain_worker_smart(action: &str, payload: &Value, timeout_ms: u6
     }
 }
 
+pub fn resolve_standalone_ozy_brain() -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("OZY_BRAIN_BIN") {
+        let p = PathBuf::from(explicit);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    let bin_name = if cfg!(windows) { "ozy-brain.exe" } else { "ozy-brain" };
+
+    // 1. Alongside current executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = parent.join(bin_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    // 2. In ~/.ozymem/bin
+    if let Some(home) = home::home_dir() {
+        let candidate = home.join(".ozymem").join("bin").join(bin_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    // 3. Current dir and ancestors in target/release
+    if let Ok(cwd) = std::env::current_dir() {
+        for ancestor in cwd.ancestors() {
+            let candidate = ancestor.join("target").join("release").join(bin_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 pub fn call_ozy_brain_worker(action: &str, payload: &Value, timeout_ms: u64) -> anyhow::Result<Value> {
+    let payload_text = serde_json::to_string(payload)?;
+
+    // 1. Prioritize standalone embedded binary if present (zero Python dependency)
+    if let Some(standalone_bin) = resolve_standalone_ozy_brain() {
+        let mut command = Command::new(&standalone_bin);
+        command.args(["--action", action]);
+        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        if let Ok(mut child) = command.spawn() {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(payload_text.as_bytes());
+            }
+
+            let start = std::time::Instant::now();
+            loop {
+                if child.try_wait()?.is_some() {
+                    let output = child.wait_with_output()?;
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if let Ok(parsed) = serde_json::from_str(stdout.trim()) {
+                            return Ok(parsed);
+                        }
+                    }
+                    break;
+                }
+                if start.elapsed() > std::time::Duration::from_millis(timeout_ms) {
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+    }
+
+    // 2. Fall back to Python module execution
     let brain_dir = resolve_ozy_brain_dir().ok_or_else(|| {
         anyhow::anyhow!(
-            "Ozy Brain worker not found. Set OZY_BRAIN_PATH or keep python/ozy-brain in the repository."
+            "Ozy Brain worker not found. Place ozy-brain.exe in ~/.ozymem/bin, set OZY_BRAIN_PATH, or keep python/ozy-brain in repository."
         )
     })?;
-    let payload_text = serde_json::to_string(payload)?;
     let mut last_error = String::new();
     for candidate in python_candidates() {
         let mut command = {
@@ -573,11 +669,28 @@ pub(crate) fn python_candidates() -> Vec<String> {
     if let Ok(explicit) = std::env::var("OZY_BRAIN_PYTHON") {
         return vec![explicit];
     }
-    if cfg!(target_os = "windows") {
-        vec!["python".to_string(), "py".to_string()]
-    } else {
-        vec!["python3".to_string(), "python".to_string()]
+    let mut candidates = Vec::new();
+
+    // Check virtualenv in ~/.ozymem/venv
+    if let Some(home) = home::home_dir() {
+        let venv_py = if cfg!(windows) {
+            home.join(".ozymem").join("venv").join("Scripts").join("python.exe")
+        } else {
+            home.join(".ozymem").join("venv").join("bin").join("python")
+        };
+        if venv_py.exists() {
+            candidates.push(venv_py.to_string_lossy().to_string());
+        }
     }
+
+    if cfg!(target_os = "windows") {
+        candidates.push("python".to_string());
+        candidates.push("py".to_string());
+    } else {
+        candidates.push("python3".to_string());
+        candidates.push("python".to_string());
+    }
+    candidates
 }
 
 pub fn resolve_ozy_brain_dir() -> Option<PathBuf> {
@@ -595,6 +708,10 @@ pub fn resolve_ozy_brain_dir() -> Option<PathBuf> {
             }
         }
     }
+    if let Some(home) = home::home_dir() {
+        candidates.push(home.join(".ozymem"));
+    }
+
     for base in candidates {
         let p = base.join("python").join("ozy-brain");
         if p.join("ozy_brain").join("__main__.py").exists() {

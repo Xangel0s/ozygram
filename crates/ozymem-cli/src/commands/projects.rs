@@ -537,7 +537,7 @@ pub async fn run_mcp_start() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn run_init() -> anyhow::Result<()> {
+pub async fn run_select_project_interactive() -> anyhow::Result<()> {
     let (_, config) = load_config()?;
     if config.projects.is_empty() {
         println!("[INFO] No hay proyectos registrados todavía. Usa 'ozymem register' para registrar uno.");

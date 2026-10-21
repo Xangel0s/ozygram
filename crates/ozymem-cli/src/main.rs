@@ -152,8 +152,17 @@ enum Commands {
         #[arg(long, default_value_t = 1200)]
         tokens: usize,
     },
-    /// Inicializar credenciales y entornos locales de Ozymem
-    Init,
+    /// Initialize Ozygram for current workspace and auto-configure AI MCP clients
+    Init {
+        #[arg(long)]
+        auto: bool,
+
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+
+        #[arg(short, long)]
+        client: Option<String>,
+    },
     Mcp {
         #[arg(default_value = "run")]
         action: String,
@@ -186,11 +195,14 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let command = args.command.unwrap_or(Commands::Setup { auto: false });
+    let command = args.command.unwrap_or(Commands::Init { auto: false, path: None, client: None });
 
     match &command {
         Commands::Setup { auto } => {
             return run_setup(*auto).await;
+        }
+        Commands::Init { auto, path, client } => {
+            return run_init(path.clone(), *auto, client.clone()).await;
         }
         Commands::Doctor { json } => {
             return run_doctor(*json).await;
@@ -212,9 +224,6 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::List => {
             return run_list();
-        }
-        Commands::Init => {
-            return run_init().await;
         }
         Commands::Export { output, project } => {
             let cwd = std::env::current_dir()?;
@@ -375,7 +384,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Register { .. } => unreachable!(),
         Commands::Deregister { .. } => unreachable!(),
         Commands::List => unreachable!(),
-        Commands::Init => unreachable!(),
+        Commands::Init { .. } => unreachable!(),
         Commands::Export { .. } => unreachable!(),
         Commands::Import { .. } => unreachable!(),
         Commands::Link { .. } => unreachable!(),

@@ -31,6 +31,12 @@ cp -f "$CLI_RELEASE" "$BIN_DIR/ozymem"
 cp -f "$CLI_RELEASE" "$BIN_DIR/ozygram"
 chmod +x "$BIN_DIR/ozymem-server" "$BIN_DIR/ozymem" "$BIN_DIR/ozygram"
 
+if [ -f "./target/release/ozy-brain" ]; then
+    cp -f "./target/release/ozy-brain" "$BIN_DIR/ozy-brain"
+    chmod +x "$BIN_DIR/ozy-brain"
+    echo " -> Deployed standalone ozy-brain (Zero-Python runtime bundled)."
+fi
+
 if [ -d "./python/ozy-brain" ]; then
     cp -rf "./python/ozy-brain" "$OZY_DIR/python/"
 fi
@@ -41,10 +47,5 @@ echo "Add to your shell profile (~/.bashrc or ~/.zshrc):"
 echo "  export PATH=\"$BIN_DIR:\$PATH\""
 echo "  export OZY_BRAIN_PATH=\"$PY_DIR\""
 echo ""
-echo "MCP Server Configuration (mcp_servers):"
-echo "{"
-echo "  \"ozygram\": {"
-echo "    \"command\": \"$BIN_DIR/ozymem-server\","
-echo "    \"args\": []"
-echo "  }"
-echo "}"
+echo "[Auto-Configuration] Scanning and auto-configuring installed AI clients..."
+"$BIN_DIR/ozymem" init --auto || true

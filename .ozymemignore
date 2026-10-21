@@ -1,0 +1,14 @@
+# Ozygram Cognitive Ignore Patterns
+node_modules/
+target/
+dist/
+build/
+.git/
+__pycache__/
+.pytest_cache/
+*.pyc
+venv/
+.venv/
+*.log
+*.sqlite*
+*.duckdb*

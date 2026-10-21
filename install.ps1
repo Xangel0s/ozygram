@@ -32,6 +32,7 @@ try {
 $ServerRelease  = Join-Path $PSScriptRoot "target\release\ozymem-server.exe"
 $CliRelease     = Join-Path $PSScriptRoot "target\release\ozymem.exe"
 $OzygramRelease = Join-Path $PSScriptRoot "target\release\ozygram.exe"
+$BrainRelease   = Join-Path $PSScriptRoot "target\release\ozy-brain.exe"
 
 if (-not (Test-Path $ServerRelease) -or -not (Test-Path $CliRelease)) {
     Write-Host "[!] Release binaries not found in target\release." -ForegroundColor Red
@@ -42,6 +43,7 @@ Write-Host "[3/4] Installing executables and Ozy Brain worker..." -ForegroundCol
 $DestServer  = Join-Path $BinDir "ozymem-server.exe"
 $DestCli     = Join-Path $BinDir "ozymem.exe"
 $DestOzygram = Join-Path $BinDir "ozygram.exe"
+$DestBrain   = Join-Path $BinDir "ozy-brain.exe"
 
 if (Test-Path $DestServer) {
     Move-Item -Force $DestServer "$DestServer.old" -ErrorAction SilentlyContinue
@@ -52,6 +54,9 @@ if (Test-Path $DestCli) {
 if (Test-Path $DestOzygram) {
     Move-Item -Force $DestOzygram "$DestOzygram.old" -ErrorAction SilentlyContinue
 }
+if (Test-Path $DestBrain) {
+    Move-Item -Force $DestBrain "$DestBrain.old" -ErrorAction SilentlyContinue
+}
 
 Copy-Item -Path $ServerRelease -Destination $DestServer -Force
 Copy-Item -Path $CliRelease    -Destination $DestCli -Force
@@ -59,6 +64,10 @@ if (Test-Path $OzygramRelease) {
     Copy-Item -Path $OzygramRelease -Destination $DestOzygram -Force
 } else {
     Copy-Item -Path $CliRelease     -Destination $DestOzygram -Force
+}
+if (Test-Path $BrainRelease) {
+    Copy-Item -Path $BrainRelease -Destination $DestBrain -Force
+    Write-Host " -> Deployed standalone ozy-brain.exe (Zero-Python runtime bundled)." -ForegroundColor Green
 }
 
 if (Test-Path (Join-Path $PSScriptRoot "python\ozy-brain")) {
@@ -78,14 +87,16 @@ if ($UserPath -notlike "*$BinDir*") {
     Write-Host " -> $BinDir is already in User PATH." -ForegroundColor Green
 }
 
-$ServerPathEscaped = (Join-Path $BinDir "ozymem-server.exe").Replace("\", "\\")
-
 Write-Host "`n======================================================" -ForegroundColor Green
 Write-Host "   Ozymem / Ozygram Installed Successfully!           " -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Green
-Write-Host "`nAdd this configuration to your MCP settings (mcp_servers):`n" -ForegroundColor White
 
-Write-Host "{`n  `"ozygram`": {`n    `"command`": `"$ServerPathEscaped`",`n    `"args`": []`n  }`n}" -ForegroundColor Cyan
+Write-Host "`n[Auto-Configuration] Scanning and auto-configuring installed AI clients..." -ForegroundColor Yellow
+try {
+    & $DestCli init --auto
+} catch {
+    Write-Host " -> Run 'ozymem init' to configure AI clients at any time." -ForegroundColor DarkGray
+}
 
 Write-Host "`nTest installation by running in a new terminal:" -ForegroundColor Yellow
 Write-Host "  ozymem list" -ForegroundColor White

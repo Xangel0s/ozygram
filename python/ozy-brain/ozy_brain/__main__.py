@@ -1,3 +1,7 @@
-from .main import main
+try:
+    from .main import main
+except ImportError:
+    from ozy_brain.main import main
 
-raise SystemExit(main())
+if __name__ == "__main__":
+    raise SystemExit(main())
