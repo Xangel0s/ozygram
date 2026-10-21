@@ -164,13 +164,35 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
     # --- Speculative Ghost Patch simulation check ---
     ghost_sim: dict[str, Any] = payload.get("simulation_result") or payload.get("ghost_patch_report") or {}
 
+    # --- Cerebellar Forward Model & Dysmetria Evaluation ---
+    cerebellum_report: dict[str, Any] = {}
+    try:
+        from ozy_brain.cerebellum import CerebellumEngine
+        ws_root = payload.get("workspace_root") or payload.get("project") or "."
+        c_tenant = payload.get("tenant_id") or "local"
+        c_engine = CerebellumEngine(workspace_root=ws_root, tenant_id=c_tenant)
+        cand_files = list(
+            payload.get("candidate_files")
+            or payload.get("proposed_files")
+            or payload.get("files")
+            or [i.get("file_path") for i in impact if isinstance(i, dict)]
+            or []
+        )
+        cerebellum_report = c_engine.evaluate_patch_dysmetria(target_file, proposed_files=cand_files)
+    except Exception:
+        cerebellum_report = {}
+
     critical_keywords = ["schema", "auth", "migration", "core", "token", "secret", "config", "backend"]
     is_critical = any(kw in target_file.lower() for kw in critical_keywords) or any(
         isinstance(item, dict) and any(kw in str(item.get("file_path", "")).lower() for kw in critical_keywords)
         for item in impact
     )
-    # A high-blast-radius symbol alert or contract breakage also makes the change critical.
-    if (blast_report and blast_report.alert_required) or (ghost_sim and ghost_sim.get("breaks_dependents")):
+    # A high-blast-radius symbol alert, contract breakage, or motor overshoot makes the change critical.
+    if (
+        (blast_report and blast_report.alert_required)
+        or (ghost_sim and ghost_sim.get("breaks_dependents"))
+        or (cerebellum_report.get("status") == "overshoot")
+    ):
         is_critical = True
 
     snapshot_required = blast_radius >= 3 or is_critical
@@ -187,6 +209,12 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
             f"[CRITICAL_VETO: CONTRACT_BREAKAGE] La simulacion en RAM detecto que modificar '{target_sym}' "
             f"rompe el contrato de {breakages_count} llamador(es) dependiente(s).",
         )
+    if cerebellum_report.get("is_dysmetric"):
+        if cerebellum_report.get("status") == "overshoot":
+            plan_steps.insert(0, cerebellum_report.get("badge", "[ALERT: CODE_DYSMETRIA - MOTOR_OVERSHOOT]"))
+        elif cerebellum_report.get("status") == "under_coupled":
+            plan_steps.append(cerebellum_report.get("badge", "[ALERT: CODE_DYSMETRIA - UNDER_COUPLED]"))
+
     if blast_report and blast_report.alert_required:
         plan_steps.append(blast_report.alert_text)
     elif snapshot_required:
@@ -216,6 +244,9 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
             f"Simbolo '{symbol}' referenciado por {blast_report.critical_module_hits} "
             "modulos criticos: riesgo de regresion arquitectural."
         )
+    if cerebellum_report.get("is_dysmetric"):
+        for alert_msg in cerebellum_report.get("alerts", []):
+            risks.append(alert_msg)
 
     recommendations = [
         "Registrar nodo de exploracion con rollback_snapshot antes de aplicar diffs."
@@ -223,6 +254,10 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
         else "Aplicar cambios de manera incremental.",
         "Verificar suite de pruebas sobre componentes dependientes.",
     ]
+    if cerebellum_report.get("missing_coupled_files"):
+        recommendations.append(
+            f"Evaluar inclusion de dependencias acopladas: {cerebellum_report['missing_coupled_files']}."
+        )
 
     # Build semantic blast radius payload for structured_plan
     blast_radius_analysis: dict[str, Any] = {
@@ -244,6 +279,7 @@ def _simulate_action_handler(payload: dict[str, Any]) -> BrainResponse:
         structured_plan={
             "target_file": target_file,
             "blast_radius_analysis": blast_radius_analysis,
+            "cerebellar_forward_model": cerebellum_report,
             "exploration_guidance": {
                 "snapshot_required": snapshot_required,
                 "snapshot_alert": "[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]" if snapshot_required else "[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT]",
@@ -366,6 +402,99 @@ def _neuromodulator_handler(payload: dict[str, Any]) -> BrainResponse:
     )
 
 
+def _corpus_callosum_handler(payload: dict[str, Any]) -> BrainResponse:
+    from ozy_brain.corpus_callosum import CorpusCallosumEngine
+
+    workspace_root = payload.get("workspace_root") or payload.get("project") or "."
+    tenant_id = payload.get("tenant_id") or "default"
+    engine = CorpusCallosumEngine(workspace_root=workspace_root, tenant_id=tenant_id)
+
+    sub_action = payload.get("sub_action") or payload.get("event") or "import"
+    if sub_action in ("export", "export_pattern"):
+        pattern_id = payload.get("pattern_id") or "unnamed_pattern"
+        title = payload.get("title") or ""
+        category = payload.get("category") or "architecture"
+        description = payload.get("description") or ""
+        rules = payload.get("abstract_rules") or payload.get("rules") or []
+        res = engine.export_transferable_pattern(
+            pattern_id=pattern_id,
+            title=title,
+            category=category,
+            description=description,
+            abstract_rules=rules,
+            source_tenant=tenant_id,
+        )
+        return BrainResponse(
+            action="corpus_callosum",
+            summary=f"Corpus Callosum Export: {res['badge']} (Pattern '{pattern_id}').",
+            plan=[f"Pattern '{pattern_id}' sanitized through BBB and persisted."],
+            risks=[f"BBB violations redacted: {res['bbb_violations_count']}"] if res["bbb_violations_count"] else [],
+            recommendations=["Pattern is now available for cross-workspace ingestion."],
+            memory_updates=[f"Exported: {pattern_id}"],
+            confidence=0.95,
+            structured_plan=res,
+        )
+    elif sub_action in ("inspect", "inspect_safety", "bbb"):
+        text = str(payload.get("text") or payload.get("content") or "")
+        safety = engine.inspect_safety(text)
+        return BrainResponse(
+            action="corpus_callosum",
+            summary=f"BBB Safety Inspection: {safety['badge']}",
+            plan=[safety["badge"]],
+            risks=safety["violations"] or ["No pathogens or high-entropy tokens detected."],
+            recommendations=["Text safe to transfer." if safety["is_safe"] else "Sanitize flagged tokens before committing."],
+            memory_updates=[f"BBB Safe: {safety['is_safe']}"],
+            confidence=0.98,
+            structured_plan=safety,
+        )
+    else:
+        # Import patterns
+        cat = payload.get("category")
+        patterns = engine.import_transferable_patterns(category=cat)
+        return BrainResponse(
+            action="corpus_callosum",
+            summary=f"Corpus Callosum: {len(patterns)} transferable pattern(s) retrieved.",
+            plan=[f"Imported {len(patterns)} abstract architectural pattern(s)."],
+            risks=[],
+            recommendations=[f"Pattern '{p.get('pattern_id')}': {p.get('title')}" for p in patterns[:3]],
+            memory_updates=[f"Imported patterns: {len(patterns)}"],
+            confidence=0.95,
+            structured_plan={"patterns": patterns},
+        )
+
+
+def _cerebellum_handler(payload: dict[str, Any]) -> BrainResponse:
+    from ozy_brain.cerebellum import CerebellumEngine
+
+    workspace_root = payload.get("workspace_root") or payload.get("project") or "."
+    tenant_id = payload.get("tenant_id") or "local"
+    engine = CerebellumEngine(workspace_root=workspace_root, tenant_id=tenant_id)
+
+    target_file = str(payload.get("target_file") or payload.get("file_path") or "")
+    proposed_files = payload.get("proposed_files") or payload.get("files") or []
+    diff_lines = int(payload.get("diff_lines") or 0)
+    eval_res = engine.evaluate_patch_dysmetria(target_file, proposed_files=proposed_files, diff_lines=diff_lines)
+
+    return BrainResponse(
+        action="cerebellum_predict",
+        summary=f"Cerebellum Forward Model: {eval_res['badge']} (D_KL: {eval_res['kld']:.2f})",
+        plan=[eval_res["badge"]] + eval_res["alerts"],
+        risks=[
+            f"Divergence D_KL={eval_res['kld']:.2f} exceeds threshold."
+            if eval_res["is_dysmetric"]
+            else "Patch fits within expected motor kinematics."
+        ],
+        recommendations=[
+            f"Include missing coupled files: {eval_res['missing_coupled_files']}"
+            if eval_res["missing_coupled_files"]
+            else "Motor kinematics calibrated."
+        ],
+        memory_updates=[f"D_KL: {eval_res['kld']:.2f}", f"Status: {eval_res['status']}"],
+        confidence=0.92,
+        structured_plan=eval_res,
+    )
+
+
 ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "plan": plan,
     "reflect": reflect,
@@ -392,6 +521,9 @@ ACTIONS: dict[str, Callable[[dict[str, Any]], BrainResponse]] = {
     "neuro_state": _neuromodulator_handler,
     "simulate_action": _simulate_action_handler,
     "critique_hypothesis": _simulate_action_handler,
+    "cerebellum_predict": _cerebellum_handler,
+    "corpus_callosum": _corpus_callosum_handler,
+    "cross_workspace_transfer": _corpus_callosum_handler,
     "cognitive_route": _route_handler,
     "route": _route_handler,
     "dialectic_committee": _dialectic_committee_handler,

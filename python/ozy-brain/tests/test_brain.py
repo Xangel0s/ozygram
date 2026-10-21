@@ -246,6 +246,47 @@ class OzyBrainTests(unittest.TestCase):
         self.assertFalse(leaf_res["structured_plan"]["exploration_guidance"]["snapshot_required"])
         self.assertTrue(any("[INFO: LOW_BLAST_RADIUS: SAFE TO EDIT]" in p for p in leaf_res["plan"]))
 
+    def test_cerebellum_predict_action(self):
+        res = run("cerebellum_predict", {
+            "project": "ozymem",
+            "target_file": "crates/ozymem-server/src/dispatch.rs",
+            "proposed_files": [
+                "crates/ozymem-server/src/dispatch.rs",
+                "crates/ozymem-server/src/handlers.rs",
+            ],
+        })
+        self.assertEqual(res["action"], "cerebellum_predict")
+        self.assertIn("[STATUS: MOTOR_CALIBRATED]", res["plan"][0])
+        self.assertIn("cerebellar_forward_model", run("simulate_action", {
+            "project": "ozymem",
+            "target_file": "crates/ozymem-server/src/dispatch.rs",
+            "proposed_files": ["crates/ozymem-server/src/dispatch.rs"],
+        })["structured_plan"])
+
+    def test_corpus_callosum_action(self):
+        # 1. Inspect safety of text with API key
+        inspect_res = run("corpus_callosum", {
+            "project": "ozymem",
+            "sub_action": "inspect_safety",
+            "text": "sk-ant-api03-abcdef1234567890abcdef1234567890",
+        })
+        self.assertEqual(inspect_res["action"], "corpus_callosum")
+        self.assertIn("[ALERT: BBB_PATHOGEN_INTERCEPTED]", inspect_res["plan"][0])
+
+        # 2. Export clean pattern
+        export_res = run("corpus_callosum", {
+            "project": "ozymem",
+            "sub_action": "export_pattern",
+            "pattern_id": "test_pattern_1",
+            "title": "Clean Architecture Guideline",
+            "category": "design",
+            "description": "Abstract pattern without local paths or secrets",
+            "abstract_rules": ["Keep interfaces decoupled."],
+            "tenant_id": "crmnew",
+        })
+        self.assertEqual(export_res["action"], "corpus_callosum")
+        self.assertIn("[STATUS: CORPUS_CALLOSUM_TRANSFERRED]", export_res["summary"])
+
 
 if __name__ == "__main__":
     unittest.main()
