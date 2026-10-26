@@ -328,15 +328,35 @@ def _git_status_files(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+    stop_words = {
+        "de", "en", "la", "el", "al", "un", "una", "los", "las", "del", "por", "para", "con",
+        "to", "in", "on", "at", "is", "by", "or", "if", "an", "the", "and", "for", "with", "from",
+        "se", "ya", "es", "su", "sus", "tu", "tus", "mi", "mis", "as"
+    }
     raw_tokens = {
         token
         for token in _goal(payload).lower().replace("/", " ").replace("-", " ").replace("_", " ").split()
-        if len(token) >= 3 or token in ("ui", "db", "qr", "id")
+        if len(token) >= 2 and token not in stop_words
     }
-    goal_tokens = set(raw_tokens)
+
+    def _stems(tok: str) -> set[str]:
+        res = {tok}
+        if tok.endswith("es") and len(tok) > 4:
+            res.add(tok[:-2])
+        elif tok.endswith("s") and len(tok) > 3:
+            res.add(tok[:-1])
+        if tok.endswith("cion") and len(tok) > 5:
+            res.add(tok[:-4])
+        elif tok.endswith("tion") and len(tok) > 5:
+            res.add(tok[:-4])
+        return res
+
+    goal_tokens: set[str] = set()
     for token in raw_tokens:
+        goal_tokens.update(_stems(token))
         if token in DOMAIN_SYNONYMS:
-            goal_tokens.update(DOMAIN_SYNONYMS[token])
+            for syn in DOMAIN_SYNONYMS[token]:
+                goal_tokens.update(_stems(syn))
 
     is_doc_goal = any(tok in goal_tokens for tok in ("docs", "documentation", "readme", "guide", "rule", "markdown", "agent"))
     scores: dict[str, dict[str, Any]] = {}
@@ -359,6 +379,20 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
         overlap = sorted(token for token in goal_tokens if token in lower)
         if overlap:
             bump(text, 3 + min(len(overlap), 4), f"matches {', '.join(overlap[:3])}")
+
+    # Topological graph impact neighbors
+    for entry in _items(payload, "impact"):
+        if isinstance(entry, dict):
+            fpath = entry.get("file_path") or entry.get("target") or entry.get("path")
+            if fpath:
+                clean_fpath = _clean_path(str(fpath))
+                if clean_fpath and _is_code_file(clean_fpath, allow_markdown=is_doc_goal) and not _is_noise_path(clean_fpath) and not _is_directory_path(clean_fpath):
+                    if not is_doc_goal and (clean_fpath.endswith((".md", ".txt", ".rst")) or "/.agents/" in clean_fpath):
+                        continue
+                    depth = int(entry.get("depth", 1))
+                    reason = str(entry.get("reason", "graph neighbor"))
+                    pts = 6 if depth <= 1 else 4
+                    bump(clean_fpath, pts, f"graph connected depth {depth} ({reason})")
 
     for item in _git_status_files(payload):
         raw_path = str(item.get("path", "")).strip()
@@ -404,10 +438,11 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
                 if name and len(name) >= 5 and name in haystack and not _is_noise_path(clean_path_str) and not _is_directory_path(clean_path_str) and _is_code_file(clean_path_str, allow_markdown=is_doc_goal):
                     bump(clean_path_str, 5, f"candidate mentioned in memory text ({name})")
 
-    if not scores:
+    # Ensure we include primary files if fewer than 3 scored candidates
+    if len(scores) < min(3, len(_items(payload, "files"))):
         for path in _items(payload, "files"):
             text = _clean_path(str(path))
-            if not _is_noise_path(text) and not _is_directory_path(text) and _is_code_file(text, allow_markdown=is_doc_goal):
+            if text not in scores and not _is_noise_path(text) and not _is_directory_path(text) and _is_code_file(text, allow_markdown=is_doc_goal):
                 bump(text, 1, "indexed fallback candidate")
                 if len(scores) >= 3:
                     break

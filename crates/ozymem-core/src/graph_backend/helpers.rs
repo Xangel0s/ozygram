@@ -281,6 +281,12 @@ pub fn path_matches_ignore(path: &Path, patterns: &[String], project_root: &Path
     let rel = relative.to_string_lossy().replace('\\', "/");
     let rel_lower = rel.to_lowercase();
 
+    // Source root immunity: files inside src/, app/, lib/, components/ should never be ignored by bare words like "data"
+    let in_source_root = rel_lower.starts_with("src/") || rel_lower.contains("/src/")
+        || rel_lower.starts_with("app/") || rel_lower.contains("/app/")
+        || rel_lower.starts_with("lib/") || rel_lower.contains("/lib/")
+        || rel_lower.starts_with("components/") || rel_lower.contains("/components/");
+
     for p in patterns {
         let pat = p.trim().replace('\\', "/");
         if pat.is_empty() {
@@ -291,6 +297,10 @@ pub fn path_matches_ignore(path: &Path, patterns: &[String], project_root: &Path
         // Exact match or directory prefix
         if rel_lower == pat_lower || rel_lower.starts_with(&format!("{}/", pat_lower)) {
             return true;
+        }
+        // Protect source root code directories from generic data/temp keyword collision
+        if in_source_root && (pat_lower == "data" || pat_lower == "temp") {
+            continue;
         }
         // Match any path component (e.g. "coverage" matches "src/coverage/index.html")
         for component in relative.components() {

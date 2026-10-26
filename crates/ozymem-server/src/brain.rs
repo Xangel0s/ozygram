@@ -90,12 +90,51 @@ pub(crate) async fn handle_ozy_brain(
         .unwrap_or(4000) as usize;
 
     let summary = backend.get_graph_summary().await?;
-    let files = backend
-        .list_all_files()
-        .unwrap_or_default()
+    let all_files = backend.list_all_files().unwrap_or_default();
+
+    // 1. Universal goal token extraction (ignoring generic multilingual stop-words)
+    let stop_words: std::collections::HashSet<&str> = [
+        "de", "en", "la", "el", "al", "un", "una", "los", "las", "del", "por", "para", "con",
+        "to", "in", "on", "at", "is", "by", "or", "if", "an", "the", "and", "for", "with", "from",
+        "se", "ya", "es", "su", "sus", "tu", "tus", "mi", "mis", "as"
+    ].iter().cloned().collect();
+
+    let goal_tokens: Vec<String> = goal
+        .to_lowercase()
+        .replace(['/', '-', '_', ':', '.', ',', ';'], " ")
+        .split_whitespace()
+        .filter(|t| t.len() >= 2 && !stop_words.contains(*t))
+        .map(|t| t.to_string())
+        .collect();
+
+    // 2. Pre-scoring indexed files in memory to identify anchor nodes
+    let mut scored_files: Vec<(usize, String)> = all_files
         .into_iter()
-        .take(limit.min(50))
-        .collect::<Vec<_>>();
+        .filter_map(|path| {
+            let lower = path.to_lowercase();
+            if lower.contains("/dist/") || lower.contains("/build/") || lower.contains("/.next/") || lower.contains("/__pycache__/") {
+                return None;
+            }
+            let mut score = 0;
+            let filename = lower.rsplit(['/', '\\']).next().unwrap_or("");
+            for token in &goal_tokens {
+                if filename.contains(token) {
+                    score += 5;
+                } else if lower.contains(token) {
+                    score += 2;
+                }
+            }
+            if score > 0 {
+                Some((score, path))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    scored_files.sort_by(|a, b| b.0.cmp(&a.0));
+    let anchor_files: Vec<String> = scored_files.iter().take(5).map(|(_, p)| p.clone()).collect();
+
     let observations = backend
         .recent_observations(Some(&project), Some("project"), limit.min(30))
         .unwrap_or_default();
@@ -131,9 +170,57 @@ pub(crate) async fn handle_ozy_brain(
         .or_else(|| tool_call.arguments.get("target_file"))
         .and_then(Value::as_str);
 
+    // 3. Graph-Augmented Impact: If target file given, traverse 2 hops; otherwise, expand 1 hop from anchors
     let mut impact = Vec::new();
+    let mut seen_impact = std::collections::HashSet::new();
+
     if let Some(target) = target_file_opt {
         impact = backend.analyze_impact(target, 2);
+    } else if !anchor_files.is_empty() {
+        for anchor in &anchor_files {
+            let direct_impact = backend.analyze_impact(anchor, 1);
+            for entry in direct_impact {
+                if seen_impact.insert(entry.file_path.clone()) {
+                    impact.push(entry);
+                }
+            }
+        }
+    }
+
+    // 4. Assemble candidate files: Anchors + Graph Topological Neighbors + Scored Candidates
+    let mut files_set = std::collections::HashSet::new();
+    let mut files = Vec::new();
+
+    for anchor in &anchor_files {
+        if files_set.insert(anchor.clone()) {
+            files.push(anchor.clone());
+        }
+    }
+    for entry in &impact {
+        if files_set.insert(entry.file_path.clone()) {
+            files.push(entry.file_path.clone());
+        }
+    }
+    for (_, path) in scored_files.into_iter().take(40) {
+        if files_set.insert(path.clone()) {
+            files.push(path);
+        }
+    }
+
+    if files.len() < 10 {
+        if let Ok(all) = backend.list_all_files() {
+            for p in all {
+                let lower = p.to_lowercase();
+                if lower.ends_with("package.json") || lower.ends_with("cargo.toml") || lower.ends_with("main.py") || lower.ends_with("router.py") {
+                    if files_set.insert(p.clone()) {
+                        files.push(p);
+                    }
+                    if files.len() >= 20 {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     let trajectory_id_opt = tool_call

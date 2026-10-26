@@ -287,6 +287,31 @@ class OzyBrainTests(unittest.TestCase):
         self.assertEqual(export_res["action"], "corpus_callosum")
         self.assertIn("[STATUS: CORPUS_CALLOSUM_TRANSFERRED]", export_res["summary"])
 
+    def test_graph_impact_propagation_and_acronym_stemming(self):
+        # Universal prompt with 2-letter acronym 'OT' and plural 'ensayos'
+        res = run("plan", {
+            "project": "crmnew",
+            "goal": "En OT ingenieria agrega en la lista de ensayos el siguiente",
+            "files": [
+                "crm-geofal/src/components/dashboard/ot-ingenieria/OTIngenieriaFormModal.tsx",
+                "api-geofal-crm/app/modules/ot_ingenieria/router.py",
+            ],
+            "impact": [
+                {"file_path": "crm-geofal/src/data/ensayos-data.ts", "depth": 1, "reason": "imports"},
+                {"file_path": "api-geofal-crm/app/modules/ot_ingenieria/excel.py", "depth": 1, "reason": "inyeccion"},
+            ],
+        })
+        self.assertEqual(res["action"], "plan")
+        struct_plan = res["structured_plan"]
+        seq = struct_plan["topological_edit_sequence"]
+        files = [item["file"] for item in seq]
+
+        # Verify that graph-connected data catalog and excel injection are present
+        self.assertIn("crm-geofal/src/data/ensayos-data.ts", files)
+        self.assertIn("api-geofal-crm/app/modules/ot_ingenieria/excel.py", files)
+        self.assertIn("crm-geofal/src/components/dashboard/ot-ingenieria/OTIngenieriaFormModal.tsx", files)
+        self.assertIn("api-geofal-crm/app/modules/ot_ingenieria/router.py", files)
+
 
 if __name__ == "__main__":
     unittest.main()
