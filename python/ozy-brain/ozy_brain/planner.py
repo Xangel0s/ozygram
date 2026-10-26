@@ -63,9 +63,34 @@ def _compute_blast_radius(
     }
 
 
+def _classify_file_role(file_path: str) -> tuple[str, int]:
+    lower = file_path.lower().replace("\\", "/")
+    parts = lower.split("/")
+    filename = parts[-1]
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    name_no_ext = filename.rsplit(".", 1)[0]
+    name_tokens = set(name_no_ext.replace("-", " ").replace("_", " ").split())
+    path_segments = set(parts[:-1])
+
+    if ext == "sql" or "migration" in name_tokens or "migrations" in path_segments:
+        return "Database Schema / Migration", 0
+    if any(tok in name_tokens for tok in ("types", "schema", "schemas", "contract", "contracts", "models", "model", "dto", "interface")) or any(seg in path_segments for seg in ("schemas", "models", "contracts", "types")):
+        return "Types / Data Contract", 0
+    if ext in ("tsx", "jsx", "vue", "svelte") or any(tok in name_tokens for tok in ("modal", "dialog", "view", "component", "form", "page", "table", "drawer", "columns")):
+        return "Frontend Component / UI", 3
+    if any(tok in name_tokens for tok in ("helpers", "helper", "utils", "util", "parser", "formatters", "indexing")):
+        return "Core Utility / Helper", 1
+    if any(tok in name_tokens for tok in ("router", "routers", "route", "routes", "endpoint", "controller")) or any(seg in path_segments for seg in ("routers", "routes", "controllers")):
+        return "API Route / Endpoint", 3
+    if ext in ("rs", "py", "go", "java"):
+        return "Backend Service / Logic", 2
+    return "Module Implementation", 2
+
+
 def _topological_refactor_order(
     candidate_files: list[str],
     dependencies: list[dict[str, Any]] | list[tuple[str, str]] | None = None,
+    candidate_scores: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Orders refactoring steps from Leaf dependencies (base types/contracts) to Root callers (entry points).
 
@@ -81,20 +106,12 @@ def _topological_refactor_order(
     adj: dict[str, set[str]] = defaultdict(set)
     in_degree: dict[str, int] = {f: 0 for f in candidate_files}
 
-    # Heuristic scoring based on file roles if explicit graph edges are sparse
     role_weights: dict[str, int] = {}
+    file_roles: dict[str, str] = {}
     for f in candidate_files:
-        f_lower = f.lower()
-        if any(kw in f_lower for kw in ("types", "schema", "contract", "models", "entity", "dto", "migration", ".sql")):
-            role_weights[f] = 0  # Phase 1: Base contracts & DB migrations
-        elif any(kw in f_lower for kw in ("helpers", "utils", "reader", "indexing", "parser")):
-            role_weights[f] = 1  # Phase 2: Core algorithms & helpers
-        elif any(kw in f_lower for kw in ("store", "backend", "service", "memory", "planner")):
-            role_weights[f] = 2  # Phase 3: Domain services
-        elif any(kw in f_lower for kw in ("dispatch", "server", "main", "cli", "router", "api", "form", "page", "view", "component")):
-            role_weights[f] = 3  # Phase 4: Entrypoints, UI forms, and routers
-        else:
-            role_weights[f] = 2
+        role_label, weight = _classify_file_role(f)
+        role_weights[f] = weight
+        file_roles[f] = role_label
 
     # Process explicit edges if provided: (origin -> destination)
     if dependencies:
@@ -112,30 +129,20 @@ def _topological_refactor_order(
                     adj[src].add(dst)
                     in_degree[dst] += 1
 
-    # Sort files according to role weight and in-degrees
-    sorted_files = sorted(candidate_files, key=lambda f: (role_weights.get(f, 2), in_degree.get(f, 0), f))
+    # Sort files according to role weight, in-degrees, and highest candidate score
+    score_map = candidate_scores or {}
+    sorted_files = sorted(candidate_files, key=lambda f: (role_weights.get(f, 2), in_degree.get(f, 0), -score_map.get(f, 0), f))
 
     sequence: list[dict[str, Any]] = []
     for idx, file_path in enumerate(sorted_files, start=1):
         weight = role_weights.get(file_path, 2)
-        if weight == 0:
-            phase_name = "[CONTRACTS] Base Types & Schemas"
-            action_desc = "Update type definitions, structs, and interfaces first."
-        elif weight == 1:
-            phase_name = "[UTILITIES] Core Helpers & Parsing"
-            action_desc = "Implement low-level helpers and parsing logic."
-        elif weight == 2:
-            phase_name = "[DOMAIN] Business Logic & State"
-            action_desc = "Update business rules, storage methods, and mutations."
-        else:
-            phase_name = "[ENTRYPOINTS] Public Routing & MCP Handlers"
-            action_desc = "Adapt public routing, MCP handlers, and CLI commands."
+        role = file_roles.get(file_path, "Module Implementation")
 
         sequence.append({
             "step": idx,
             "file": file_path,
-            "phase": phase_name,
-            "action": action_desc,
+            "phase": f"Step {idx}",
+            "action": role,
             "requires_validation_before_next": weight < 2,
         })
 
@@ -144,12 +151,14 @@ def _topological_refactor_order(
 
 def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dict[str, Any]:
     goal = _goal(payload)
-    cand_files = [item["path"] for item in _candidate_file_scores(payload, limit=8)] or _candidate_files(payload)
+    cand_scores_list = _candidate_file_scores(payload, limit=8)
+    cand_files = [item["path"] for item in cand_scores_list] or _candidate_files(payload)
+    score_map = {item["path"]: int(item.get("score", 0)) for item in cand_scores_list}
     impact_data = payload.get("impact") or payload.get("graph_impact") or []
     dependencies = payload.get("dependencies") or payload.get("edges") or []
 
     blast_radius = _compute_blast_radius(cand_files, impact_data)
-    topological_sequence = _topological_refactor_order(cand_files, dependencies)
+    topological_sequence = _topological_refactor_order(cand_files, dependencies, score_map)
 
     return {
         "autonomy_level": autonomy,
@@ -191,12 +200,14 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
 def plan(payload: dict[str, Any]) -> BrainResponse:
     goal = _goal(payload)
     memories = _combined_memory_titles(payload, limit=5)
-    cand_files = [item["path"] for item in _candidate_file_scores(payload, limit=8)] or _candidate_files(payload)
+    cand_scores_list = _candidate_file_scores(payload, limit=8)
+    cand_files = [item["path"] for item in cand_scores_list] or _candidate_files(payload)
+    score_map = {item["path"]: int(item.get("score", 0)) for item in cand_scores_list}
     impact_data = payload.get("impact") or payload.get("graph_impact") or []
     dependencies = payload.get("dependencies") or payload.get("edges") or []
 
     blast_radius = _compute_blast_radius(cand_files, impact_data)
-    topological_sequence = _topological_refactor_order(cand_files, dependencies)
+    topological_sequence = _topological_refactor_order(cand_files, dependencies, score_map)
 
     steps = [
         f"1. [PRE-FLIGHT] Baseline check: Goal '{goal}' | Blast Radius: {blast_radius['risk_tier'].upper()} ({blast_radius['total_blast_radius']} files).",
@@ -204,7 +215,7 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
     ]
 
     for item in topological_sequence[:5]:
-        steps.append(f"   • Step {item['step']} [{item['phase']}]: {item['file']} → {item['action']}")
+        steps.append(f"   • Step {item['step']}: {item['file']} → {item['action']}")
 
     steps.extend([
         f"3. [TESTS] Run focused unit tests followed by integration test suite ({_validation_summary_label(payload)}).",

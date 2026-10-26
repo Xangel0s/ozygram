@@ -264,6 +264,8 @@ pub(crate) fn build_ozy_brain_git_context(project_path: &Path, limit: usize) -> 
     let status_output = Command::new("git")
         .arg("-C")
         .arg(project_path)
+        .arg("-c")
+        .arg("core.quotePath=false")
         .arg("status")
         .arg("--short")
         .output();
@@ -275,7 +277,10 @@ pub(crate) fn build_ozy_brain_git_context(project_path: &Path, limit: usize) -> 
             for line in text.lines().take(limit.max(1)) {
                 if line.len() >= 3 {
                     let status = line[..2].trim().to_string();
-                    let path = line[3..].trim().to_string();
+                    let mut path = line[3..].trim().to_string();
+                    if path.starts_with('"') && path.ends_with('"') && path.len() >= 2 {
+                        path = path[1..path.len() - 1].to_string();
+                    }
                     if !path.is_empty() {
                         status_files.push(json!({ "status": status, "path": path }));
                     }
@@ -345,27 +350,7 @@ pub fn ensure_ozy_brain_running() {
         return;
     }
 
-    // 1. Prioritize standalone embedded binary if present (zero Python dependency)
-    if let Some(standalone_bin) = resolve_standalone_ozy_brain() {
-        if Command::new(&standalone_bin)
-            .args(["--server", "--port", "9473"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_ok()
-        {
-            for _ in 0..12 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                if try_call_ozy_brain_persistent("health", &dummy, 150).is_ok() {
-                    eprintln!("[ozymem] auto-spawned persistent standalone ozy-brain daemon");
-                    return;
-                }
-            }
-        }
-    }
-
-    // 2. Fall back to Python module execution
+    // 1. Prioritize Python module from source if repository workspace is present
     if let Some(brain_dir) = resolve_ozy_brain_dir() {
         for candidate in python_candidates() {
             if Command::new(&candidate)
@@ -383,11 +368,31 @@ pub fn ensure_ozy_brain_running() {
                 for _ in 0..12 {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     if try_call_ozy_brain_persistent("health", &dummy, 150).is_ok() {
-                        eprintln!("[ozymem] auto-spawned persistent ozy-brain daemon");
+                        eprintln!("[ozymem] auto-spawned persistent ozy-brain daemon (source mode)");
                         return;
                     }
                 }
                 break;
+            }
+        }
+    }
+
+    // 2. Fall back to standalone embedded binary if present (zero Python dependency)
+    if let Some(standalone_bin) = resolve_standalone_ozy_brain() {
+        if Command::new(&standalone_bin)
+            .args(["--server", "--port", "9473"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            for _ in 0..12 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if try_call_ozy_brain_persistent("health", &dummy, 150).is_ok() {
+                    eprintln!("[ozymem] auto-spawned persistent standalone ozy-brain daemon");
+                    return;
+                }
             }
         }
     }
@@ -573,7 +578,53 @@ pub fn resolve_standalone_ozy_brain() -> Option<PathBuf> {
 pub fn call_ozy_brain_worker(action: &str, payload: &Value, timeout_ms: u64) -> anyhow::Result<Value> {
     let payload_text = serde_json::to_string(payload)?;
 
-    // 1. Prioritize standalone embedded binary if present (zero Python dependency)
+    // 1. Prioritize Python module from source if repository workspace is present
+    if let Some(brain_dir) = resolve_ozy_brain_dir() {
+        for candidate in python_candidates() {
+            let mut command = {
+                let mut c = Command::new(candidate);
+                c.args(["-m", "ozy_brain", "--action", action]);
+                c
+            };
+            let mut child = match command
+                .current_dir(&brain_dir)
+                .env("PYTHONPATH", &brain_dir)
+                .env("PYTHONIOENCODING", "utf-8")
+                .env("PYTHONUTF8", "1")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(_) => continue,
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(payload_text.as_bytes());
+            }
+
+            let start = std::time::Instant::now();
+            loop {
+                if child.try_wait()?.is_some() {
+                    let output = child.wait_with_output()?;
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if let Ok(parsed) = serde_json::from_str(stdout.trim()) {
+                            return Ok(parsed);
+                        }
+                    }
+                    break;
+                }
+                if start.elapsed() > std::time::Duration::from_millis(timeout_ms) {
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+    }
+
+    // 2. Fall back to standalone embedded binary if present (zero Python dependency)
     if let Some(standalone_bin) = resolve_standalone_ozy_brain() {
         let mut command = Command::new(&standalone_bin);
         command.args(["--action", action]);
@@ -604,65 +655,7 @@ pub fn call_ozy_brain_worker(action: &str, payload: &Value, timeout_ms: u64) -> 
             }
         }
     }
-
-    // 2. Fall back to Python module execution
-    let brain_dir = resolve_ozy_brain_dir().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Ozy Brain worker not found. Place ozy-brain.exe in ~/.ozymem/bin, set OZY_BRAIN_PATH, or keep python/ozy-brain in repository."
-        )
-    })?;
-    let mut last_error = String::new();
-    for candidate in python_candidates() {
-        let mut command = {
-            let mut c = Command::new(candidate);
-            c.args(["-m", "ozy_brain", "--action", action]);
-            c
-        };
-        let mut child = match command
-            .current_dir(&brain_dir)
-            .env("PYTHONPATH", &brain_dir)
-            .env("PYTHONIOENCODING", "utf-8")
-            .env("PYTHONUTF8", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(e) => {
-                last_error = e.to_string();
-                continue;
-            }
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(payload_text.as_bytes())?;
-        }
-
-        let start = std::time::Instant::now();
-        loop {
-            if child.try_wait()?.is_some() {
-                let output = child.wait_with_output()?;
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    return serde_json::from_str(stdout.trim()).map_err(Into::into);
-                }
-                last_error = String::from_utf8_lossy(&output.stderr).to_string();
-                if last_error.trim().is_empty() {
-                    last_error = String::from_utf8_lossy(&output.stdout).to_string();
-                }
-                break;
-            }
-            if start.elapsed() > std::time::Duration::from_millis(timeout_ms) {
-                let _ = child.kill();
-                return Err(anyhow::anyhow!(
-                    "Ozy Brain worker timed out after {}ms",
-                    timeout_ms
-                ));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
-    }
-    Err(anyhow::anyhow!("Ozy Brain worker failed: {}", last_error))
+    Err(anyhow::anyhow!("Ozy Brain worker failed to produce response"))
 }
 
 pub(crate) fn python_candidates() -> Vec<String> {
@@ -717,6 +710,10 @@ pub fn resolve_ozy_brain_dir() -> Option<PathBuf> {
         if p.join("ozy_brain").join("__main__.py").exists() {
             return Some(p);
         }
+        let nested = base.join("ozygram").join("python").join("ozy-brain");
+        if nested.join("ozy_brain").join("__main__.py").exists() {
+            return Some(nested);
+        }
     }
     if let Ok(path) = std::env::var("OZY_BRAIN_PATH") {
         let p = PathBuf::from(path);
@@ -740,6 +737,57 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
         .get("confidence")
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
+    let is_verbose = value.get("verbose").and_then(Value::as_bool).unwrap_or(false);
+
+    // Modo Ultracompacto (< 250 tokens) por defecto para erradicar vuelcos a output.txt
+    if !is_verbose {
+        let structured = value.get("structured_plan").and_then(Value::as_object);
+        let goal = structured
+            .and_then(|s| s.get("goal").and_then(Value::as_str))
+            .unwrap_or(summary);
+        let mut body = format!("# Ozy Brain: {action} (Confidence: {confidence:.2})\n**Goal**: {goal}\n\n");
+
+        if let Some(steps) = structured.and_then(|s| s.get("topological_edit_sequence").and_then(Value::as_array)) {
+            if !steps.is_empty() {
+                body.push_str("### Target Files & Edit Sequence\n");
+                for item in steps.iter().take(5) {
+                    let step = item.get("step").and_then(Value::as_i64).unwrap_or(1);
+                    let file = item.get("file").and_then(Value::as_str).unwrap_or("");
+                    let action_desc = item.get("action").and_then(Value::as_str).unwrap_or("");
+                    body.push_str(&format!("{step}. `{file}` → {action_desc}\n"));
+                }
+                body.push('\n');
+            }
+        } else if let Some(plan_items) = value.get("plan").and_then(Value::as_array) {
+            if !plan_items.is_empty() {
+                body.push_str("### Recommended Plan\n");
+                for item in plan_items.iter().filter_map(Value::as_str).take(4) {
+                    body.push_str(&format!("- {item}\n"));
+                }
+                body.push('\n');
+            }
+        }
+
+        let blast = structured.and_then(|s| s.get("blast_radius_analysis").and_then(Value::as_object));
+        let risk_tier = blast.and_then(|b| b.get("risk_tier").and_then(Value::as_str)).unwrap_or("low");
+        let total_impact = blast.and_then(|b| b.get("total_blast_radius").and_then(Value::as_i64)).unwrap_or(1);
+        body.push_str(&format!("### Blast Radius & Risks\n- Risk Tier: {} | Impact: {total_impact} file(s)\n", risk_tier.to_uppercase()));
+
+        if let Some(risks) = value.get("risks").and_then(Value::as_array) {
+            for r in risks.iter().filter_map(Value::as_str).take(2) {
+                body.push_str(&format!("- Risk: {r}\n"));
+            }
+        }
+
+        if let Some(cmds) = structured.and_then(|s| s.get("suggested_commands").and_then(Value::as_array)) {
+            if let Some(first_cmd) = cmds.iter().filter_map(Value::as_str).next() {
+                body.push_str(&format!("\n### Validation\n- `{first_cmd}`\n"));
+            }
+        }
+
+        return body;
+    }
+
     let mut body = format!("# Ozy Brain: {action}\n\n{summary}\n\nConfidence: {confidence:.2}\n");
     for (title, key) in [
         ("Recommended Plan", "plan"),

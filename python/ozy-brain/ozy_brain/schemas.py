@@ -7,6 +7,67 @@ from typing import Any, Iterable
 BRAIN_VERSION = "0.2.0"
 BRAIN_SCHEMA_VERSION = "v1"
 
+DOMAIN_SYNONYMS: dict[str, list[str]] = {
+    # Informes & Documentos
+    "informe": ["report", "reports"],
+    "informes": ["report", "reports"],
+    "report": ["informe", "informes"],
+    "reports": ["informe", "informes"],
+    "documento": ["document", "doc", "pdf"],
+    "documentos": ["documents", "docs", "pdfs"],
+    "pdf": ["pdf", "document", "doc", "report"],
+    "doc": ["pdf", "document", "docqr"],
+    "numero": ["number", "num", "code", "cod"],
+    "número": ["number", "num", "code", "cod"],
+    "codigo": ["code", "cod"],
+    "código": ["code", "cod"],
+    # Búsqueda y Seguimiento
+    "busqueda": ["search", "tracing"],
+    "búsqueda": ["search", "tracing"],
+    "seguimiento": ["tracing", "trace", "tracking"],
+    "trazabilidad": ["tracing", "trace"],
+    "tracing": ["seguimiento", "trazabilidad"],
+    "search": ["busqueda", "buscar"],
+    # Acciones con Archivos
+    "descarga": ["download", "export"],
+    "descargar": ["download", "export"],
+    "download": ["descarga", "descargar"],
+    "subir": ["upload", "attach", "drop", "drag"],
+    "subida": ["upload", "attach"],
+    "upload": ["subir", "adjuntar", "attach"],
+    "attach": ["adjuntar", "subir", "upload"],
+    "adjuntar": ["attach", "subir", "upload"],
+    "cambiar": ["replace", "change", "upload", "edit", "custom"],
+    "reemplazar": ["replace", "change"],
+    "modificar": ["modify", "edit", "change"],
+    "editar": ["edit", "custom", "update"],
+    "edit": ["editar", "modificar"],
+    "custom": ["personalizado", "editar", "custom"],
+    "drag": ["drag", "drop", "uploader", "file", "upload"],
+    "drop": ["drag", "drop", "uploader", "upload"],
+    # UI y Tablas
+    "tabla": ["table", "grid"],
+    "table": ["tabla"],
+    "grid": ["tabla"],
+    "modal": ["modal", "dialog"],
+    "dialog": ["modal", "dialog"],
+    "cuadro": ["modal", "dialog"],
+    # Dominio CRM / Geofal
+    "recepcion": ["reception"],
+    "recepción": ["reception"],
+    "reception": ["recepcion"],
+    "probeta": ["sample", "specimen", "probeta"],
+    "probetas": ["samples", "specimens", "probetas"],
+    "muestra": ["sample"],
+    "muestras": ["samples"],
+    "concreto": ["concrete", "compresion"],
+    "rotura": ["break", "failure"],
+    "ensayo": ["test", "assay"],
+    "ensayos": ["tests", "assays"],
+    "firmado": ["signed", "signature", "stamp"],
+    "firma": ["sign", "signature"],
+}
+
 
 @dataclass
 class BrainResponse:
@@ -115,8 +176,48 @@ def _safe_mcp_calls(payload: dict[str, Any], include_graph: bool = True) -> list
     return calls
 
 
+def _clean_path(path: str) -> str:
+    p = str(path).strip()
+    if (p.startswith('"') and p.endswith('"')) or (p.startswith("'") and p.endswith("'")):
+        p = p[1:-1].strip()
+    return p.replace("\\", "/")
+
+
+CODE_EXTENSIONS = (
+    ".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".sql", ".toml", ".yaml", ".yml", ".prisma", ".sh", ".bash", ".ps1",
+    ".html", ".css", ".scss", ".json",
+)
+
+EXCLUDED_LOCKFILES_AND_SCHEMAS = (
+    "package-lock.json", "cargo.lock", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "composer.lock",
+)
+
+
+def _is_code_file(path: str, allow_markdown: bool = False) -> bool:
+    clean = _clean_path(path).lower()
+    last = clean.split("/")[-1]
+
+    # Excluir schemas de herramientas de Ozygram (ozy_*.json)
+    if last.startswith("ozy_") and last.endswith(".json"):
+        return False
+
+    # Excluir lockfiles
+    if last in EXCLUDED_LOCKFILES_AND_SCHEMAS:
+        return False
+
+    # Archivos de configuración especiales en raíz
+    if last in ("dockerfile", "makefile", "procfile"):
+        return True
+
+    if allow_markdown and clean.endswith((".md", ".txt", ".rst")):
+        return True
+
+    return clean.endswith(CODE_EXTENSIONS)
+
+
 def _is_noise_path(path: str) -> bool:
-    clean = path.replace("\\", "/").lower()
+    clean = _clean_path(path).lower()
     noise_tokens = [
         ".fastembed_cache",
         "node_modules",
@@ -130,6 +231,9 @@ def _is_noise_path(path: str) -> bool:
         "/dist/",
         "/.venv/",
         "/venv/",
+        "/downloads/",
+        "/recordings/",
+        "/grabaciones/",
     ]
     if any(tok in clean for tok in noise_tokens):
         return True
@@ -156,6 +260,24 @@ def _is_noise_path(path: str) -> bool:
         ".zip",
         ".tar",
         ".gz",
+        ".7z",
+        ".rar",
+        # Multimedia
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".webm",
+        ".flv",
+        ".mp3",
+        ".wav",
+        ".aac",
+        ".ogg",
+        # Ofimática no plana
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".csv",
     )
     if clean.endswith(noise_exts):
         return True
@@ -167,8 +289,11 @@ def _is_noise_path(path: str) -> bool:
 
 
 def _is_directory_path(path: str) -> bool:
-    clean = path.replace("\\", "/").strip()
+    import os
+    clean = _clean_path(path)
     if clean.endswith("/"):
+        return True
+    if os.path.isdir(clean):
         return True
     last = clean.split("/")[-1]
     if not last or ("." not in last and last.lower() not in ("dockerfile", "makefile", "license", "procfile")):
@@ -179,11 +304,12 @@ def _is_directory_path(path: str) -> bool:
 def _candidate_files(payload: dict[str, Any], limit: int = 8) -> list[str]:
     files: list[str] = []
     goal = _goal(payload).lower()
+    is_doc_goal = any(tok in goal for tok in ("docs", "documentation", "readme", "guide", "rule", "markdown", "agent"))
     for item in _items(payload, "files"):
-        text = str(item)
-        if _is_noise_path(text) or _is_directory_path(text):
+        text = _clean_path(str(item))
+        if _is_noise_path(text) or _is_directory_path(text) or not _is_code_file(text, allow_markdown=is_doc_goal):
             continue
-        lower = text.lower().replace("\\", "/")
+        lower = text.lower()
         if any(token in lower for token in goal.replace("/", " ").replace("-", " ").split() if len(token) >= 4):
             files.append(text)
         elif len(files) < max(3, limit // 2):
@@ -202,56 +328,89 @@ def _git_status_files(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
-    goal_tokens = {token for token in _goal(payload).lower().replace("/", " ").replace("-", " ").replace("_", " ").split() if len(token) >= 4}
+    raw_tokens = {
+        token
+        for token in _goal(payload).lower().replace("/", " ").replace("-", " ").replace("_", " ").split()
+        if len(token) >= 3 or token in ("ui", "db", "qr", "id")
+    }
+    goal_tokens = set(raw_tokens)
+    for token in raw_tokens:
+        if token in DOMAIN_SYNONYMS:
+            goal_tokens.update(DOMAIN_SYNONYMS[token])
+
     is_doc_goal = any(tok in goal_tokens for tok in ("docs", "documentation", "readme", "guide", "rule", "markdown", "agent"))
     scores: dict[str, dict[str, Any]] = {}
 
     def bump(path: str, points: int, reason: str) -> None:
-        clean = path.replace("\\", "/")
+        clean = _clean_path(path)
         entry = scores.setdefault(clean, {"path": clean, "score": 0, "reasons": []})
         entry["score"] += points
         if reason not in entry["reasons"]:
             entry["reasons"].append(reason)
 
     for path in _items(payload, "files"):
-        text = str(path)
-        if _is_noise_path(text) or _is_directory_path(text):
+        text = _clean_path(str(path))
+        if _is_noise_path(text) or _is_directory_path(text) or not _is_code_file(text, allow_markdown=is_doc_goal):
             continue
-        clean = text.replace("\\", "/")
+        clean = text
         if not is_doc_goal and (clean.endswith((".md", ".txt", ".rst")) or "/.agents/" in clean):
             continue
         lower = clean.lower()
         overlap = sorted(token for token in goal_tokens if token in lower)
-        bump(text, 2 + min(len(overlap), 4), "indexed candidate" + (f" matches {', '.join(overlap[:3])}" if overlap else ""))
+        if overlap:
+            bump(text, 3 + min(len(overlap), 4), f"matches {', '.join(overlap[:3])}")
 
     for item in _git_status_files(payload):
-        path = str(item.get("path", "")).strip()
+        raw_path = str(item.get("path", "")).strip()
         status = str(item.get("status", "")).strip()
-        if path and not _is_noise_path(path) and not _is_directory_path(path):
-            clean = path.replace("\\", "/")
-            if not is_doc_goal and (clean.endswith((".md", ".txt", ".rst")) or "/.agents/" in clean):
+        path = _clean_path(raw_path)
+        if path and _is_code_file(path, allow_markdown=is_doc_goal) and not _is_noise_path(path) and not _is_directory_path(path):
+            if not is_doc_goal and (path.endswith((".md", ".txt", ".rst")) or "/.agents/" in path):
                 continue
-            lower = clean.lower()
+            lower = path.lower()
             overlap = sorted(token for token in goal_tokens if token in lower)
             if overlap:
                 bump(path, 6 + min(len(overlap), 3), f"dirty git status {status} with goal overlap ({', '.join(overlap)})")
             elif any(c.lower() in lower for c in _items(payload, "changes")):
                 bump(path, 5, f"dirty git status {status} in explicit changes")
-            else:
-                bump(path, 1, f"dirty git status {status} unrelated to goal")
 
     for change in _items(payload, "changes"):
-        text = str(change)
-        if ("/" in text or "\\" in text or "." in text) and not _is_directory_path(text):
+        text = _clean_path(str(change))
+        if ("/" in text or "." in text) and not _is_directory_path(text) and _is_code_file(text, allow_markdown=is_doc_goal):
             bump(text, 5, "explicit change input")
 
     for memory in _items(payload, "relevant_memories") + _items(payload, "relevant_lessons"):
         if isinstance(memory, dict):
-            haystack = " ".join(str(memory.get(k, "")) for k in ("title", "content", "file_path", "error_context"))
+            # 1. Extraer linked_files y file_path explícitos
+            for k in ("linked_files", "file_path", "target_files"):
+                val = memory.get(k)
+                items_to_check = val if isinstance(val, list) else [val] if val else []
+                for item in items_to_check:
+                    clean_item = _clean_path(str(item))
+                    if clean_item and _is_code_file(clean_item, allow_markdown=is_doc_goal) and not _is_noise_path(clean_item) and not _is_directory_path(clean_item):
+                        bump(clean_item, 6, "linked file from relevant memory")
+
+            # 2. Escaneo de menciones textuales en contenido de memoria
+            haystack = " ".join(str(memory.get(k, "")) for k in ("title", "content", "file_path", "error_context", "solution", "tags")).lower()
             for path in list(scores.keys()):
                 name = path.split("/")[-1].lower()
-                if name and name in haystack.lower():
-                    bump(path, 3, "referenced by relevant memory")
+                if name and len(name) >= 5 and name in haystack:
+                    bump(path, 4, f"referenced in memory ({name})")
+
+            # 3. Verificar si algún candidato explícito aparece mencionado en el texto de la memoria
+            for path in _items(payload, "files"):
+                clean_path_str = _clean_path(str(path))
+                name = clean_path_str.split("/")[-1].lower()
+                if name and len(name) >= 5 and name in haystack and not _is_noise_path(clean_path_str) and not _is_directory_path(clean_path_str) and _is_code_file(clean_path_str, allow_markdown=is_doc_goal):
+                    bump(clean_path_str, 5, f"candidate mentioned in memory text ({name})")
+
+    if not scores:
+        for path in _items(payload, "files"):
+            text = _clean_path(str(path))
+            if not _is_noise_path(text) and not _is_directory_path(text) and _is_code_file(text, allow_markdown=is_doc_goal):
+                bump(text, 1, "indexed fallback candidate")
+                if len(scores) >= 3:
+                    break
 
     ranked = sorted(scores.values(), key=lambda item: (-int(item["score"]), str(item["path"])))
     return ranked[:limit]
