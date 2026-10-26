@@ -4,7 +4,7 @@ All notable changes to Ozygram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.6] - 2026-10-26
+## [0.1.7] - 2026-10-26
 
 ### Added
 - **Generalized Hybrid Vector-Semantic & Topological Property Graph RAG**:
@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Multi-tier full-stack arc balancing in `planner.py` ensuring top-5 edit sequences cover Contracts (Tier 0), Services (Tier 2), UI/Endpoints (Tier 3), and Validation Scripts (Tier 4).
   - Source root immunity in `.ozymemignore` parser, protecting `src/`, `app/`, `lib/`, `components/` from generic ignore collisions.
   - Ultracompact output format (< 200 tokens) ensuring context windows remain lean and preventing output dump files.
+  - Hardened Git status candidate scoring to prioritize actual target files and neutralize score pollution from untracked scripts.
+- **CI / CD Release Asset Packaging Fix**:
+  - Guaranteed creation of `upload/` directory before archiving assets on Windows runners.
+
+## [0.1.6] - 2026-10-21
+
+### Added
 - **One-Click Autonomous Project Initializer (`ozy init` / `ozymem init`)**:
   - Interactive and headless (`--auto`) CLI command that automatically discovers and configures installed AI coding clients: Antigravity IDE, Cursor (both user global and project-local), Claude Desktop (Windows, macOS, Linux), Windsurf, VS Code (Cline & Roo Code), and Zed.
   - Automatically initializes project-local `.ozymem` substrate, writes smart default `.ozymemignore`, and manages `.gitignore` protection without manual intervention.
@@ -26,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hardened Amygdala Reflex Substrate for Windows with strict string sanitization, eliminating `WindowsPath` parameter binding errors in SQLite WAL.
   - Implemented DuckDB connection reuse in batch event traces (`process_event_trace`), eliminating physical file lock latency and accelerating trace processing by > 400%.
   - Added bilingual semantic risk detection (Spanish keywords `migracion`, `seguridad`, `autenticación`) and candidate file directory path exclusion (`Ingenieria/`, `backups/`).
-  - Fixed Windows release packaging in GitHub Actions CI by guaranteeing `upload/` directory creation.
 
 ## [0.1.5] - 2026-10-21
 

@@ -14,7 +14,7 @@ pub async fn run_init(
     client_filter: Option<String>,
 ) -> Result<()> {
     println!("========================================================================");
-    println!("   [OZYGRAM] Autonomous AI Project Initialization (v0.1.6)               ");
+    println!("   [OZYGRAM] Autonomous AI Project Initialization (v{})               ", env!("CARGO_PKG_VERSION"));
     println!("========================================================================");
     println!();
 
