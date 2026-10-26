@@ -71,24 +71,24 @@ jobs:
       - name: Package Release Assets (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          mkdir -p dist
+          mkdir -p dist upload
           cp target/${{ matrix.target }}/release/ozymem-server dist/
           cp target/${{ matrix.target }}/release/ozymem dist/
           cp target/${{ matrix.target }}/release/ozygram dist/
           if [ -f target/${{ matrix.target }}/release/ozy-brain ]; then
             cp target/${{ matrix.target }}/release/ozy-brain dist/
+            cp target/${{ matrix.target }}/release/ozy-brain upload/
           fi
           cp install.sh dist/
           cp README.md dist/
           tar -czvf ${{ matrix.asset_name }} -C dist .
-          mkdir -p upload
           cp ${{ matrix.asset_name }} upload/
 
       - name: Package Release Assets (Windows)
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Path dist -Force
+          New-Item -ItemType Directory -Path dist, upload -Force
           Copy-Item target/${{ matrix.target }}/release/ozymem-server.exe dist/
           Copy-Item target/${{ matrix.target }}/release/ozymem.exe dist/
           Copy-Item target/${{ matrix.target }}/release/ozygram.exe dist/
@@ -99,7 +99,6 @@ jobs:
           Copy-Item install.ps1 dist/
           Copy-Item README.md dist/
           Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset_name }}
-          New-Item -ItemType Directory -Path upload -Force
           Copy-Item ${{ matrix.asset_name }} upload/
           Copy-Item target/${{ matrix.target }}/release/ozygram.exe upload/ozygram.exe
 
