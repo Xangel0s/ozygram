@@ -327,6 +327,38 @@ def _git_status_files(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [item for item in files if isinstance(item, dict)] if isinstance(files, list) else []
 
 
+def _vector_semantic_scores(goal: str) -> list[dict[str, Any]]:
+    """Queries local ChromaDB vector store for semantic code AST and heuristic matches."""
+    if not goal or len(goal.strip()) < 3:
+        return []
+    try:
+        from ozy_brain.vector_store import VectorMemoryStore, HAS_CHROMADB
+        if not HAS_CHROMADB:
+            return []
+        store = VectorMemoryStore()
+        if not store.is_available():
+            return []
+
+        results: list[dict[str, Any]] = []
+        for coll_name in ("code_graph_ast", "semantic_heuristics"):
+            matches = store.search_similar(goal, limit=6, collection_name=coll_name)
+            for m in matches:
+                meta = m.get("metadata") or {}
+                fpath = meta.get("file_path") or meta.get("path") or meta.get("target_files")
+                sim = float(m.get("similarity_score", 0.0))
+                if fpath and sim >= 0.65:
+                    results.append({
+                        "file_path": str(fpath),
+                        "score": max(5, int(round(sim * 8))),
+                        "similarity": sim,
+                        "reason": f"vector similarity in {coll_name} ({sim:.2f})",
+                    })
+        store.close()
+        return results
+    except Exception:
+        return []
+
+
 def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
     stop_words = {
         "de", "en", "la", "el", "al", "un", "una", "los", "las", "del", "por", "para", "con",
@@ -394,6 +426,30 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
                     pts = 6 if depth <= 1 else 4
                     bump(clean_fpath, pts, f"graph connected depth {depth} ({reason})")
 
+    # Vector semantic matches from ChromaDB (concept & intent similarity)
+    for v_match in _vector_semantic_scores(_goal(payload)):
+        fpath = _clean_path(v_match["file_path"])
+        if fpath and _is_code_file(fpath, allow_markdown=is_doc_goal) and not _is_noise_path(fpath) and not _is_directory_path(fpath):
+            if not is_doc_goal and (fpath.endswith((".md", ".txt", ".rst")) or "/.agents/" in fpath):
+                continue
+            bump(fpath, v_match["score"], v_match["reason"])
+
+    # Semantic lesson candidates sent from Rust
+    for cand in _items(payload, "candidates"):
+        if isinstance(cand, dict):
+            fpath = cand.get("file_path")
+            if fpath:
+                clean_fpath = _clean_path(str(fpath))
+                if clean_fpath and _is_code_file(clean_fpath, allow_markdown=is_doc_goal) and not _is_noise_path(clean_fpath) and not _is_directory_path(clean_fpath):
+                    sim = float(cand.get("similarity_score", 0.7))
+                    pts = max(5, int(round(sim * 7)))
+                    bump(clean_fpath, pts, f"semantic candidate ({sim:.2f})")
+
+    project_name = str(payload.get("project", "")).lower()
+    project_tokens = {project_name} if project_name else set()
+    if len(project_name) >= 3:
+        project_tokens.add(project_name[:3])
+
     for item in _git_status_files(payload):
         raw_path = str(item.get("path", "")).strip()
         status = str(item.get("status", "")).strip()
@@ -403,8 +459,12 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
                 continue
             lower = path.lower()
             overlap = sorted(token for token in goal_tokens if token in lower)
-            if overlap:
-                bump(path, 6 + min(len(overlap), 3), f"dirty git status {status} with goal overlap ({', '.join(overlap)})")
+            overlap_specific = [t for t in overlap if t not in project_tokens]
+            if overlap_specific:
+                base_pts = 5 if status in ("M", "A") else 2
+                bump(path, base_pts + min(len(overlap_specific), 3) * 2, f"dirty git status {status} with goal overlap ({', '.join(overlap_specific)})")
+            elif overlap:
+                bump(path, 1, f"dirty git status {status} weak/project overlap ({', '.join(overlap)})")
             elif any(c.lower() in lower for c in _items(payload, "changes")):
                 bump(path, 5, f"dirty git status {status} in explicit changes")
 

@@ -132,6 +132,32 @@ pub(crate) async fn handle_ozy_brain(
         })
         .collect();
 
+    // 2b. AST Symbol Match Enrichment:
+    // Boost files that declare functions, classes, or symbols matching goal tokens
+    let mut symbol_file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for token in &goal_tokens {
+        if token.len() >= 3 {
+            if let Ok(syms) = backend.search_ast_symbols(token, 10) {
+                for s in syms {
+                    if let Some((_, fpath)) = s.strategy.split_once(" in ") {
+                        let clean = fpath.trim().to_string();
+                        if !clean.is_empty() {
+                            *symbol_file_counts.entry(clean).or_insert(0) += 6;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (fpath, bonus) in symbol_file_counts {
+        if let Some(entry) = scored_files.iter_mut().find(|(_, p)| p == &fpath) {
+            entry.0 += bonus;
+        } else {
+            scored_files.push((bonus, fpath));
+        }
+    }
+
     scored_files.sort_by(|a, b| b.0.cmp(&a.0));
     let anchor_files: Vec<String> = scored_files.iter().take(5).map(|(_, p)| p.clone()).collect();
 

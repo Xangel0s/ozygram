@@ -72,9 +72,11 @@ def _classify_file_role(file_path: str) -> tuple[str, int]:
     name_tokens = set(name_no_ext.replace("-", " ").replace("_", " ").split())
     path_segments = set(parts[:-1])
 
+    if any(tok in name_tokens for tok in ("test", "spec", "tests")) or any(seg in path_segments for seg in ("test", "tests", "specs", "e2e")):
+        return "Test / Validation Script", 4
     if ext == "sql" or "migration" in name_tokens or "migrations" in path_segments:
         return "Database Schema / Migration", 0
-    if any(tok in name_tokens for tok in ("types", "schema", "schemas", "contract", "contracts", "models", "model", "dto", "interface")) or any(seg in path_segments for seg in ("schemas", "models", "contracts", "types")):
+    if any(tok in name_tokens for tok in ("types", "schema", "schemas", "contract", "contracts", "models", "model", "dto", "interface", "constants", "data")) or any(seg in path_segments for seg in ("schemas", "models", "contracts", "types", "data")):
         return "Types / Data Contract", 0
     if ext in ("tsx", "jsx", "vue", "svelte") or any(tok in name_tokens for tok in ("modal", "dialog", "view", "component", "form", "page", "table", "drawer", "columns")):
         return "Frontend Component / UI", 3
@@ -129,9 +131,27 @@ def _topological_refactor_order(
                     adj[src].add(dst)
                     in_degree[dst] += 1
 
-    # Sort files according to role weight, in-degrees, and highest candidate score
+    # Multi-tier arc balancing: if candidates span multiple distinct architectural layers,
+    # ensure top sequence covers representative files from each touched tier before filling remaining slots.
     score_map = candidate_scores or {}
-    sorted_files = sorted(candidate_files, key=lambda f: (role_weights.get(f, 2), in_degree.get(f, 0), -score_map.get(f, 0), f))
+    tier_files: dict[int, list[str]] = defaultdict(list)
+    for f in candidate_files:
+        tier_files[role_weights.get(f, 2)].append(f)
+    for t in tier_files:
+        tier_files[t].sort(key=lambda f: (-score_map.get(f, 0), in_degree.get(f, 0), f))
+
+    if len(tier_files) > 1 and len(candidate_files) > 4:
+        selected: list[str] = []
+        # Guarantee representation across available tiers in topological order (0 -> 1 -> 2 -> 3 -> 4)
+        for t in sorted(tier_files.keys()):
+            if tier_files[t]:
+                selected.append(tier_files[t].pop(0))
+        remaining = [f for t in tier_files.values() for f in t]
+        remaining.sort(key=lambda f: (role_weights.get(f, 2), in_degree.get(f, 0), -score_map.get(f, 0), f))
+        selected.extend(remaining)
+        sorted_files = selected
+    else:
+        sorted_files = sorted(candidate_files, key=lambda f: (role_weights.get(f, 2), in_degree.get(f, 0), -score_map.get(f, 0), f))
 
     sequence: list[dict[str, Any]] = []
     for idx, file_path in enumerate(sorted_files, start=1):
