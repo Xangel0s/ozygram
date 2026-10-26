@@ -852,8 +852,8 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
         .unwrap_or(0.0);
     let is_verbose = value.get("verbose").and_then(Value::as_bool).unwrap_or(false);
 
-    // Modo Ultracompacto (< 250 tokens) por defecto para erradicar vuelcos a output.txt
-    if !is_verbose {
+    // Modo Ultracompacto (< 250 tokens) por defecto para 'plan' para erradicar vuelcos a output.txt
+    if !is_verbose && action == "plan" {
         let structured = value.get("structured_plan").and_then(Value::as_object);
         let goal = structured
             .and_then(|s| s.get("goal").and_then(Value::as_str))
