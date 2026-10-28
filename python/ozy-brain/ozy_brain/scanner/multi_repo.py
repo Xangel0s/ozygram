@@ -344,10 +344,24 @@ class SynapticTagger:
         symbol_name: Optional[str] = None,
         now_secs: Optional[float] = None,
     ) -> bool:
-        """Check if target path is currently actively tagged."""
-        key = self._key(target_path, symbol_name)
-        tag = self._tags.get(key)
-        return tag.is_active(now_secs) if tag else False
+        """Check if target path or symbol is currently actively tagged."""
+        t = time.time() if now_secs is None else now_secs
+        if symbol_name:
+            key = self._key(target_path, symbol_name)
+            tag = self._tags.get(key)
+            return tag.is_active(t) if tag else False
+
+        # Direct file tag
+        file_tag = self._tags.get(target_path)
+        if file_tag and file_tag.is_active(t):
+            return True
+
+        # Any symbol in file tagged
+        prefix = f"{target_path}:"
+        for k, tag in self._tags.items():
+            if k.startswith(prefix) and tag.is_active(t):
+                return True
+        return False
 
     def active_tags(self, now_secs: Optional[float] = None) -> List[SynapticTag]:
         """Return all non-decayed active synaptic tags."""

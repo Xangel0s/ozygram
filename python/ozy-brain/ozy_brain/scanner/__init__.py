@@ -8,6 +8,14 @@ from .multi_repo import (
     LiveDiffExtractor,
     SynapticTagger,
 )
+from .contract_tracer import (
+    BackendEndpoint,
+    FrontendConsumer,
+    ContractDriftAlert,
+    FastApiContractExtractor,
+    NextJsConsumerExtractor,
+    CrossRepoContractTracer,
+)
 
 __all__ = [
     "RepoRole",
@@ -17,5 +25,11 @@ __all__ = [
     "MultiRepoScanner",
     "LiveDiffExtractor",
     "SynapticTagger",
+    "BackendEndpoint",
+    "FrontendConsumer",
+    "ContractDriftAlert",
+    "FastApiContractExtractor",
+    "NextJsConsumerExtractor",
+    "CrossRepoContractTracer",
 ]
 

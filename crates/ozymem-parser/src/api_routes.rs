@@ -286,6 +286,17 @@ mod tests {
         // 4. dynamic template fetch
         assert_eq!(consumers[3].canonical_path, "/api/samples/:id/verify");
         assert_eq!(consumers[3].http_method, "GET");
+
+        // 5. resilientFetch with template API_URL
+        let next_code = r#"
+        export function useControl() {
+            resilientFetch(`${API_URL}/api/control-neoprenos/auto-sync`, { method: "POST" });
+        }
+        "#;
+        let c2 = parse_frontend_endpoint_consumers(next_code, "hooks/useControl.ts");
+        assert_eq!(c2.len(), 1);
+        assert_eq!(c2[0].canonical_path, "/api/control-neoprenos/auto-sync");
+        assert_eq!(c2[0].http_method, "POST");
     }
 }
 
@@ -306,16 +317,25 @@ pub fn canonicalize_endpoint_path(raw: &str) -> String {
     let path_only = clean.split('?').next().unwrap_or(clean);
     let path_only = path_only.split('#').next().unwrap_or(path_only);
 
-    let relative_path = if let Some(pos) = path_only.find("/api/") {
-        &path_only[pos..]
+    let re_api_env = Regex::new(r#"\$\{(?:API_URL|NEXT_PUBLIC_API_URL|BASE_URL|API_BASE)\}"#).unwrap();
+    let stripped_env = re_api_env.replace_all(path_only, "");
+
+    let relative_path = if let Some(pos) = stripped_env.find("/api/") {
+        &stripped_env[pos..]
     } else {
-        path_only
+        &stripped_env
     };
 
     let re_template = Regex::new(r#"\$\{[^}]+\}"#).unwrap();
     let normalized = re_template.replace_all(relative_path, ":id");
 
-    normalized.trim_end_matches('/').to_string()
+    let final_path = if let Some(pos) = normalized.find("/api/") {
+        &normalized[pos..]
+    } else {
+        &normalized
+    };
+
+    final_path.trim_end_matches('/').to_string()
 }
 
 /// Parses frontend TypeScript / Next.js / React source code for API endpoint consumption.
@@ -323,15 +343,15 @@ pub fn parse_frontend_endpoint_consumers(source: &str, file_path: &str) -> Vec<E
     let mut consumers = Vec::new();
 
     let fetch_re = Regex::new(
-        r#"(?i)\bfetch\s*\(\s*["'`]((?:/api/|https?://[^/'"`]+/api/)[^"'`\s]+)["'`]"#
+        r#"(?i)\b(?:fetch|resilientFetch|authFetch|customFetch)\s*\(\s*["'`]((?:/api/|https?://[^/'"`]+/api/|\$\{(?:API_URL|NEXT_PUBLIC_API_URL|BASE_URL)\}/api/)[^"'`\s]+)["'`]"#
     ).unwrap();
 
     let client_re = Regex::new(
-        r#"(?i)\b(?:axios|apiClient|api|httpClient)\.(get|post|put|delete|patch)\s*\(\s*["'`]((?:/api/|https?://[^/'"`]+/api/)[^"'`\s]+)["'`]"#
+        r#"(?i)\b(?:axios|apiClient|api|httpClient)\.(get|post|put|delete|patch)\s*\(\s*["'`]((?:/api/|https?://[^/'"`]+/api/|\$\{(?:API_URL|NEXT_PUBLIC_API_URL|BASE_URL)\}/api/)[^"'`\s]+)["'`]"#
     ).unwrap();
 
     let swr_re = Regex::new(
-        r#"(?i)\buseSWR\s*(?:<[^>]+>)?\s*\(\s*["'`]((?:/api/|https?://[^/'"`]+/api/)[^"'`\s]+)["'`]"#
+        r#"(?i)\buseSWR\s*(?:<[^>]+>)?\s*\(\s*["'`]((?:/api/|https?://[^/'"`]+/api/|\$\{(?:API_URL|NEXT_PUBLIC_API_URL|BASE_URL)\}/api/)[^"'`\s]+)["'`]"#
     ).unwrap();
 
     let method_re = Regex::new(r#"(?i)method\s*:\s*["'](GET|POST|PUT|DELETE|PATCH)["']"#).unwrap();
