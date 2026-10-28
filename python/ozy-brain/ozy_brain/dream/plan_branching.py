@@ -571,3 +571,233 @@ class SwrBranchFilter:
                 approved.append(act)
 
         return approved, pruned
+
+
+
+from ozy_brain.scanner.compute_config import MonsterComputeConfig, ComputeMode
+
+
+class PlanBranchRewardEvaluator:
+    """
+    Multi-dimensional reward evaluator combining SWR hazards, reverse blast radius,
+    Active Inference variational free energy (contract drift), and code churn.
+    Q(s, a) = w1 * R_swr + w2 * R_blast + w3 * R_drift - w4 * R_churn
+    """
+    W_SWR: float = 0.30
+    W_BLAST: float = 0.35
+    W_DRIFT: float = 0.25
+    W_CHURN: float = 0.10
+
+    @classmethod
+    def evaluate(
+        cls,
+        action: BranchAction,
+        state: PlanExecutionState,
+        blast_radius_count: int = 0,
+        swr_hazard_detected: bool = False,
+        drift_magnitude: float | None = None,
+    ) -> dict[str, Any]:
+        # 1. R_swr: SWR Hazard avoidance (0.2 if hazard detected, 1.0 if clean)
+        r_swr = 0.20 if swr_hazard_detected else 1.0
+
+        # 2. R_blast: Reverse Blast Radius (penalizes broken views/dependents)
+        effective_blast = blast_radius_count
+        if action.strategy in ("DualActiveContract", "BackendFallbackAdapter", "DualRouteDispatcher", "PermissiveBaseSchema"):
+            effective_blast = 0
+        elif action.strategy in ("FrontendCallerSync", "AtomicApiCutover"):
+            effective_blast = max(4, effective_blast)
+
+        r_blast = max(0.0, 1.0 - (effective_blast / 10.0))
+
+        # 3. R_drift: Variational Free Energy drift F_drift
+        if drift_magnitude is not None:
+            f_drift = drift_magnitude
+        else:
+            if action.strategy in ("DualActiveContract", "BackendFallbackAdapter", "VersionedDtoContract", "DualRouteDispatcher"):
+                f_drift = 0.05
+            elif action.strategy in ("FocusedUnitTesting", "RecordMitigationGotcha", "PermissiveBaseSchema"):
+                f_drift = 0.02
+            else:
+                f_drift = 1.40  # breaking cutover creates high free-energy prediction error
+        r_drift = math.exp(-f_drift)
+
+        # 4. R_churn: Churn penalty
+        r_churn = min(1.0, action.projected_churn / 100.0)
+
+        # Multi-dimensional Q(s, a)
+        q_score = (
+            cls.W_SWR * r_swr
+            + cls.W_BLAST * r_blast
+            + cls.W_DRIFT * r_drift
+            - cls.W_CHURN * r_churn
+        )
+        q_score = max(0.0, min(1.0, q_score))
+
+        badge = "[OPTIMAL_BRANCH_CANDIDATE]" if q_score >= 0.85 else ("[ALERT: SUBOPTIMAL_HIGH_FRICTION]" if q_score < 0.60 else "[VIABLE_BRANCH_CANDIDATE]")
+
+        return {
+            "action_id": action.action_id,
+            "strategy": action.strategy,
+            "phase": action.phase,
+            "q_score": round(q_score, 4),
+            "components": {
+                "r_swr": round(r_swr, 4),
+                "r_blast": round(r_blast, 4),
+                "r_drift": round(r_drift, 4),
+                "r_churn": round(r_churn, 4),
+            },
+            "effective_blast": effective_blast,
+            "free_energy_drift": round(f_drift, 4),
+            "badge": badge,
+        }
+
+
+class LocusCoeruleusPuctModulator:
+    """
+    Modulates the exploration constant c_puct according to phase criticality and risk.
+    - High-discipline phases (leaf_contracts, validation): c_puct = sqrt(2) ~ 1.414.
+    - Divergent exploration phases (domain_services, entrypoints): c_puct = 2.40.
+    - Learning / consolidation phase: c_puct = 1.0.
+    """
+
+    @classmethod
+    def get_c_puct(cls, phase: str, risk_level: str = "medium") -> float:
+        base: float
+        if phase in ("leaf_contracts", "validation"):
+            base = 1.414  # High focus / disciplined exploitation
+        elif phase in ("domain_services", "entrypoints"):
+            base = 2.400  # Divergent exploration of non-breaking solutions
+        elif phase == "learning":
+            base = 1.000  # Focused consolidation
+        else:
+            base = 1.600
+
+        # High risk slightly constrains divergence towards verified priors
+        if risk_level.lower() == "high" and base > 1.80:
+            return 1.850
+        return base
+
+
+@dataclass
+class BranchOptimizationResult:
+    """Outcome of Warm-Started MCTS plan branch exploration."""
+    best_strategy: str
+    best_action: BranchAction
+    best_score: float
+    simulated_final_state: PlanExecutionState
+    evaluated_trajectories: list[dict[str, Any]]
+    simulations_count: int
+    compute_mode: str
+    badge: str = "[OPTIMIZED_BY_DREAM_RSI]"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "best_strategy": self.best_strategy,
+            "best_action": self.best_action.to_dict(),
+            "best_score": round(self.best_score, 4),
+            "simulations_count": self.simulations_count,
+            "compute_mode": self.compute_mode,
+            "badge": self.badge,
+            "simulated_files_touched": len(self.simulated_final_state.modified_files),
+            "evaluated_trajectories": self.evaluated_trajectories,
+        }
+
+
+class PlanBranchingMctsOptimizer:
+    """
+    Monte Carlo Tree Search optimizer exploring remaining plan branches from a warm-started root.
+    Integrates MonsterComputeConfig, PUCT exploration, RAM simulation, and SWR hazard pruning.
+    """
+
+    @classmethod
+    def optimize_plan(
+        cls,
+        state: PlanExecutionState,
+        candidate_files: list[str],
+        compute_config: MonsterComputeConfig | None = None,
+        historical_ripples: list[Any] | None = None,
+        blast_radius_count: int = 4,
+    ) -> BranchOptimizationResult:
+        cfg = compute_config or MonsterComputeConfig.from_env()
+        root = WarmStartRootNodeBuilder.build_root(state, candidate_files=candidate_files)
+
+        # Generate candidate actions for the root's active phase
+        actions = PhaseActionGenerator.generate_actions(root.phase, candidate_files)
+        approved_actions, pruned_info = SwrBranchFilter.filter_actions(actions, historical_ripples or [])
+
+        if not approved_actions:
+            approved_actions = actions  # Fallback to base actions if all filtered
+
+        c_puct = LocusCoeruleusPuctModulator.get_c_puct(root.phase)
+
+        # Expand initial children for each approved action
+        child_map: dict[str, tuple[WarmStartNode, BranchAction, PlanExecutionState, dict[str, Any]]] = {}
+        for act in approved_actions:
+            sim_state, report = RamBranchSimulator.simulate_mutation(state, act)
+            eval_result = PlanBranchRewardEvaluator.evaluate(
+                action=act,
+                state=sim_state,
+                blast_radius_count=blast_radius_count,
+                swr_hazard_detected=False,
+            )
+            prior = 1.0 + (0.5 if act.metadata.get("protects_frontend") else 0.0)
+            child_node = WarmStartNode(
+                phase=sim_state.active_phase,
+                action=act.strategy,
+                visits=1,
+                value_sum=eval_result["q_score"],
+                prior_score=prior,
+                state=sim_state,
+                metadata={"action_id": act.action_id, "strategy": act.strategy, "eval_result": eval_result},
+            )
+            root.add_child(child_node)
+            child_map[child_node.node_id] = (child_node, act, sim_state, eval_result)
+
+        # Run MCTS rollouts
+        num_sims = max(5, cfg.mcts_simulations)
+        for _ in range(num_sims):
+            # Selection
+            chosen = root.best_child(c_puct)
+            node_data = child_map.get(chosen.node_id)
+            if node_data:
+                score = node_data[3]["q_score"]
+            else:
+                score = 0.5
+
+            # Backpropagation
+            chosen.visits += 1
+            chosen.value_sum += score
+            root.visits += 1
+            root.value_sum += score
+
+            if cfg.throttle_sleep_ms > 0:
+                time.sleep(cfg.throttle_sleep_ms / 1000.0)
+
+        # Select best child based on Q-value
+        best_child = max(root.children, key=lambda c: c.q_value)
+        best_node_data = child_map[best_child.node_id]
+        best_act = best_node_data[1]
+        best_sim_state = best_node_data[2]
+        best_score = best_child.q_value
+
+        evaluated: list[dict[str, Any]] = []
+        for child in root.children:
+            cdata = child_map.get(child.node_id)
+            strategy = cdata[1].strategy if cdata else child.action
+            evaluated.append({
+                "strategy": strategy,
+                "visits": child.visits,
+                "q_value": round(child.q_value, 4),
+                "prior_score": round(child.prior_score, 4),
+                "is_best": child.node_id == best_child.node_id,
+            })
+
+        return BranchOptimizationResult(
+            best_strategy=best_act.strategy,
+            best_action=best_act,
+            best_score=best_score,
+            simulated_final_state=best_sim_state,
+            evaluated_trajectories=evaluated,
+            simulations_count=num_sims,
+            compute_mode=str(cfg.mode),
+        )

@@ -18,6 +18,10 @@ from ozy_brain.dream.plan_branching import (
     PhaseActionGenerator,
     RamBranchSimulator,
     SwrBranchFilter,
+    PlanBranchRewardEvaluator,
+    LocusCoeruleusPuctModulator,
+    BranchOptimizationResult,
+    PlanBranchingMctsOptimizer,
 )
 
 __all__ = [
@@ -37,4 +41,8 @@ __all__ = [
     "PhaseActionGenerator",
     "RamBranchSimulator",
     "SwrBranchFilter",
+    "PlanBranchRewardEvaluator",
+    "LocusCoeruleusPuctModulator",
+    "BranchOptimizationResult",
+    "PlanBranchingMctsOptimizer",
 ]

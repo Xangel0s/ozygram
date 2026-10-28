@@ -122,3 +122,4 @@ def test_swr_branch_filter_immunological_pruning():
     assert pruned[0]["strategy"] == "FrontendCallerSync"
     assert pruned[0]["badge"] == "[ALERT: SWR_TRAP_PRUNED]"
     assert "caller" in pruned[0]["reason"].lower() or "signature" in pruned[0]["reason"].lower()
+
