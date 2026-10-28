@@ -183,8 +183,31 @@ class DreamOrchestrator:
 
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
+        # 5b. Generative MCTS (LATS) Code Exploration & Vaccine Synthesis
+        mcts_reports: List[Dict[str, Any]] = []
+        try:
+            from ozy_brain.dream.generative_mcts import GenerativeMctsSearcher
+            mcts_engine = GenerativeMctsSearcher(workspace_root=self.workspace_root)
+            for fragile in top_fragile_files[:2]:
+                res = mcts_engine.search(
+                    root_state={
+                        "symbol": fragile.get("symbol") or "fragile_fn",
+                        "file_path": fragile.get("file_path") or "unknown.py",
+                    },
+                    threat_scar=float(fragile.get("threat_score") or 0.5),
+                )
+                mcts_reports.append(res)
+                if res.get("vaccine_generated"):
+                    top_insights_candidate = f"[ALERT: GOTCHA_PREVENTION - MCTS VACCINE] Synthesized preventive vaccine for '{fragile.get('file_path')}' (Q={res.get('best_q_value')})."
+                    if "top_insights" not in locals():
+                        top_insights = []
+                    top_insights.append(top_insights_candidate)
+        except Exception as e:
+            logger.warning(f"Generative MCTS dreaming cycle failed: {e}")
+
         # Synthesize strategic insights
-        top_insights: List[str] = []
+        if "top_insights" not in locals():
+            top_insights: List[str] = []
         if top_fragile_files:
             most_fragile = top_fragile_files[0]
             top_insights.append(
@@ -224,6 +247,7 @@ class DreamOrchestrator:
             "neuromodulators": neuro_status,
             "federated_mesh": federated_report,
             "vector_store": vector_stats,
+            "generative_mcts": mcts_reports,
         }
 
         # Atomically write to dream_latest_insights.json
