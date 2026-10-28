@@ -280,3 +280,294 @@ class WarmStartRootNodeBuilder:
             },
         )
         return root
+
+
+
+@dataclass
+class BranchAction:
+    """Represents a candidate architectural branch action for a given phase."""
+    action_id: str
+    strategy: str  # e.g. "DualActiveContract", "FrontendCallerSync", "BackendFallbackAdapter"
+    phase: str     # e.g. "domain_services", "entrypoints", "validation"
+    target_files: list[str]
+    projected_churn: int
+    description: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action_id": self.action_id,
+            "strategy": self.strategy,
+            "phase": self.phase,
+            "target_files": list(self.target_files),
+            "projected_churn": self.projected_churn,
+            "description": self.description,
+            "metadata": self.metadata,
+        }
+
+
+class PhaseActionGenerator:
+    """
+    Derives candidate architectural branch strategies based on the active phase and candidate files.
+    """
+
+    @classmethod
+    def generate_actions(
+        cls,
+        phase: str,
+        candidate_files: list[str],
+        context: dict[str, Any] | None = None,
+    ) -> list[BranchAction]:
+        cands = list(candidate_files) or ["unknown_target"]
+        actions: list[BranchAction] = []
+        ctx = context or {}
+
+        if phase == "leaf_contracts":
+            actions.extend([
+                BranchAction(
+                    action_id=f"act_pydantic_v2_{uuid.uuid4().hex[:6]}",
+                    strategy="VersionedDtoContract",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=12,
+                    description="Introduce non-breaking versioned DTO models (SchemaV2) preserving backward compatibility.",
+                    metadata={"is_breaking": False, "blast_radius_risk": "LOW"},
+                ),
+                BranchAction(
+                    action_id=f"act_strict_schema_{uuid.uuid4().hex[:6]}",
+                    strategy="StrictPydanticValidation",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=18,
+                    description="Tighten Pydantic field validators directly on existing schemas.",
+                    metadata={"is_breaking": True, "blast_radius_risk": "MEDIUM"},
+                ),
+                BranchAction(
+                    action_id=f"act_permissive_schema_{uuid.uuid4().hex[:6]}",
+                    strategy="PermissiveBaseSchema",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=6,
+                    description="Add optional fields with default values to accommodate client schema variations.",
+                    metadata={"is_breaking": False, "blast_radius_risk": "LOW"},
+                ),
+            ])
+        elif phase == "domain_services":
+            actions.extend([
+                BranchAction(
+                    action_id=f"act_dual_contract_{uuid.uuid4().hex[:6]}",
+                    strategy="DualActiveContract",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=15,
+                    description="Expose dual active contract supporting both legacy callers and modernized payloads.",
+                    metadata={"is_breaking": False, "blast_radius_risk": "LOW", "protects_frontend": True},
+                ),
+                BranchAction(
+                    action_id=f"act_frontend_sync_{uuid.uuid4().hex[:6]}",
+                    strategy="FrontendCallerSync",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=45,
+                    description="Directly migrate backend contracts and synchronize all frontend hooks/callers simultaneously.",
+                    metadata={"is_breaking": True, "blast_radius_risk": "HIGH", "protects_frontend": False},
+                ),
+                BranchAction(
+                    action_id=f"act_fallback_adapter_{uuid.uuid4().hex[:6]}",
+                    strategy="BackendFallbackAdapter",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=22,
+                    description="Insert an input/output adapter shim translating legacy requests to internal domain entities.",
+                    metadata={"is_breaking": False, "blast_radius_risk": "LOW", "protects_frontend": True},
+                ),
+            ])
+        elif phase == "entrypoints":
+            actions.extend([
+                BranchAction(
+                    action_id=f"act_dual_router_{uuid.uuid4().hex[:6]}",
+                    strategy="DualRouteDispatcher",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=14,
+                    description="Maintain dual FastAPI endpoints (@router.get('') and @router.get('/v2')) concurrently.",
+                    metadata={"is_breaking": False, "blast_radius_risk": "LOW"},
+                ),
+                BranchAction(
+                    action_id=f"act_atomic_cutover_{uuid.uuid4().hex[:6]}",
+                    strategy="AtomicApiCutover",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=30,
+                    description="Perform an atomic in-place cutover of API routes and parameters.",
+                    metadata={"is_breaking": True, "blast_radius_risk": "HIGH"},
+                ),
+            ])
+        elif phase == "validation":
+            actions.extend([
+                BranchAction(
+                    action_id=f"act_focused_test_{uuid.uuid4().hex[:6]}",
+                    strategy="FocusedUnitTesting",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=10,
+                    description="Execute focused unit tests for modified endpoints and domain services.",
+                    metadata={"is_breaking": False, "test_tier": "unit"},
+                ),
+                BranchAction(
+                    action_id=f"act_cross_repo_e2e_{uuid.uuid4().hex[:6]}",
+                    strategy="CrossRepoContractE2E",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=25,
+                    description="Verify end-to-end integration across FastAPI endpoints and Next.js view consumers.",
+                    metadata={"is_breaking": False, "test_tier": "e2e"},
+                ),
+            ])
+        elif phase == "learning":
+            actions.extend([
+                BranchAction(
+                    action_id=f"act_gotcha_rec_{uuid.uuid4().hex[:6]}",
+                    strategy="RecordMitigationGotcha",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=5,
+                    description="Persist discovered contract and blast radius prevention gotcha into .ozy/memories/gotchas/.",
+                    metadata={"is_breaking": False, "storage": "markdown_git"},
+                ),
+            ])
+        else:
+            actions.append(
+                BranchAction(
+                    action_id=f"act_direct_refactor_{uuid.uuid4().hex[:6]}",
+                    strategy="DirectRefactorBranch",
+                    phase=phase,
+                    target_files=cands,
+                    projected_churn=20,
+                    description=f"Standard iterative implementation for phase '{phase}'.",
+                    metadata={"is_breaking": False},
+                )
+            )
+
+        return actions
+
+
+class RamBranchSimulator:
+    """
+    Ephemerally projects candidate branch mutations in memory with zero disk writes.
+    Ensures strict RAM isolation (< 1ms execution).
+    """
+
+    @classmethod
+    def simulate_mutation(
+        cls,
+        current_state: PlanExecutionState,
+        action: BranchAction,
+    ) -> tuple[PlanExecutionState, dict[str, Any]]:
+        # Clone current state
+        simulated_completed = list(current_state.completed_phases)
+        simulated_edits = list(current_state.working_edits)
+        simulated_files = set(current_state.modified_files)
+
+        # Apply action mutations to working edits
+        for f in action.target_files:
+            simulated_files.add(f)
+            simulated_edits.append({
+                "file": f,
+                "action": f"simulated_{action.strategy}",
+                "phase": action.phase,
+                "projected_churn": action.projected_churn,
+                "simulated": True,
+                "timestamp": time.time(),
+            })
+
+        # Project phase completion if moving forward
+        if action.phase not in simulated_completed:
+            simulated_completed.append(action.phase)
+
+        next_phase = "validation"
+        remaining = [p for p in STANDARD_PHASES if p not in simulated_completed]
+        if remaining:
+            next_phase = remaining[0]
+
+        simulated_state = PlanExecutionState(
+            completed_phases=simulated_completed,
+            active_phase=next_phase,
+            working_edits=simulated_edits,
+            modified_files=sorted(simulated_files),
+            synaptic_tags=list(current_state.synaptic_tags),
+            validation_history=list(current_state.validation_history),
+            metadata={
+                **current_state.metadata,
+                "last_simulated_action": action.action_id,
+                "last_strategy": action.strategy,
+            },
+        )
+
+        # Simulation report
+        is_breaking = action.metadata.get("is_breaking", False)
+        report = {
+            "action_id": action.action_id,
+            "strategy": action.strategy,
+            "phase": action.phase,
+            "is_breaking": is_breaking,
+            "projected_churn": action.projected_churn,
+            "total_files_touched": len(simulated_files),
+            "simulated_in_ram": True,
+            "disk_writes": 0,
+            "invariants_satisfied": not is_breaking or action.strategy in ("DualActiveContract", "BackendFallbackAdapter"),
+        }
+        return simulated_state, report
+
+
+class SwrBranchFilter:
+    """
+    Immunological filter pruning candidate branches matching known SWR failure ripples.
+    Prevents MCTS from wasting search tokens exploring known failure traps.
+    """
+
+    @classmethod
+    def filter_actions(
+        cls,
+        actions: list[BranchAction],
+        ripples_or_hazards: list[Any],
+    ) -> tuple[list[BranchAction], list[dict[str, Any]]]:
+        approved: list[BranchAction] = []
+        pruned: list[dict[str, Any]] = []
+
+        # Extract hazard descriptions and error signatures
+        hazard_texts: list[str] = []
+        for item in ripples_or_hazards:
+            if isinstance(item, str):
+                hazard_texts.append(item.lower())
+            elif isinstance(item, dict):
+                sig = item.get("error_signature") or item.get("broken_state_desc") or item.get("hazard") or ""
+                if sig:
+                    hazard_texts.append(str(sig).lower())
+            elif hasattr(item, "error_signature"):
+                hazard_texts.append(str(item.error_signature).lower())
+
+        for act in actions:
+            is_pruned = False
+            prune_reason = ""
+
+            # Breaking actions are strictly audited against known hazards
+            if act.metadata.get("is_breaking", False) or act.strategy in ("FrontendCallerSync", "AtomicApiCutover"):
+                for hz in hazard_texts:
+                    if any(term in hz for term in ("signature", "arity", "caller", "argument", "cannot find", "member access")):
+                        is_pruned = True
+                        prune_reason = f"Hazard match '{hz[:60]}' - breaking strategy risks recurring regression without dual active contract."
+                        break
+
+            if is_pruned:
+                pruned.append({
+                    "action_id": act.action_id,
+                    "strategy": act.strategy,
+                    "phase": act.phase,
+                    "reason": prune_reason,
+                    "badge": "[ALERT: SWR_TRAP_PRUNED]",
+                })
+            else:
+                approved.append(act)
+
+        return approved, pruned

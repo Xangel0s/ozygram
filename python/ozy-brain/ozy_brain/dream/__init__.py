@@ -14,6 +14,10 @@ from ozy_brain.dream.plan_branching import (
     WarmStartNode,
     WarmStartRootNodeBuilder,
     STANDARD_PHASES,
+    BranchAction,
+    PhaseActionGenerator,
+    RamBranchSimulator,
+    SwrBranchFilter,
 )
 
 __all__ = [
@@ -29,4 +33,8 @@ __all__ = [
     "WarmStartNode",
     "WarmStartRootNodeBuilder",
     "STANDARD_PHASES",
+    "BranchAction",
+    "PhaseActionGenerator",
+    "RamBranchSimulator",
+    "SwrBranchFilter",
 ]
