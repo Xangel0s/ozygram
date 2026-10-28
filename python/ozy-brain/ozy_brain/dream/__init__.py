@@ -22,6 +22,7 @@ from ozy_brain.dream.plan_branching import (
     LocusCoeruleusPuctModulator,
     BranchOptimizationResult,
     PlanBranchingMctsOptimizer,
+    persist_mitigation_vaccine,
 )
 
 __all__ = [
@@ -45,4 +46,5 @@ __all__ = [
     "LocusCoeruleusPuctModulator",
     "BranchOptimizationResult",
     "PlanBranchingMctsOptimizer",
+    "persist_mitigation_vaccine",
 ]

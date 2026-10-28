@@ -801,3 +801,37 @@ class PlanBranchingMctsOptimizer:
             simulations_count=num_sims,
             compute_mode=str(cfg.mode),
         )
+
+
+
+from pathlib import Path
+
+
+def persist_mitigation_vaccine(
+    optimization_result: BranchOptimizationResult,
+    target_files: list[str],
+    base_dir: Path,
+) -> Path | None:
+    """
+    If the branch mitigates a critical risk or provides DualActiveContract / fallback,
+    synthesizes and exports a Gotcha memory vaccine to .ozy/memories/gotchas/ via MarkdownGitSynchronizer.
+    """
+    if optimization_result.best_strategy not in ("DualActiveContract", "BackendFallbackAdapter", "DualRouteDispatcher"):
+        return None
+
+    try:
+        from ozy_brain.scanner.memory_store import GotchaMemory, MarkdownGitSynchronizer
+        short_id = uuid.uuid4().hex[:8]
+        gotcha = GotchaMemory(
+            id=f"gotcha_mcts_{short_id}",
+            topic_key="contract_drift_prevention",
+            title=f"[OPTIMIZED_BY_DREAM_RSI] Preventive Vaccine: {optimization_result.best_strategy} for {optimization_result.best_action.phase}",
+            severity="medium",
+            applies_to=list(target_files),
+            tags=["dream_rsi", "mcts_branching", "dual_contract", "auto_learned"],
+            flawed_assumption=f"Assumed breaking in-place modification of '{target_files[0] if target_files else 'endpoint'}' was acceptable without caller synchronization.",
+            countermeasure=f"Apply {optimization_result.best_strategy}: {optimization_result.best_action.description}",
+        )
+        return MarkdownGitSynchronizer.export_gotcha(gotcha, base_dir)
+    except Exception:
+        return None

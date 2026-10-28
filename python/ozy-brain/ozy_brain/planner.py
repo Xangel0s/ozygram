@@ -265,6 +265,20 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
         status = "COMPLETED" if p_name in completed else ("ACTIVE" if p_name == current else "PENDING")
         annotated_phases.append({**p, "status": status})
 
+    # MCTS Warm-Started Branch Optimizer
+    dream_opt: dict[str, Any] = {}
+    try:
+        from ozy_brain.dream.plan_branching import PlanExecutionState, PlanBranchingMctsOptimizer
+        state = PlanExecutionState.from_payload(payload)
+        opt_res = PlanBranchingMctsOptimizer.optimize_plan(
+            state=state,
+            candidate_files=cand_files,
+            blast_radius_count=blast_radius.get("total_blast_radius", 0),
+        )
+        dream_opt = opt_res.to_dict()
+    except Exception as e:
+        dream_opt = {"status": "skipped", "reason": str(e)}
+
     return {
         "autonomy_level": autonomy,
         "goal": goal,
@@ -273,6 +287,7 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
         "phases": annotated_phases,
         "completed_phases": list(completed),
         "current_phase": current,
+        "dream_mcts_optimization": dream_opt,
         "candidate_files": cand_files,
         "suggested_commands": _validation_commands(payload),
         "architectural_domains": [comm.to_dict() for comm in communities],
@@ -320,11 +335,8 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
     communities = detector.partition_graph(cand_files, dependencies)
     cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
 
-    # GraphRAG & Leiden Community Detection
-    from ozy_brain.leiden_communities import LeidenCommunityDetector
-    detector = LeidenCommunityDetector()
-    communities = detector.partition_graph(cand_files, dependencies)
-    cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
+    structured = _structured_plan(payload)
+    dream_opt = structured.get("dream_mcts_optimization", {})
 
     steps = [
         f"1. [PRE-FLIGHT] Baseline check: Goal '{goal}' | Blast Radius: {blast_radius['risk_tier'].upper()} ({blast_radius['total_blast_radius']} files).",
@@ -343,20 +355,30 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
     if memories:
         steps.insert(1, "Incorporate relevant past lessons from memory: " + "; ".join(memories))
 
+    recs = [
+        "Refactor base contracts and types before modifying public dispatchers.",
+        "Do not execute destructive operations without explicit confirmation.",
+        _authority_recommendation(payload),
+    ]
+
+    if dream_opt.get("best_strategy"):
+        best_strat = dream_opt["best_strategy"]
+        best_phase = dream_opt.get("best_action", {}).get("phase", "current")
+        best_score = dream_opt.get("best_score", 0.0)
+        badge = dream_opt.get("badge", "[OPTIMIZED_BY_DREAM_RSI]")
+        recs.insert(0, f"[OPTIMIZED_BY_DREAM_RSI] Phase '{best_phase}' optimized via strategy '{best_strat}' (Q={best_score:.2f}).")
+        steps.append(f"6. [DREAM_RSI] Execute optimized branch strategy '{best_strat}' for phase '{best_phase}' ({badge}).")
+
     return BrainResponse(
         action="plan",
         summary=_base_summary("topological plan", payload),
         plan=steps,
         risks=_base_risks(payload) + ([f"High blast radius: {len(blast_radius['high_severity_files'])} critical file(s) affected."] if blast_radius["high_severity_files"] else []),
-        recommendations=[
-            "Refactor base contracts and types before modifying public dispatchers.",
-            "Do not execute destructive operations without explicit confirmation.",
-            _authority_recommendation(payload),
-        ],
+        recommendations=recs,
         memory_updates=["Save decisions, bug resolutions, and non-obvious discoveries after verification."],
         confidence=0.88 if blast_radius["risk_tier"] != "critical" else 0.72,
         suggested_mcp_calls=_safe_mcp_calls(payload),
-        structured_plan=_structured_plan(payload),
+        structured_plan=structured,
         execution_policy=_execution_policy(payload),
         brain_context_pack=_brain_context_pack(payload),
         provenance=_extract_provenance(payload),

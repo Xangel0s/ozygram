@@ -205,6 +205,29 @@ class DreamOrchestrator:
         except Exception as e:
             logger.warning(f"Generative MCTS dreaming cycle failed: {e}")
 
+        # 5c. Warm-Started Plan Branching MCTS Pre-Optimization
+        plan_branch_optimizations: List[Dict[str, Any]] = []
+        try:
+            from ozy_brain.dream.plan_branching import PlanExecutionState, PlanBranchingMctsOptimizer
+            if top_fragile_files:
+                sample_state = PlanExecutionState(
+                    completed_phases=["context", "leaf_contracts"],
+                    active_phase="domain_services",
+                    modified_files=[f["file_path"] for f in top_fragile_files[:2]],
+                )
+                branch_res = PlanBranchingMctsOptimizer.optimize_plan(
+                    state=sample_state,
+                    candidate_files=[f["file_path"] for f in top_fragile_files[:2]],
+                )
+                plan_branch_optimizations.append(branch_res.to_dict())
+                if "top_insights" not in locals():
+                    top_insights = []
+                top_insights.append(
+                    f"[OPTIMIZED_BY_DREAM_RSI] Pre-computed branch optimization for '{branch_res.best_action.phase}': strategy '{branch_res.best_strategy}' (Q={branch_res.best_score:.2f})."
+                )
+        except Exception as e:
+            logger.warning(f"Plan branching MCTS dreaming pre-optimization failed: {e}")
+
         # Synthesize strategic insights
         if "top_insights" not in locals():
             top_insights: List[str] = []
@@ -248,6 +271,7 @@ class DreamOrchestrator:
             "federated_mesh": federated_report,
             "vector_store": vector_stats,
             "generative_mcts": mcts_reports,
+            "plan_branch_optimizations": plan_branch_optimizations,
         }
 
         # Atomically write to dream_latest_insights.json
