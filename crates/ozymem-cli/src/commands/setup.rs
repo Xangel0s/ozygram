@@ -5,14 +5,19 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 pub async fn run_setup(auto: bool) -> Result<()> {
-    run_init(None, auto, None).await
+    run_init(None, auto, None, false).await
 }
 
 pub async fn run_init(
     path: Option<PathBuf>,
     auto: bool,
     client_filter: Option<String>,
+    dry_run: bool,
 ) -> Result<()> {
+    if dry_run {
+        println!(" [STATUS: DRY-RUN] Previsualización activa. Ningún archivo será modificado.");
+        println!();
+    }
     println!("========================================================================");
     println!("   [OZYGRAM] Autonomous AI Project Initialization (v{})               ", env!("CARGO_PKG_VERSION"));
     println!("========================================================================");
@@ -87,7 +92,7 @@ pub async fn run_init(
         "ozymem-server".to_string()
     };
 
-    let configured_clients = auto_configure_mcp_clients(&server_path_str, &home_dir, &workspace, client_filter.as_deref());
+    let configured_clients = auto_configure_mcp_clients(&server_path_str, &home_dir, &workspace, client_filter.as_deref(), dry_run);
 
     if configured_clients.is_empty() {
         println!(" -> No supported client configuration files found to inject. Manual snippet below.");
@@ -207,6 +212,7 @@ fn auto_configure_mcp_clients(
     home: &Path,
     workspace: &Path,
     client_filter: Option<&str>,
+    dry_run: bool,
 ) -> Vec<(String, String)> {
     let mut results = Vec::new();
     let candidates = get_client_candidates(home, workspace);
@@ -220,7 +226,7 @@ fn auto_configure_mcp_clients(
 
         if let Some(parent) = path.parent() {
             if parent.exists() {
-                if try_inject_mcp_server(&path, server_command).is_ok() {
+                if try_inject_mcp_server(&path, server_command, dry_run).is_ok() {
                     results.push((client_name, path.to_string_lossy().to_string()));
                 }
             }
@@ -318,7 +324,7 @@ fn get_client_candidates(home: &Path, workspace: &Path) -> Vec<(String, PathBuf)
     list
 }
 
-fn try_inject_mcp_server(config_path: &Path, server_command: &str) -> Result<()> {
+fn try_inject_mcp_server(config_path: &Path, server_command: &str, dry_run: bool) -> Result<()> {
     let mut root_val: Value = if config_path.exists() {
         let content = fs::read_to_string(config_path)?;
         serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))
@@ -351,6 +357,23 @@ fn try_inject_mcp_server(config_path: &Path, server_command: &str) -> Result<()>
     );
 
     let formatted = serde_json::to_string_pretty(&root_val)?;
+
+    if dry_run {
+        println!(" [DRY-RUN] Modificación simulada en: {}", config_path.display());
+        return Ok(());
+    }
+
+    // Safety: Crear copia de seguridad con timestamp antes de modificar archivos de configuración existentes
+    if config_path.exists() {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let backup_path = config_path.with_extension(format!("ozybak.{}", timestamp));
+        let _ = fs::copy(config_path, &backup_path);
+        println!(" -> Copia de respaldo de seguridad creada: {}", backup_path.display());
+    }
+
     fs::write(config_path, formatted)?;
 
     Ok(())
