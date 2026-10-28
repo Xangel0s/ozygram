@@ -26,18 +26,19 @@ from ozy_brain.neuromodulators import NeuromodulatorEngine, NeuromodulatorState
 from ozy_brain.procedural_habits import BasalGangliaEngine
 from ozy_brain.stdp_synapse import StdpSynapseEngine
 
-CRMNEW_DIR = Path(r"C:\Users\Lenovo\Documents\crmnew")
+LOCAL_CRMNEW = Path(r"C:\Users\Lenovo\Documents\crmnew")
+WORKSPACE_DIR = LOCAL_CRMNEW if (LOCAL_CRMNEW.exists() and (LOCAL_CRMNEW / ".git").exists()) else Path(__file__).resolve().parents[3]
 
 
 class CrmnewDeepAlgorithmsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.has_crmnew = CRMNEW_DIR.exists() and (CRMNEW_DIR / ".git").exists()
+        cls.has_git = WORKSPACE_DIR.exists() and (WORKSPACE_DIR / ".git").exists()
 
     def test_stdp_hebbian_mining_on_real_crmnew_git(self):
         """Stress-tests STDP Hebbian Plasticity on real crmnew commit history."""
-        if not self.has_crmnew:
-            self.skipTest("crmnew repository not found on local system")
+        if not self.has_git:
+            self.skipTest("git repository not found for deep algorithm testing")
 
         duckdb_scratch = Path(__file__).resolve().parent / "scratch_crmnew_stdp.duckdb"
         if duckdb_scratch.exists():
@@ -48,7 +49,7 @@ class CrmnewDeepAlgorithmsTests(unittest.TestCase):
 
         start = time.perf_counter()
         engine = StdpSynapseEngine(
-            workspace_root=CRMNEW_DIR,
+            workspace_root=WORKSPACE_DIR,
             duckdb_path=duckdb_scratch,
             tenant_id="crmnew",
         )
@@ -75,11 +76,11 @@ class CrmnewDeepAlgorithmsTests(unittest.TestCase):
 
     def test_basal_ganglia_procedural_habits_on_real_crmnew(self):
         """Tests Basal Ganglia sequence mining over real crmnew commits."""
-        if not self.has_crmnew:
-            self.skipTest("crmnew repository not found on local system")
+        if not self.has_git:
+            self.skipTest("git repository not found for deep algorithm testing")
 
         engine = BasalGangliaEngine(
-            workspace_root=CRMNEW_DIR,
+            workspace_root=WORKSPACE_DIR,
             tenant_id="crmnew",
         )
 
@@ -160,7 +161,7 @@ class CrmnewDeepAlgorithmsTests(unittest.TestCase):
 
     def test_cerebellar_forward_model_dysmetria_detection(self):
         """Verifies Cerebellar Kinematic Forward Model detects motor overshoot and under-coupling."""
-        cerebellum = CerebellumEngine(workspace_root=CRMNEW_DIR)
+        cerebellum = CerebellumEngine(workspace_root=WORKSPACE_DIR)
 
         # Case 1: Healthy coordinated patch (schemas + frontend form)
         healthy_patch = [
@@ -194,11 +195,11 @@ class CrmnewDeepAlgorithmsTests(unittest.TestCase):
 
     def test_dream_orchestrator_cycle_on_real_crmnew(self):
         """Runs an end-to-end idle Dream-RSI cycle against crmnew workspace."""
-        if not self.has_crmnew:
-            self.skipTest("crmnew repository not found on local system")
+        if not self.has_git:
+            self.skipTest("git repository not found for deep algorithm testing")
 
         orchestrator = DreamOrchestrator(
-            workspace_root=CRMNEW_DIR,
+            workspace_root=WORKSPACE_DIR,
             tenant_id="crmnew",
         )
 
