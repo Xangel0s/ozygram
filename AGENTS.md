@@ -133,6 +133,12 @@
   - **Ergonomic Compute Conmutator**: `OZY_MAX_COMPUTE=1` (massive Rayon parallelism, 60 simulations) vs `OZY_LIGHTWEIGHT_MODE=1` (cooperative CPU yield, <5% CPU, 10 simulations).
   - **Hybrid Memory Persistence**: Zero-latency SQLite WAL (`.ozymem/memory.db`) + Git-First Markdown (`.ozy/memories/gotchas/*.md`) with optional enterprise PostgreSQL + `pgvector` adapter.
 
+- **Warm-Started Branching MCTS Plan Optimizer (v2.6.0)**:
+  - **Intermediate State Bifurcation**: Warm-starts MCTS tree search ($s_0$) directly from intermediate completed phases (`completed_phases`, `current_phase`, `working_edits`, STC synaptic tags) with $< 1\text{ ms}$ latency, eliminating cold-start re-exploration overhead.
+  - **SOTA Multi-Dimensional Reward ($Q(s, a)$)**: Evaluates candidate branches via $w_1 \cdot \mathcal{R}_{\text{swr}} + w_2 \cdot \mathcal{R}_{\text{blast}} + w_3 \cdot e^{-\mathcal{F}_{\text{drift}}} - w_4 \cdot \mathcal{R}_{\text{churn}}$, favoring non-breaking `DualActiveContract` ($Q \ge 0.85$) over uncoordinated breaking cutovers ($Q < 0.65$).
+  - **Noradrenergic PUCT Exploration Modulation**: Locus Coeruleus dynamically modulates $c_{\text{puct}}$ ($c_{\text{puct}} = 1.414$ for disciplined leaf/validation contracts vs $c_{\text{puct}} = 2.400$ for divergent domain service exploration).
+  - **Bidirectional Re-injection & Offline Sleep Pre-Optimization**: Automatically enriches `ozybrain/plan` steps and recommendations with `[OPTIMIZED_BY_DREAM_RSI]`, pre-computes fragile file branches during the 30-min idle sleep cycle into `.ozymem/dream_latest_insights.json`, and synthesizes Git markdown Gotcha vaccines via `persist_mitigation_vaccine`.
+
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
 - **Literal Search Guidelines**: Prioritize literal exact text matching (`grep_search` with literal strings or `rg -F`) for symbols, paths, and routes to avoid regex compilation bugs and escaped characters.
