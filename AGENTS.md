@@ -100,7 +100,7 @@
 - **Knowledge as Code & Team Gotcha Prevention (v2.1.0)**:
   - **Git-First Markdown Memories**: Stores team gotchas, conventions, and architectural lessons in atomic files under `.ozy/memories/<kind>/*.md` with YAML Frontmatter (`id`, `kind`, `topic_key`, `title`, `author`, `date`, `severity`, `applies_to`, `tags`). Merge-conflict-free across concurrent branches and 100% human-reviewable in Pull Requests.
   - **Preventive Gotchas Injection**: Automatic pre-flight inspection in `ozy_context(action="file")` prepends structured `[ALERT: GOTCHA_PREVENTION]` alerts for any matching file before the agent reads code, preventing known bugs.
-  - **Bi-directional Git-SQLite Synchronization (`ozy_memory`)**: Sincronización instantánea (`sync_markdown`), escaneo en caliente (`scan_markdown`) y exportación declarativa (`export_markdown`) integradas al ciclo de vida del agente.
+  - **Bi-directional Git-SQLite Synchronization (`ozy_memory`)**: SincronizaciÃ³n instantÃ¡nea (`sync_markdown`), escaneo en caliente (`scan_markdown`) y exportaciÃ³n declarativa (`export_markdown`) integradas al ciclo de vida del agente.
 - **Neuro-Cognitive Architecture & Offline Dreaming (v2.2.0)**:
   - **Amygdala Pain Reflexes**: Preemptive SQLite WAL reflex substrate (`amygdala_reflexes`) with sub-millisecond (< 1ms) `ozy_context` interception (`[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]`) warning agents before touching regression-prone files.
   - **Glial & Glymphatic Homeostasis**: Background metabolic cleanup (`GlialHomeostasisEngine`) performing microglial phagocytosis of orphaned vectors/synapses across SQLite and ChromaDB, plus periodic DuckDB compaction (`CHECKPOINT;`).
@@ -120,9 +120,18 @@
 
 - **SOTA Cognitive Frontiers (v0.1.9)**:
   - **Neural ONNX Re-Ranker**: BGE-Reranker-Base cross-encoder executed locally via `fastembed::TextRerank`, with automatic fallback to deterministic token overlap (< 0.2ms).
-  - **Incremental Tree-Sitter AST Engine**: Differential tree editing via `Tree::edit` (< 40μs re-index vs 3ms full re-parse) preserving unchanged subtrees in `crates/ozymem-parser/src/incremental.rs`.
+  - **Incremental Tree-Sitter AST Engine**: Differential tree editing via `Tree::edit` (< 40Î¼s re-index vs 3ms full re-parse) preserving unchanged subtrees in `crates/ozymem-parser/src/incremental.rs`.
   - **GraphRAG & Leiden Community Partitioning**: Modularity $Q$ clustering identifying architectural macro-domains and emitting `[CROSS_DOMAIN_BLAST_RADIUS]` alerts in `ozy_brain.leiden_communities`.
   - **Ephemeral Git Worktree Self-Repair Sandbox**: Detached volatile worktree sandboxes (`EphemeralWorktree`) in `crates/ozymem-core/src/git_backend.rs` with compile validation and RAII zero-leakage cleanup on drop.
+
+- **Live Dream-RSI Centinela & Multi-Repo Contract Bridge (v2.5.0)**:
+  - **Synaptic Tagging & Capture (STC)**: Ephemeral 30-minute memory marks on modified AST nodes, exponential decay pruning, and PRP compute allocation.
+  - **Multi-Repo Workspace Scanner**: In-memory harvesting of working tree diffs and 24h commits across consolidated sub-repos (`api-geofal-crm` [FastAPI] + `crm-geofal` [Next.js 16]).
+  - **Full-Stack Cross-Repo Contract Tracer**: Bidirectional AST verification connecting `@router` endpoints with `resilientFetch`/`useQuery` hooks, emitting `[ALERT: CROSS_REPO_CONTRACT_DRIFT]`.
+  - **Transitive Reverse Blast Radius**: Inverted AST import graph BFS determining direct and indirect component/view breakage.
+  - **Counterfactual MCTS Solver**: RAM-based decision tree evaluating candidate remediations (`BackendFallbackAdapter`, `FrontendCallerSync`, `DualActiveContract`) with multi-dimensional reward optimization.
+  - **Ergonomic Compute Conmutator**: `OZY_MAX_COMPUTE=1` (massive Rayon parallelism, 60 simulations) vs `OZY_LIGHTWEIGHT_MODE=1` (cooperative CPU yield, <5% CPU, 10 simulations).
+  - **Hybrid Memory Persistence**: Zero-latency SQLite WAL (`.ozymem/memory.db`) + Git-First Markdown (`.ozy/memories/gotchas/*.md`) with optional enterprise PostgreSQL + `pgvector` adapter.
 
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
