@@ -30,6 +30,13 @@ from .counterfactual_solver import (
     CounterfactualMctsSolver,
     CounterfactualResolution,
 )
+from .memory_store import (
+    DreamMemoryStore,
+    GotchaMemory,
+    MarkdownGitSynchronizer,
+    PostgresVectorBackend,
+    SqliteWalBackend,
+)
 
 __all__ = [
     "RepoRole",
@@ -52,5 +59,10 @@ __all__ = [
     "CandidateAction",
     "CounterfactualMctsSolver",
     "CounterfactualResolution",
+    "DreamMemoryStore",
+    "GotchaMemory",
+    "SqliteWalBackend",
+    "MarkdownGitSynchronizer",
+    "PostgresVectorBackend",
 ]
 
