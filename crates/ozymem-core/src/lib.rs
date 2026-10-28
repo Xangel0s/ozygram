@@ -8,6 +8,7 @@ pub mod registry;
 pub mod sync;
 pub mod engram_store;
 
+pub use git_backend::{EphemeralWorktree, GitBackend, ValidationResult};
 pub use bundle::{export_bundle, import_bundle, BundleExportSummary, BundleImportSummary, KnowledgeBundle};
 pub use engram_store::{FastEngramReader, IncrementalEngramStore, ENGRAM_FILE};
 pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};

@@ -29,13 +29,11 @@ notify-debouncer-mini = "0.4"
 rkyv.workspace = true
 memmap2.workspace = true
 twox-hash.workspace = true
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "engram_bench"
 harness = false
-
-

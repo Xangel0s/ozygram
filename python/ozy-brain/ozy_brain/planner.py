@@ -241,6 +241,18 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
     topological_sequence = _topological_refactor_order(cand_files, dependencies, score_map)
     hierarchical_locs = localize_hierarchical_targets(cand_files, payload)
 
+    # GraphRAG & Leiden Community Detection
+    from ozy_brain.leiden_communities import LeidenCommunityDetector
+    detector = LeidenCommunityDetector()
+    communities = detector.partition_graph(cand_files, dependencies)
+    cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
+
+    # GraphRAG & Leiden Community Detection
+    from ozy_brain.leiden_communities import LeidenCommunityDetector
+    detector = LeidenCommunityDetector()
+    communities = detector.partition_graph(cand_files, dependencies)
+    cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
+
     return {
         "autonomy_level": autonomy,
         "goal": goal,
@@ -256,6 +268,8 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
         ],
         "candidate_files": cand_files,
         "suggested_commands": _validation_commands(payload),
+        "architectural_domains": [comm.to_dict() for comm in communities],
+        "cross_domain_analysis": cross_domain_info,
         "validation_checks": [
             "Confirm active project and git branch",
             "Inspect git status before and after changes",
@@ -292,6 +306,18 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
     blast_radius = _compute_blast_radius(cand_files, impact_data)
     topological_sequence = _topological_refactor_order(cand_files, dependencies, score_map)
     hierarchical_locs = localize_hierarchical_targets(cand_files, payload)
+
+    # GraphRAG & Leiden Community Detection
+    from ozy_brain.leiden_communities import LeidenCommunityDetector
+    detector = LeidenCommunityDetector()
+    communities = detector.partition_graph(cand_files, dependencies)
+    cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
+
+    # GraphRAG & Leiden Community Detection
+    from ozy_brain.leiden_communities import LeidenCommunityDetector
+    detector = LeidenCommunityDetector()
+    communities = detector.partition_graph(cand_files, dependencies)
+    cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
 
     steps = [
         f"1. [PRE-FLIGHT] Baseline check: Goal '{goal}' | Blast Radius: {blast_radius['risk_tier'].upper()} ({blast_radius['total_blast_radius']} files).",

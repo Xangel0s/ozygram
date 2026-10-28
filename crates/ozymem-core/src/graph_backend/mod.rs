@@ -14,6 +14,7 @@ pub mod markdown_memories;
 pub mod amygdala;
 pub mod habits;
 pub mod thalamus;
+pub mod neural_rerank;
 
 pub use types::*;
 pub use helpers::*;
@@ -22,3 +23,4 @@ pub use exploration::*;
 pub use markdown_memories::*;
 pub use amygdala::*;
 pub use thalamus::*;
+pub use neural_rerank::*;

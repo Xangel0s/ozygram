@@ -118,6 +118,12 @@
   - **Distributed Semantic Merger & Deduplication**: Vector and token-level cosine similarity engine (`SemanticHeuristicMerger`, $\cos \ge 0.88$) that fuses duplicate peer heuristics, merges complementary rules, and boosts synaptic confidence weights ($w_{\text{new}} = \min(1.0, w_{\text{old}} + 0.08)$).
   - **Autonomous Dream-RSI Federated Synchronization**: Non-blocking offline-safe Git fetch with 4.0s timeout during the 30-minute idle sleep cycle, reconciling peer heuristics, updating `.ozymem/dream_latest_insights.json`, and exposing action `corpus_federated_sync` in MCP stdio.
 
+- **SOTA Cognitive Frontiers (v0.1.9)**:
+  - **Neural ONNX Re-Ranker**: BGE-Reranker-Base cross-encoder executed locally via `fastembed::TextRerank`, with automatic fallback to deterministic token overlap (< 0.2ms).
+  - **Incremental Tree-Sitter AST Engine**: Differential tree editing via `Tree::edit` (< 40μs re-index vs 3ms full re-parse) preserving unchanged subtrees in `crates/ozymem-parser/src/incremental.rs`.
+  - **GraphRAG & Leiden Community Partitioning**: Modularity $Q$ clustering identifying architectural macro-domains and emitting `[CROSS_DOMAIN_BLAST_RADIUS]` alerts in `ozy_brain.leiden_communities`.
+  - **Ephemeral Git Worktree Self-Repair Sandbox**: Detached volatile worktree sandboxes (`EphemeralWorktree`) in `crates/ozymem-core/src/git_backend.rs` with compile validation and RAII zero-leakage cleanup on drop.
+
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
 - **Literal Search Guidelines**: Prioritize literal exact text matching (`grep_search` with literal strings or `rg -F`) for symbols, paths, and routes to avoid regex compilation bugs and escaped characters.

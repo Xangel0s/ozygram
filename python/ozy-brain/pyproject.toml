@@ -1,6 +1,6 @@
 [project]
 name = "ozy-brain"
-version = "0.1.8"
+version = "0.1.9"
 description = "Local reasoning worker for Ozygram"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,5 +13,6 @@ dependencies = [
     "fastembed>=0.2.0",
 ]
 
-[tool.pytest.ini_options]
-pythonpath = ["."]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

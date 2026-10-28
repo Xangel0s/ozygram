@@ -371,6 +371,126 @@ fn format_timestamp(secs: i64) -> String {
     }
 }
 
+
+/// Result of running validation inside an ephemeral worktree sandbox.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ValidationResult {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub passed: bool,
+    pub duration_ms: u64,
+}
+
+/// An isolated ephemeral Git worktree sandbox in volatile/temp space.
+/// Uses RAII (Drop) to guarantee cleanup of both the worktree registration and temp directory.
+pub struct EphemeralWorktree {
+    repo_root: PathBuf,
+    worktree_path: PathBuf,
+    cleaned_up: bool,
+}
+
+impl EphemeralWorktree {
+    /// Create a new detached worktree from HEAD into an ephemeral directory.
+    pub fn create(repo_root: &Path) -> Result<Self, String> {
+        let temp_dir = tempfile::Builder::new()
+            .prefix("ozysandbox_")
+            .tempdir()
+            .map_err(|e| format!("Failed to create temporary sandbox directory: {}", e))?;
+
+        let worktree_path = temp_dir.path().to_path_buf();
+        drop(temp_dir);
+        let _ = std::fs::remove_dir_all(&worktree_path);
+
+        let output = std::process::Command::new("git")
+            .args(["worktree", "add", "--detach"])
+            .arg(&worktree_path)
+            .arg("HEAD")
+            .current_dir(repo_root)
+            .output()
+            .map_err(|e| format!("Failed to spawn git worktree add: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git worktree add failed: {}", stderr));
+        }
+
+        Ok(Self {
+            repo_root: repo_root.to_path_buf(),
+            worktree_path,
+            cleaned_up: false,
+        })
+    }
+
+    /// Path to the isolated sandbox directory.
+    pub fn path(&self) -> &Path {
+        &self.worktree_path
+    }
+
+    /// Write or overwrite a file in the ephemeral sandbox.
+    pub fn apply_file(&self, relative_path: &str, content: &str) -> Result<(), String> {
+        let dest = self.worktree_path.join(relative_path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent dirs for {}: {}", relative_path, e))?;
+        }
+        std::fs::write(&dest, content)
+            .map_err(|e| format!("Failed to write file {}: {}", relative_path, e))?;
+        Ok(())
+    }
+
+    /// Run a validation command inside the isolated worktree with execution timing.
+    pub fn run_validation(&self, cmd: &str, args: &[&str]) -> Result<ValidationResult, String> {
+        let start = std::time::Instant::now();
+        let output = std::process::Command::new(cmd)
+            .args(args)
+            .current_dir(&self.worktree_path)
+            .output()
+            .map_err(|e| format!("Failed to execute validation command '{}': {}", cmd, e))?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let passed = output.status.success();
+
+        Ok(ValidationResult {
+            exit_code,
+            stdout,
+            stderr,
+            passed,
+            duration_ms,
+        })
+    }
+
+    /// Explicitly remove the worktree and clean up references.
+    pub fn cleanup(&mut self) {
+        if !self.cleaned_up {
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&self.worktree_path)
+                .current_dir(&self.repo_root)
+                .output();
+
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "prune"])
+                .current_dir(&self.repo_root)
+                .output();
+
+            if self.worktree_path.exists() {
+                let _ = std::fs::remove_dir_all(&self.worktree_path);
+            }
+            self.cleaned_up = true;
+        }
+    }
+}
+
+impl Drop for EphemeralWorktree {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +662,30 @@ mod tests {
         // Older commits are not merges
         assert!(!changes[2].is_merge, "root commit should not be merge");
         assert!(!changes[1].is_merge, "feature commit should not be merge");
+    }
+
+    #[test]
+    fn test_ephemeral_worktree_sandbox() {
+        let dir = TempDir::new().unwrap();
+        let backend = init_repo(dir.path());
+
+        // Create ephemeral worktree
+        let worktree = EphemeralWorktree::create(backend.repo_path()).unwrap();
+        assert!(worktree.path().exists(), "Worktree dir must exist");
+        assert!(worktree.path().join("main.rs").exists(), "HEAD files must be present");
+
+        // Apply a mutated file in sandbox
+        worktree.apply_file("sandbox_test.txt", "sandbox content\n").unwrap();
+        assert!(worktree.path().join("sandbox_test.txt").exists());
+        assert!(!dir.path().join("sandbox_test.txt").exists(), "Real repo must NOT have sandbox file");
+
+        // Run validation command
+        let res = worktree.run_validation("git", &["status"]).unwrap();
+        assert!(res.passed, "git status in sandbox should pass");
+
+        // Drop / cleanup worktree
+        let wt_path = worktree.path().to_path_buf();
+        drop(worktree);
+        assert!(!wt_path.exists(), "Worktree path must be cleaned up on drop");
     }
 }

@@ -3,6 +3,7 @@ pub mod api_routes;
 pub mod engram;
 pub mod sql_ddl;
 pub mod ghost_signature;
+pub mod incremental;
 
 pub use engram::{extract_engram_contracts, EngramContract, EngramTable, ArchivedEngramContract, ArchivedEngramTable};
 
@@ -13,6 +14,7 @@ pub use api_routes::{
 pub use sql_ddl::{
     normalize_table_name, parse_model_tables, parse_sql_ddl_tables, SqlTableReference,
 };
+pub use incremental::{AstMutationEdit, IncrementalAstCache};
 pub use ghost_signature::{
     parse_call_site_argument_count, parse_function_signature, FunctionParam, FunctionSignature,
 };

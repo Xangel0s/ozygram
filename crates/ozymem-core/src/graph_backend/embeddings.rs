@@ -253,6 +253,27 @@ impl GraphBackend {
             }
         }
 
+        // Re-ranking semántico híbrido (Neural ONNX u Overlap Determinista)
+        let reranker = crate::graph_backend::NeuralReranker::default();
+        if !deduplicated.is_empty() {
+            let doc_summaries: Vec<String> = deduplicated
+                .iter()
+                .map(|sl| format!("{} {}", sl.lesson.symbol_name, sl.lesson.solution))
+                .collect();
+            let doc_refs: Vec<&str> = doc_summaries.iter().map(|s| s.as_str()).collect();
+            let rerank_scores = reranker.rerank(query, &doc_refs);
+            for (idx, score) in rerank_scores.into_iter().enumerate() {
+                if idx < deduplicated.len() {
+                    deduplicated[idx].score = deduplicated[idx].score * 0.60 + score * 0.40;
+                }
+            }
+            deduplicated.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
         Ok(deduplicated)
     }
 
