@@ -215,7 +215,7 @@ impl GitBackend {
         Ok(entries)
     }
 
-    /// Retorna la rama actual si está disponible.
+    /// Retorna la rama actual si estÃ¡ disponible.
     pub fn current_branch(&self) -> Option<String> {
         self.repo.head().ok().and_then(|h| h.shorthand().map(str::to_string))
     }
@@ -305,6 +305,83 @@ impl GitBackend {
         }
 
         Ok(notes)
+    }
+
+    /// Return in-memory patch and changed files for uncommitted working directory changes.
+    pub fn live_uncommitted_diff(&self) -> Result<(String, Vec<String>), String> {
+        let head_tree = self.repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+        let diff = self.repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), None)
+            .map_err(|e| format!("diff_tree_to_workdir_with_index: {e}"))?;
+
+        let files = collect_diff_paths(&diff);
+        let mut patch = String::new();
+        diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+            let origin = line.origin();
+            if let Ok(content) = std::str::from_utf8(line.content()) {
+                if origin == '+' || origin == '-' || origin == ' ' {
+                    patch.push(origin);
+                }
+                patch.push_str(content);
+            }
+            true
+        }).map_err(|e| format!("print diff: {e}"))?;
+
+        Ok((patch, files))
+    }
+
+    /// Return in-memory patch and changed files for commits made in the last `hours` hours.
+    pub fn recent_commits_diff(&self, hours: u32) -> Result<(String, Vec<String>), String> {
+        let now = chrono::Utc::now().timestamp();
+        let threshold = now - (hours as i64 * 3600);
+
+        let mut revwalk = self.repo.revwalk().map_err(|e| format!("revwalk: {e}"))?;
+        revwalk.set_sorting(Sort::TIME).map_err(|e| format!("sort: {e}"))?;
+        if revwalk.push_head().is_err() {
+            return Ok((String::new(), Vec::new()));
+        }
+
+        let mut matching_commits = Vec::new();
+        for oid_res in revwalk {
+            if let Ok(oid) = oid_res {
+                if let Ok(commit) = self.repo.find_commit(oid) {
+                    if commit.time().seconds() >= threshold {
+                        matching_commits.push(commit);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if matching_commits.is_empty() {
+            return Ok((String::new(), Vec::new()));
+        }
+
+        let newest_tree = matching_commits.first().unwrap().tree().map_err(|e| format!("tree: {e}"))?;
+        let oldest_commit = matching_commits.last().unwrap();
+        let oldest_tree = if oldest_commit.parent_count() > 0 {
+            oldest_commit.parent(0).and_then(|p| p.tree()).ok()
+        } else {
+            None
+        };
+
+        let diff = self.repo.diff_tree_to_tree(oldest_tree.as_ref(), Some(&newest_tree), None)
+            .map_err(|e| format!("diff_tree_to_tree: {e}"))?;
+
+        let files = collect_diff_paths(&diff);
+        let mut patch = String::new();
+        diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+            let origin = line.origin();
+            if let Ok(content) = std::str::from_utf8(line.content()) {
+                if origin == '+' || origin == '-' || origin == ' ' {
+                    patch.push(origin);
+                }
+                patch.push_str(content);
+            }
+            true
+        }).map_err(|e| format!("print diff: {e}"))?;
+
+        Ok((patch, files))
     }
 }
 
@@ -491,6 +568,226 @@ impl Drop for EphemeralWorktree {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum RepoRole {
+    BackendFastApi,
+    FrontendNextJs,
+    RustCrate,
+    FullstackMonorepo,
+    GenericGit,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DiscoveredRepo {
+    pub path: PathBuf,
+    pub relative_name: String,
+    pub role: RepoRole,
+    pub branch: Option<String>,
+    pub head_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RepoLiveDiff {
+    pub repo_path: String,
+    pub relative_name: String,
+    pub role: RepoRole,
+    pub uncommitted_patch: String,
+    pub uncommitted_files: Vec<String>,
+    pub recent_commits_patch: String,
+    pub recent_commits_files: Vec<String>,
+}
+
+pub struct MultiRepoScanner;
+
+impl MultiRepoScanner {
+    pub fn classify_repo(repo_path: &Path) -> RepoRole {
+        let has_fastapi = repo_path.join("main.py").exists()
+            || repo_path.join("app").join("main.py").exists()
+            || repo_path.join("api").exists()
+            || if let Ok(c) = std::fs::read_to_string(repo_path.join("requirements.txt")) {
+                c.to_lowercase().contains("fastapi")
+            } else {
+                false
+            };
+
+        let has_nextjs = repo_path.join("next.config.js").exists()
+            || repo_path.join("next.config.mjs").exists()
+            || repo_path.join("next.config.ts").exists()
+            || if let Ok(c) = std::fs::read_to_string(repo_path.join("package.json")) {
+                c.contains("\"next\"")
+            } else {
+                false
+            };
+
+        let has_cargo = repo_path.join("Cargo.toml").exists();
+
+        match (has_fastapi, has_nextjs, has_cargo) {
+            (true, true, _) => RepoRole::FullstackMonorepo,
+            (true, false, _) => RepoRole::BackendFastApi,
+            (false, true, _) => RepoRole::FrontendNextJs,
+            (false, false, true) => RepoRole::RustCrate,
+            _ => RepoRole::GenericGit,
+        }
+    }
+
+    pub fn discover_sibling_repos(root_dir: &Path) -> Result<Vec<DiscoveredRepo>, String> {
+        let mut discovered = Vec::new();
+        let entries = std::fs::read_dir(root_dir)
+            .map_err(|e| format!("Failed to read directory {}: {}", root_dir.display(), e))?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.join(".git").exists() {
+                    let relative_name = path.file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let role = Self::classify_repo(&path);
+
+                    let (branch, head_hash) = if let Ok(backend) = GitBackend::open(&path) {
+                        (backend.current_branch(), backend.head_commit_hash())
+                    } else {
+                        (None, None)
+                    };
+
+                    discovered.push(DiscoveredRepo {
+                        path,
+                        relative_name,
+                        role,
+                        branch,
+                        head_hash,
+                    });
+                }
+            }
+        }
+
+        if discovered.is_empty() && root_dir.join(".git").exists() {
+            let role = Self::classify_repo(root_dir);
+            let (branch, head_hash) = if let Ok(backend) = GitBackend::open(root_dir) {
+                (backend.current_branch(), backend.head_commit_hash())
+            } else {
+                (None, None)
+            };
+            discovered.push(DiscoveredRepo {
+                path: root_dir.to_path_buf(),
+                relative_name: ".".to_string(),
+                role,
+                branch,
+                head_hash,
+            });
+        }
+
+        Ok(discovered)
+    }
+
+    pub fn extract_live_diffs(
+        repos: &[DiscoveredRepo],
+        recent_hours: u32,
+    ) -> Result<Vec<RepoLiveDiff>, String> {
+        let mut diffs = Vec::new();
+        for r in repos {
+            if let Ok(backend) = GitBackend::open(&r.path) {
+                let (uncommitted_patch, uncommitted_files) = backend.live_uncommitted_diff()
+                    .unwrap_or_else(|_| (String::new(), Vec::new()));
+                let (recent_commits_patch, recent_commits_files) = backend.recent_commits_diff(recent_hours)
+                    .unwrap_or_else(|_| (String::new(), Vec::new()));
+
+                diffs.push(RepoLiveDiff {
+                    repo_path: r.path.to_string_lossy().to_string(),
+                    relative_name: r.relative_name.clone(),
+                    role: r.role.clone(),
+                    uncommitted_patch,
+                    uncommitted_files,
+                    recent_commits_patch,
+                    recent_commits_files,
+                });
+            }
+        }
+        Ok(diffs)
+    }
+}
+
+/// Biological Synaptic Tagging & Capture (STC) substrate.
+/// Manages ephemeral memory marks on AST files/symbols with temporal decay.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SynapticTag {
+    pub target_path: String,
+    pub symbol_name: Option<String>,
+    pub repo_role: RepoRole,
+    pub tagged_at_secs: i64,
+    pub ttl_secs: i64,
+    pub weight: f32,
+}
+
+pub struct SynapticTagger {
+    default_ttl_secs: i64,
+    tags: std::collections::HashMap<String, SynapticTag>,
+}
+
+impl SynapticTagger {
+    pub fn new(default_ttl_secs: i64) -> Self {
+        Self {
+            default_ttl_secs: if default_ttl_secs <= 0 { 1800 } else { default_ttl_secs },
+            tags: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn tag_file(
+        &mut self,
+        target_path: &str,
+        repo_role: RepoRole,
+        symbol_name: Option<&str>,
+        weight: f32,
+        now_secs: i64,
+    ) {
+        let key = match symbol_name {
+            Some(sym) => format!("{}:{}", target_path, sym),
+            None => target_path.to_string(),
+        };
+        self.tags.insert(
+            key,
+            SynapticTag {
+                target_path: target_path.to_string(),
+                symbol_name: symbol_name.map(|s| s.to_string()),
+                repo_role,
+                tagged_at_secs: now_secs,
+                ttl_secs: self.default_ttl_secs,
+                weight,
+            },
+        );
+    }
+
+    pub fn is_tagged(&self, target_path: &str, symbol_name: Option<&str>, now_secs: i64) -> bool {
+        let key = match symbol_name {
+            Some(sym) => format!("{}:{}", target_path, sym),
+            None => target_path.to_string(),
+        };
+        if let Some(tag) = self.tags.get(&key) {
+            now_secs <= tag.tagged_at_secs + tag.ttl_secs
+        } else {
+            false
+        }
+    }
+
+    pub fn active_tags(&self, now_secs: i64) -> Vec<SynapticTag> {
+        self.tags
+            .values()
+            .filter(|tag| now_secs <= tag.tagged_at_secs + tag.ttl_secs)
+            .cloned()
+            .collect()
+    }
+
+    pub fn prune_decayed(&mut self, now_secs: i64) -> usize {
+        let before = self.tags.len();
+        self.tags.retain(|_, tag| now_secs <= tag.tagged_at_secs + tag.ttl_secs);
+        before - self.tags.len()
+    }
+
+    pub fn count(&self) -> usize {
+        self.tags.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,7 +879,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let backend = init_repo(dir.path());
 
-        // Blame main.rs — single line
+        // Blame main.rs â€” single line
         let entries = backend.blame_file("main.rs", None, None).unwrap();
         assert!(!entries.is_empty(), "blame should return at least one entry");
         for e in &entries {
@@ -687,5 +984,86 @@ mod tests {
         let wt_path = worktree.path().to_path_buf();
         drop(worktree);
         assert!(!wt_path.exists(), "Worktree path must be cleaned up on drop");
+    }
+
+    #[test]
+    fn test_multi_repo_scanner_and_classification() {
+        let dir = TempDir::new().unwrap();
+        let api_dir = dir.path().join("api-geofal-crm");
+        let frontend_dir = dir.path().join("crm-geofal");
+        let rust_dir = dir.path().join("rust-worker");
+
+        std::fs::create_dir_all(&api_dir).unwrap();
+        std::fs::create_dir_all(&frontend_dir).unwrap();
+        std::fs::create_dir_all(&rust_dir).unwrap();
+
+        create_repo(&api_dir);
+        std::fs::write(api_dir.join("main.py"), "from fastapi import FastAPI\n").unwrap();
+        git_commit(&api_dir, "initial backend");
+
+        create_repo(&frontend_dir);
+        std::fs::write(frontend_dir.join("package.json"), "{\"dependencies\": {\"next\": \"16.0.0\"}}\n").unwrap();
+        git_commit(&frontend_dir, "initial frontend");
+
+        create_repo(&rust_dir);
+        std::fs::write(rust_dir.join("Cargo.toml"), "[package]\nname=\"worker\"\n").unwrap();
+        git_commit(&rust_dir, "initial rust");
+
+        let repos = MultiRepoScanner::discover_sibling_repos(dir.path()).unwrap();
+        assert_eq!(repos.len(), 3);
+
+        let api_repo = repos.iter().find(|r| r.relative_name == "api-geofal-crm").unwrap();
+        assert_eq!(api_repo.role, RepoRole::BackendFastApi);
+
+        let fe_repo = repos.iter().find(|r| r.relative_name == "crm-geofal").unwrap();
+        assert_eq!(fe_repo.role, RepoRole::FrontendNextJs);
+
+        let rs_repo = repos.iter().find(|r| r.relative_name == "rust-worker").unwrap();
+        assert_eq!(rs_repo.role, RepoRole::RustCrate);
+    }
+
+    #[test]
+    fn test_synaptic_tagger_lifecycle_and_decay() {
+        let mut tagger = SynapticTagger::new(100);
+        let now = 1000;
+
+        tagger.tag_file("src/api.py", RepoRole::BackendFastApi, Some("auto_sync"), 0.9, now);
+        tagger.tag_file("src/ui.tsx", RepoRole::FrontendNextJs, None, 0.5, now);
+
+        assert_eq!(tagger.count(), 2);
+        assert!(tagger.is_tagged("src/api.py", Some("auto_sync"), now + 50));
+        assert!(tagger.is_tagged("src/ui.tsx", None, now + 100));
+
+        // After TTL passes, is_tagged should return false
+        assert!(!tagger.is_tagged("src/api.py", Some("auto_sync"), now + 101));
+
+        let active = tagger.active_tags(now + 50);
+        assert_eq!(active.len(), 2);
+
+        let active_later = tagger.active_tags(now + 101);
+        assert_eq!(active_later.len(), 0);
+
+        let pruned = tagger.prune_decayed(now + 101);
+        assert_eq!(pruned, 2);
+        assert_eq!(tagger.count(), 0);
+    }
+
+    #[test]
+    fn test_live_uncommitted_diff_in_memory() {
+        let dir = TempDir::new().unwrap();
+        let backend = init_repo(dir.path());
+
+        // Modify a file in working tree without committing
+        std::fs::write(dir.path().join("main.rs"), "fn main() { println!(\"live\"); }\n").unwrap();
+
+        let (patch, files) = backend.live_uncommitted_diff().unwrap();
+        assert!(files.contains(&"main.rs".to_string()));
+        assert!(patch.contains("+fn main() { println!(\"live\"); }"));
+
+        // Extract live diffs via MultiRepoScanner
+        let repos = MultiRepoScanner::discover_sibling_repos(dir.path()).unwrap();
+        let live_diffs = MultiRepoScanner::extract_live_diffs(&repos, 24).unwrap();
+        assert_eq!(live_diffs.len(), 1);
+        assert!(live_diffs[0].uncommitted_files.contains(&"main.rs".to_string()));
     }
 }
