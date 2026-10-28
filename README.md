@@ -5,11 +5,11 @@
 ### *Persistent Cognitive Memory, Code Graph & Autonomous Self-Improvement for AI Coding Agents*
 
 [![Release](https://img.shields.io/badge/Release-v0.1.7-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
-[![Fast Lane](https://img.shields.io/badge/Fast_Lane-Rust_<5ms-orange?style=for-the-badge&logo=rust)](crates/ozymem-server)
+[![Fast Lane](https://img.shields.io/badge/Fast_Lane-Rust_Native-orange?style=for-the-badge&logo=rust)](crates/ozymem-server)
 [![Standalone Brain](https://img.shields.io/badge/Brain-Standalone_Zero--Python-blue?style=for-the-badge)](python/ozy-brain)
 [![Storage](https://img.shields.io/badge/Storage-SQLite_ACID_+_Outbox-003B57?style=for-the-badge&logo=sqlite)](docs/architecture.md)
 [![Vector](https://img.shields.io/badge/Search-FastEmbed_ONNX_+_RRF-success?style=for-the-badge)](docs/semantic-search.md)
-[![Self-Improvement](https://img.shields.io/badge/MCTS-Dream--RSI-purple?style=for-the-badge)](docs/dream-rsi.md)
+[![Self-Improvement](https://img.shields.io/badge/Offline_Replay-Dream--RSI-purple?style=for-the-badge)](docs/dream-rsi.md)
 [![Platform](https://img.shields.io/badge/Platform-Windows_|_Linux_|_macOS-lightgrey?style=for-the-badge)](https://github.com/Xangel0s/ozygram)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
@@ -67,25 +67,25 @@ Stop restarting from zero.<br/>
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │  AI Coding Agent (Antigravity / Claude Code / Cursor / Windsurf / VS Code / ...)        │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            │ MCP stdio JSON-RPC (< 5ms)
+                                            │ MCP stdio JSON-RPC (Low Latency)
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │  FAST LANE: Rust Core (ozymem-server & ozymem-cli)                                     │
 │  • SQLite ACID WAL Storage (.ozymem/memory.db) with Transactional Outbox Triggers      │
 │  • Native AST Code Graph (Tree-Sitter: Rust, Python, TS/TSX, JS, Go, SQL)              │
-│  • O(1) Binary Engram Contracts (rkyv + memmap2 zero-copy, ~15ns lookups)              │
-│  • In-Memory Speculative Ghost Patch Sandbox (Copy-on-Write RAM, caller arity checker)  │
+│  • O(1) Binary Engram Contracts (rkyv + memmap2 memory-mapped contract table)              │
+│  • In-Memory Speculative Ghost Patch Verifier (Read-only caller arity & contract check)  │
 │  • Live File Watcher (notify debounced incremental indexing)                           │
-│  • Token Hyper-Optimization (view_skeleton AST pruning, LOD 0/1/2, extractive windows) │
+│  • Token Hyper-Optimization (view_skeleton AST function body pruning, LOD 0/1/2) │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
                                             │ Transactional Outbox (SQLite WAL / IPC)
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │  POWER LANE: Python Cognitive Engine (ozy-brain)                                       │
 │  • Dense Vector Inference (FastEmbed ONNX local) + SQLite FTS5 BM25 Lexical Ranking    │
-│  • Reciprocal Rank Fusion (RRF) Semantic Search with Cross-Encoder Neural Re-Ranker     │
+│  • Reciprocal Rank Fusion (RRF) Semantic Search with Deterministic Token-Overlap Re-Rank     │
 │  • Dual System Cognitive Router (System 1 fast reflex < 150ms vs System 2 deliberative)│
-│  • 3-Agent Dialectic Committee (Implementer + Risk Critic + Supervisor consensus)     │
+│  • Risk Review Pipeline (Deterministic Rules + Optional LLM Critic)                        │
 │  • Proactive Diagnostic Consumer (instant compiler & runtime repair prescriptions)     │
-│  • Offline Dream-RSI Consolidation (MCTS replay, postmortem vaccines, temporal decay)  │
+│  • Offline Dream-RSI Consolidation (UCT trajectory replay, postmortems, temporal decay)  │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -98,14 +98,14 @@ Find the exact capability, technical mechanism, and documentation for your task:
 | What You Need | Technical Mechanism | Documentation | Recommended Tool / Command |
 | :--- | :--- | :--- | :--- |
 | **Search past fixes, gotchas & rules** | Hybrid Reciprocal Rank Fusion (FTS5 BM25 + FastEmbed ONNX) | [Semantic Search](docs/semantic-search.md) | `ozy_memory(action="search")` |
-| **Inspect symbol contracts without loading full files** | Zero-copy $O(1)$ `rkyv` memory-mapped contract table | [Engram System](docs/engram_system.md) | `ozy_lookup_engram` / `ozymem symbol` |
+| **Inspect symbol contracts without loading full files** | $O(1)$ `rkyv` memory-mapped contract table | [Engram System](docs/engram_system.md) | `ozy_lookup_engram` / `ozymem symbol` |
 | **Analyze Blast Radius before editing code** | Inverted directional AST import traversal & reverse dependencies | [Supervision Guide](docs/supervision-and-validation.md) | `ozy_graph(action="incoming_dependencies")` |
-| **Pre-flight test code patches safely in RAM** | Ephemeral Copy-on-Write RAM sandbox & caller arity validator | [Cognitive Evolution](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_simulate_patch` |
-| **Surgical AST exploration with 80% token savings** | Tree-Sitter method skeletonization with multi-level LOD | [Token Optimization](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `view_skeleton` / `ozy_file_tree` |
+| **Pre-flight test code patches safely in memory** | Read-only static caller arity & contract validator | [Cognitive Evolution](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_simulate_patch` |
+| **Surgical AST exploration with token reduction** | Tree-Sitter method skeletonization with multi-level LOD | [Token Optimization](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `view_skeleton` / `ozy_file_tree` |
 | **Audit SQL migrations for safety & idempotency** | AST DDL idempotency linter (`IF NOT EXISTS`, drop guards) | [Resilient Backend](docs/architecture.md) | `ozy_doctor(action="audit_migrations")` |
 | **End-to-end frontend to backend tracing** | Bidirectional Next.js/TSX endpoint resolution & SQL lineage | [Cross-Language](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_graph(action="endpoint_dependents")` |
-| **Deliberate high-risk code changes with AI consensus** | 3-agent dialectic committee (Implementer + Critic + Supervisor) | [Dialectic Engine](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `dialectic_committee` |
-| **Autonomous offline self-improvement** | MCTS counterfactual replay dreaming & temporal memory decay | [Dream-RSI Guide](docs/dream-rsi.md) | `ozymem dream run` |
+| **Deliberate high-risk code changes** | Rule-based risk review pipeline with optional LLM critic | [Dialectic Engine](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_brain(action="risk_review")` |
+| **Autonomous offline self-improvement** | Offline trajectory replay dreaming ($0 API cost) & temporal memory decay | [Dream-RSI Guide](docs/dream-rsi.md) | `ozymem dream run` |
 
 ---
 
@@ -228,15 +228,15 @@ File: `cline_mcp_settings.json` or VS Code MCP settings:
 
 ## [MCP TOOLS REFERENCE]
 
-Ozygram provides a comprehensive suite of 30+ native MCP tools organized by cognitive domain:
+Ozygram provides 23 unified native MCP tools (+ 57 optional legacy aliases) organized by cognitive domain:
 
 ### 1. Memory & Knowledge Layer
 | Tool | Primary Parameters | Description |
 | :--- | :--- | :--- |
 | `ozy_context` | `action`, `file_path` | Unified context: AST symbols, adjacent rules, gotchas, and lessons. |
 | `ozy_memory` | `action`, `query`, `kind`, `title`, `content` | Store, query, and rank persistent memories, decisions, and lessons. |
-| `ozy_lookup_engram` | `symbol`, `file` | $O(1)$ zero-copy signature and contract lookup (~15ns). |
-| `ozy_exploration` | `action`, `trajectory_id`, `objective` | Dream-RSI MCTS tree tracker with automatic leaf parenting and UCT scoring. |
+| `ozy_lookup_engram` | `symbol`, `file` | $O(1)$ memory-mapped signature and contract lookup. |
+| `ozy_exploration` | `action`, `trajectory_id`, `objective` | Dream-RSI trajectory tracker with automatic leaf parenting and UCT scoring. |
 
 ### 2. Code Graph & AST Exploration
 | Tool | Primary Parameters | Description |
@@ -251,8 +251,8 @@ Ozygram provides a comprehensive suite of 30+ native MCP tools organized by cogn
 ### 3. Quality, Safety & Ghost Patching
 | Tool | Primary Parameters | Description |
 | :--- | :--- | :--- |
-| `ozy_simulate_patch` | `file_path`, `patch` | Ephemeral RAM copy-on-write patch verification, arity checking, and invariant audit. |
-| `ozy_diagnostics_quick`| `file_path`, `code` | Native in-memory syntax diagnostic linter (<5ms) for TS, TSX, Python, Rust, Go. |
+| `ozy_simulate_patch` | `file_path`, `patch` | In-memory patch verification, caller arity checking, and invariant audit (read-only). |
+| `ozy_diagnostics_quick`| `file_path`, `code` | Native in-memory syntax diagnostic linter for TS, TSX, Python, Rust, Go. |
 | `ozy_ast_patch` | `file_path`, `target_code`, `replacement` | Indentation-aware surgical code replacer with automatic whitespace alignment. |
 | `ozy_replace_symbol` | `file_path`, `symbol_name`, `replacement` | Surgical AST-level symbol replacement with pre-flight compiler syntax verification. |
 | `ozy_verify_diff` | `file_path`, `diff` | Sandboxed diff validator ensuring syntax compliance prior to disk write. |
@@ -260,12 +260,31 @@ Ozygram provides a comprehensive suite of 30+ native MCP tools organized by cogn
 ### 4. Cognitive Brain & Supervision
 | Tool | Primary Parameters | Description |
 | :--- | :--- | :--- |
-| `ozy_brain` | `action`, `payload` | Dual System router, dialectic committee deliberation, and DuckDB churn audit. |
+| `ozy_brain` | `action`, `payload` | Dual System router, rule-based risk review (with optional LLM critic), and DuckDB churn audit. |
 | `ozy_doctor` | `format`, `action` | Complete system diagnostics (SQLite integrity, outbox health, migration audit). |
 | `ozy_code_doctor` | `subpath` | Structural code smell and duplicate block detector across monorepos. |
 | `ozy_skills` | `query` | Query official agent skills catalog and load specialized workflow cheatsheets. |
 
 ---
+
+
+---
+
+## [TRANSPARENCY: ARCHITECTURE & AUDIT BENCHMARKS]
+
+To maintain complete technical integrity, every claimed capability maps directly to verified code and tests:
+
+| Capability | Actual Implementation | LLM Cost | Verified Source / Test in Repo |
+| :--- | :--- | :--- | :--- |
+| **Multi-Language AST Indexing** | Tree-Sitter (Rust, Python, TS/JS, Go) | $0 | `crates/ozymem-parser/src/lib.rs` |
+| **SQL Schema Lineage** | Regex DDL Extractor *(AST parser in roadmap)* | $0 | `crates/ozymem-parser/src/sql_ddl.rs` |
+| **Hybrid Search** | SQLite FTS5 (BM25) + FastEmbed ONNX + RRF ($k=60$) | $0 | `crates/ozymem-core/src/graph_backend/queries.rs` |
+| **Result Re-Ranking** | Deterministic token-overlap heuristic with weights | $0 | `crates/ozymem-core/src/graph_backend/exploration.rs` |
+| **Engram Contract Store** | Hash table over `rkyv` archive + `memmap2` ($O(1)$) | $0 | `crates/ozymem-core/src/engram_store/` |
+| **Patch Pre-Flight Check** | Static signature, arity, and caller compatibility check | $0 | `crates/ozymem-server/src/verifier.rs` |
+| **Dream-RSI Engine** | Offline trajectory replay with UCT/UCB1 selection | $0 | `python/ozy-brain/ozy_brain/dream/` |
+| **Risk Review Pipeline** | Rule-based heuristics + optional LLM risk critic | $0 / Optional | `python/ozy-brain/ozy_brain/agents/` |
+| **Unified MCP Tools** | 23 active tools (+ 57 legacy aliases configurable) | $0 | `crates/ozymem-server/src/schemas.rs` |
 
 ## [CLI CHEAT SHEET]
 
