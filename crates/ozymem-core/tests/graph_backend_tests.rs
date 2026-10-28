@@ -2852,6 +2852,8 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
         created_at: "2026-10-20T12:00:00Z".to_string(),
         tenant_id: "local".to_string(),
         workspace_root: dir.path().to_string_lossy().to_string(),
+        clean_runs: 0,
+        extinction_score: 0.0,
     };
     backend.record_amygdala_reflex(&reflex1).unwrap();
 
@@ -2875,6 +2877,8 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
         created_at: String::new(),
         tenant_id: "local".to_string(),
         workspace_root: dir.path().to_string_lossy().to_string(),
+        clean_runs: 0,
+        extinction_score: 0.0,
     };
     backend.record_amygdala_reflex(&reflex1_update).unwrap();
 
@@ -2897,6 +2901,8 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
         created_at: String::new(),
         tenant_id: "local".to_string(),
         workspace_root: dir.path().to_string_lossy().to_string(),
+        clean_runs: 0,
+        extinction_score: 0.0,
     };
     backend.record_amygdala_reflex(&reflex_file_level).unwrap();
 
