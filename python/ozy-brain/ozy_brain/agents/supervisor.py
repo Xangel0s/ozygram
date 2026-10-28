@@ -108,19 +108,31 @@ class SupervisorAgent:
         # Agent 2: Risk Critic Audit
         critic_res = self.critic.audit(payload)
 
-        # Agent 3: Executive Judge Evaluation
-        if critic_res.blocked:
-            verdict = "[DIALECTIC VERDICT: REJECTED: CRITICAL_VETO]"
-            confidence = 0.50
+        # Agent 3: Executive Judge Evaluation (Calibrated Bayesian Evidence)
+        from ozy_brain.bayesian_scorer import BayesianEvidenceScorer
+        scorer = BayesianEvidenceScorer()
+        b_res = scorer.calculate_confidence(
+            blast_radius=getattr(critic_res, "blast_radius", 1),
+            churn_lines=int(payload.get("churn_lines", 0)),
+            test_coverage=float(payload.get("test_coverage", 0.80)),
+            d_kl_dysmetria=float(payload.get("d_kl_dysmetria", 0.0)),
+            has_critical_keywords=any(
+                kw in str(critic_res.reasons).lower()
+                for kw in ["schema", "auth", "secret", "core", "migration", "token"]
+            ),
+            is_blocked=critic_res.blocked,
+        )
+
+        if critic_res.blocked or b_res.decision in ("REJECTED_CRITICAL_VETO", "VETOED"):
+            verdict = f"[DIALECTIC VERDICT: REJECTED: CRITICAL_VETO] (Confidence: {b_res.confidence:.2%})"
             approved = False
-        elif critic_res.risk_level in ("HIGH", "CRITICAL"):
-            verdict = "[DIALECTIC VERDICT: CONDITIONAL_APPROVAL]"
-            confidence = 0.82
+        elif b_res.risk_level in ("HIGH", "CRITICAL"):
+            verdict = f"[DIALECTIC VERDICT: CONDITIONAL_APPROVAL] (Confidence: {b_res.confidence:.2%})"
             approved = True
         else:
-            verdict = "[DIALECTIC VERDICT: APPROVED]"
-            confidence = 0.95
+            verdict = f"[DIALECTIC VERDICT: APPROVED] (Confidence: {b_res.confidence:.2%})"
             approved = True
+        confidence = b_res.confidence
 
         combined_plan = [
             f"[DIALECTIC COMMITTEE] Executive Judge Verdict: {verdict}",
@@ -159,6 +171,7 @@ class SupervisorAgent:
                 "approved": approved,
                 "implementer_plan": imp_resp.structured_plan,
                 "critic_audit": critic_res.to_dict(),
+                "bayesian_evidence": b_res.to_dict(),
             },
             risk_assessment=critic_res.to_dict(),
         )

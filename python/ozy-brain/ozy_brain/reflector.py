@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from ozy_brain.planner import _structured_plan
@@ -18,6 +21,103 @@ from ozy_brain.schemas import (
     _safe_mcp_calls,
 )
 
+
+
+def triangulate_failure(
+    failure_trace: str, goal: str = "", changes: list[Any] | None = None
+) -> dict[str, str]:
+    """
+    Reflexion Framework (NeurIPS 2023): Triangulates execution failures into:
+    1. Flawed Assumption
+    2. Violated Invariant
+    3. Prescriptive Antidote Rule
+    """
+    ft_lower = failure_trace.lower()
+    changes_str = ", ".join(str(c) for c in (changes or [])[:3])
+
+    if "syntax" in ft_lower or "parse" in ft_lower or "unexpected token" in ft_lower:
+        assumption = "Assumed code edits conformed to Tree-Sitter grammar without local AST parsing."
+        invariant = "All generated code must compile cleanly under native parser rules."
+        antidote = "Validate syntax in memory using ozy_ast_patch or ghost simulation before writing to disk."
+    elif "attributeerror" in ft_lower or "undefined" in ft_lower or "has no attribute" in ft_lower:
+        assumption = "Assumed target object/module possessed symbol without checking contract definition."
+        invariant = "External module symbols must be inspected via ozy_context contracts first."
+        antidote = "Verify object schema and exported functions with AST skeleton lookup before calling."
+    elif "timeout" in ft_lower or "deadlock" in ft_lower:
+        assumption = "Assumed synchronous operation would complete immediately without resource bounds."
+        invariant = "All external subprocesses and network calls must have bounded timeouts (< 5s)."
+        antidote = "Implement non-blocking async execution or exponential backoff."
+    elif "import" in ft_lower or "modulenotfound" in ft_lower or "cannot find module" in ft_lower:
+        assumption = "Assumed package/module was available in current python/node environment."
+        invariant = "Dependency paths must align with pyproject.toml or package.json manifests."
+        antidote = "Inspect project dependencies before adding foreign package imports."
+    else:
+        assumption = f"Assumed change sequence for '{goal[:60]}' would succeed without contract verification."
+        invariant = "Caller and callee signatures must maintain arity parity."
+        antidote = f"Apply isolated boundary check and verify affected files: {changes_str or 'target files'}."
+
+    return {
+        "flawed_assumption": assumption,
+        "violated_invariant": invariant,
+        "prescriptive_antidote": antidote,
+    }
+
+
+def persist_atomic_gotcha_markdown(
+    workspace_root: str | Path,
+    failure_trace: str,
+    triangulation: dict[str, str],
+    target_files: list[str] | None = None,
+) -> Path | None:
+    """
+    Persists an atomic Git Markdown gotcha under .ozy/memories/gotchas/
+    compatible with Git version control and real-time preventive injection.
+    """
+    try:
+        ws_path = Path(workspace_root).resolve()
+        gotchas_dir = ws_path / ".ozy" / "memories" / "gotchas"
+        gotchas_dir.mkdir(parents=True, exist_ok=True)
+
+        trace_hash = hashlib.sha256(failure_trace.encode("utf-8")).hexdigest()[:8]
+        gotcha_id = f"gotcha_reflexion_{trace_hash}"
+        file_path = gotchas_dir / f"{gotcha_id}.md"
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        applies_to = target_files or ["src/*"]
+        yaml_applies = "\n".join(f'  - "{f}"' for f in applies_to[:5])
+
+        md_content = f"""---
+id: {gotcha_id}
+kind: gotcha
+topic_key: gotcha_prevention
+title: "[REFLEXION GOTCHA] {triangulation['violated_invariant'][:80]}"
+author: ozybrain_reflexion
+date: "{now_iso[:10]}"
+severity: high
+applies_to:
+{yaml_applies}
+tags:
+  - reflexion
+  - failure_triangulation
+  - auto_learned
+---
+
+# Verbal Self-Reflection (Reflexion Engine)
+
+- **Flawed Assumption:** {triangulation['flawed_assumption']}
+- **Violated Invariant:** {triangulation['violated_invariant']}
+- **Prescriptive Antidote:** {triangulation['prescriptive_antidote']}
+
+### Error Trace Signature:
+```text
+{failure_trace[:300]}
+```
+"""
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(md_content)
+        return file_path
+    except Exception:
+        return None
 
 def extract_procedural_rules(failures: list[Any], changes: list[Any], project: str) -> list[dict[str, Any]]:
     """Distills failures, compiler diagnostics, and execution traces into deterministic Trigger -> Action procedural rules."""
@@ -244,8 +344,21 @@ def _build_reflection_report(payload: dict[str, Any]) -> dict[str, Any]:
 def reflect(payload: dict[str, Any]) -> BrainResponse:
     failures = _items(payload, "failures")
     changes = _items(payload, "changes")
+    goal = _goal(payload)
+    ws_root = payload.get("workspace_root") or payload.get("project") or "."
     report = _build_reflection_report(payload)
     procedural_rules = report.get("procedural_rules", [])
+
+    # Reflexion Framework: Verbal Self-Reflection & Failure Triangulation
+    verbal_reflection = {}
+    persisted_gotcha = None
+    if failures:
+        primary_fail = str(failures[0])
+        verbal_reflection = triangulate_failure(primary_fail, goal=goal, changes=changes)
+        target_files = [str(c) for c in changes] or _candidate_files(payload)
+        persisted_gotcha = persist_atomic_gotcha_markdown(
+            ws_root, primary_fail, verbal_reflection, target_files=target_files
+        )
 
     plan_steps = [
         "Compare intended goal with actual changed files and test output.",
@@ -253,6 +366,14 @@ def reflect(payload: dict[str, Any]) -> BrainResponse:
         "Verify if changed files remained within bounded scope.",
         "Consolidate verified rules into durable project gotchas, conventions, and Engram memory.",
     ]
+
+    if verbal_reflection:
+        plan_steps.append("[VERBAL REFLECTION] Identified flawed assumption:")
+        plan_steps.append(f"  • Assumption: {verbal_reflection['flawed_assumption']}")
+        plan_steps.append(f"  • Invariant: {verbal_reflection['violated_invariant']}")
+        plan_steps.append(f"  • Antidote: {verbal_reflection['prescriptive_antidote']}")
+        if persisted_gotcha:
+            plan_steps.append(f"  • Materialized gotcha memory: {persisted_gotcha.name}")
 
     if procedural_rules:
         plan_steps.append(f"Synthesized {len(procedural_rules)} procedural rule(s):")
@@ -272,6 +393,10 @@ def reflect(payload: dict[str, Any]) -> BrainResponse:
 
     memory_updates = [r["engram_block"] for r in procedural_rules] if procedural_rules else (report["extracted_gotchas"] or ["Capture reusable gotchas, conventions, and validation commands."])
 
+    structured_plan_dict = _structured_plan(payload, autonomy="reflection_only")
+    structured_plan_dict["verbal_reflection"] = verbal_reflection
+    structured_plan_dict["persisted_gotcha"] = str(persisted_gotcha) if persisted_gotcha else None
+
     return BrainResponse(
         action="reflect",
         summary=_base_summary("reflection and procedural consolidation", payload),
@@ -281,7 +406,7 @@ def reflect(payload: dict[str, Any]) -> BrainResponse:
         memory_updates=memory_updates,
         confidence=0.88 if not failures else 0.75,
         suggested_mcp_calls=_safe_mcp_calls(payload, include_graph=False),
-        structured_plan=_structured_plan(payload, autonomy="reflection_only"),
+        structured_plan=structured_plan_dict,
         execution_policy=_execution_policy(payload, autonomy="reflection_only"),
         brain_context_pack=_brain_context_pack(payload),
         reflection_report=report,

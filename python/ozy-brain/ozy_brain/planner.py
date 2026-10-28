@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from pathlib import Path
+import re
 from typing import Any
 
 from ozy_brain.schemas import (
@@ -169,16 +171,75 @@ def _topological_refactor_order(
     return sequence
 
 
+def localize_hierarchical_targets(
+    candidate_files: list[str],
+    payload: dict[str, Any],
+    max_symbols_per_file: int = 3,
+) -> list[dict[str, Any]]:
+    """
+    Agentless 3-Stage Hierarchical Localization (UC Berkeley / UIUC 2024):
+    Stage 1: Repository -> Candidate Files
+    Stage 2: Candidate Files -> Target Symbols (functions/classes)
+    Stage 3: Target Symbols -> Extractive Line Windows (±10 lines)
+    """
+    localized: list[dict[str, Any]] = []
+    goal_tokens = {w.lower() for w in re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", str(payload.get("goal", "")))}
+    raw_symbols = payload.get("symbols") or payload.get("functions") or []
+
+    target_files = list(candidate_files)
+    if not target_files and raw_symbols:
+        for s in raw_symbols:
+            if isinstance(s, dict) and s.get("file_path") and s["file_path"] not in target_files:
+                target_files.append(s["file_path"])
+
+    for file_path in target_files:
+        file_symbols: list[dict[str, Any]] = []
+        # 1. Match from payload symbols if provided
+        for s in raw_symbols:
+            if isinstance(s, dict) and s.get("file_path") == file_path:
+                s_name = str(s.get("name", "unknown"))
+                start = int(s.get("start_line", 1))
+                end = int(s.get("end_line", start + 20))
+                file_symbols.append({
+                    "symbol": s_name,
+                    "window": [max(1, start - 10), end + 10],
+                    "match_reason": "explicit_graph_match",
+                })
+
+        # 2. Heuristic line window if file exists on disk and no explicit symbols
+        if not file_symbols:
+            role, _ = _classify_file_role(file_path)
+            file_symbols.append({
+                "symbol": f"target_entrypoint_in_{Path(file_path).stem}",
+                "window": [1, 50],
+                "match_reason": f"role_{role}_heuristic",
+            })
+
+        localized.append({
+            "file": file_path,
+            "symbols": file_symbols[:max_symbols_per_file],
+        })
+
+    return localized
+
+
+
 def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dict[str, Any]:
     goal = _goal(payload)
     cand_scores_list = _candidate_file_scores(payload, limit=8)
-    cand_files = [item["path"] for item in cand_scores_list] or _candidate_files(payload)
+    cand_files = (
+        [item["path"] for item in cand_scores_list]
+        or _candidate_files(payload)
+        or [s["file_path"] for s in payload.get("symbols", []) if isinstance(s, dict) and s.get("file_path")]
+        or [s["file_path"] for s in payload.get("functions", []) if isinstance(s, dict) and s.get("file_path")]
+    )
     score_map = {item["path"]: int(item.get("score", 0)) for item in cand_scores_list}
     impact_data = payload.get("impact") or payload.get("graph_impact") or []
     dependencies = payload.get("dependencies") or payload.get("edges") or []
 
     blast_radius = _compute_blast_radius(cand_files, impact_data)
     topological_sequence = _topological_refactor_order(cand_files, dependencies, score_map)
+    hierarchical_locs = localize_hierarchical_targets(cand_files, payload)
 
     return {
         "autonomy_level": autonomy,
@@ -214,7 +275,9 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
             "Do not alter security, auth, or credential configurations",
             "Do not remove existing error handling or assertion contracts",
         ],
+        "hierarchical_localization": hierarchical_locs,
     }
+
 
 
 def plan(payload: dict[str, Any]) -> BrainResponse:
@@ -228,6 +291,7 @@ def plan(payload: dict[str, Any]) -> BrainResponse:
 
     blast_radius = _compute_blast_radius(cand_files, impact_data)
     topological_sequence = _topological_refactor_order(cand_files, dependencies, score_map)
+    hierarchical_locs = localize_hierarchical_targets(cand_files, payload)
 
     steps = [
         f"1. [PRE-FLIGHT] Baseline check: Goal '{goal}' | Blast Radius: {blast_radius['risk_tier'].upper()} ({blast_radius['total_blast_radius']} files).",
