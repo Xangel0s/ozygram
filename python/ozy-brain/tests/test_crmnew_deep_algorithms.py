@@ -26,8 +26,14 @@ from ozy_brain.neuromodulators import NeuromodulatorEngine, NeuromodulatorState
 from ozy_brain.procedural_habits import BasalGangliaEngine
 from ozy_brain.stdp_synapse import StdpSynapseEngine
 
-LOCAL_CRMNEW = Path(r"C:\Users\Lenovo\Documents\crmnew")
-WORKSPACE_DIR = LOCAL_CRMNEW if (LOCAL_CRMNEW.exists() and (LOCAL_CRMNEW / ".git").exists()) else Path(__file__).resolve().parents[3]
+LOCAL_CRMNEW_CANDIDATES = [
+    Path(__file__).resolve().parents[3] / "crmnew",
+    Path(r"C:\Users\Lenovo\Documents\crmnew"),
+]
+WORKSPACE_DIR = next(
+    (p for p in LOCAL_CRMNEW_CANDIDATES if p.exists() and (p / ".git").exists()),
+    Path(__file__).resolve().parents[3],
+)
 
 
 class CrmnewDeepAlgorithmsTests(unittest.TestCase):
