@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use memmap2::{Mmap, MmapOptions};
-use ozymem_parser::{ArchivedEngramTable, EngramContract, EngramTable};
+use ozymem_parser::{ArchivedEngramContract, ArchivedEngramTable, EngramContract, EngramTable};
 use std::fs::File;
 use std::path::Path;
 
@@ -35,10 +35,15 @@ impl FastEngramReader {
         })
     }
 
+    /// Consulta zero-copy directa: devuelve una referencia al contrato archivado validado en mmap sin allocar en heap
+    pub fn lookup_archived(&self, symbol_path: &str) -> Option<&ArchivedEngramContract> {
+        let key = EngramTable::hash_symbol(symbol_path);
+        self.archived_table.entries.get(&key)
+    }
+
     /// Consulta un contrato por su ruta completa en tiempo O(1)
     pub fn lookup(&self, symbol_path: &str) -> Option<EngramContract> {
-        let key = EngramTable::hash_symbol(symbol_path);
-        self.archived_table.entries.get(&key).map(|archived| {
+        self.lookup_archived(symbol_path).map(|archived| {
             EngramContract {
                 symbol_path: archived.symbol_path.as_str().to_string(),
                 file_path: archived.file_path.as_str().to_string(),
