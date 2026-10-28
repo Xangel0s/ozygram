@@ -62,3 +62,4 @@ fn bench_engram_lookups(c: &mut Criterion) {
 
 criterion_group!(benches, bench_engram_lookups);
 criterion_main!(benches);
+
