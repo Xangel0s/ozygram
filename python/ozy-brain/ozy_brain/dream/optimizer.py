@@ -83,10 +83,12 @@ class DreamRsiOptimizer:
         trajectories: List[Dict[str, Any]],
         candidate_policy: Optional[BaseExplorationPolicy] = None,
         epsilon: float = 1.0,
+        validation_split: float = 0.30,
     ) -> Dict[str, Any]:
         """
         Evalúa la política activa vs la candidata a través de un lote de trayectorias.
-        Aplica promoción segura si J(candidate) > J(active) + epsilon sin falsos podados.
+        Utiliza partición Train/Validation (Hold-Out Set) para evitar sobreajuste.
+        Aplica promoción segura si J_val(candidate) > J_val(active) + epsilon sin errores de poda.
         """
         if not trajectories:
             return {
@@ -96,9 +98,18 @@ class DreamRsiOptimizer:
                 "candidate_score": 0.0,
             }
 
-        # 1. Evaluar política activa
+        # Partición Train / Validation para evitar sobreajuste
+        if len(trajectories) >= 4 and 0.0 < validation_split < 1.0:
+            split_idx = max(1, int(len(trajectories) * (1.0 - validation_split)))
+            train_trajs = trajectories[:split_idx]
+            val_trajs = trajectories[split_idx:]
+        else:
+            train_trajs = trajectories
+            val_trajs = trajectories
+
+        # 1. Evaluar política activa sobre conjunto de validación
         active_reports: List[SimulationReport] = []
-        for traj in trajectories:
+        for traj in val_trajs:
             rep = self.simulator.simulate(
                 self.active_policy,
                 trajectory_id=traj.get("id", "traj_0"),
@@ -122,9 +133,9 @@ class DreamRsiOptimizer:
                 "message": "Evaluación de línea base completada.",
             }
 
-        # 2. Evaluar política candidata
+        # 2. Evaluar política candidata en conjunto de validación retenido
         candidate_reports: List[SimulationReport] = []
-        for traj in trajectories:
+        for traj in val_trajs:
             rep = self.simulator.simulate(
                 candidate_policy,
                 trajectory_id=traj.get("id", "traj_0"),
