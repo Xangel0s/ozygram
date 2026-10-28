@@ -25,8 +25,62 @@ pub fn normalize_table_name(raw: &str) -> String {
 
 /// Parses SQL file content (e.g. migrations, DDL scripts) for table operations:
 /// CREATE TABLE, ALTER TABLE, DROP TABLE, and REFERENCES.
+fn compute_line_offsets(source: &str) -> Vec<usize> {
+    let mut offsets = vec![0];
+    for (i, b) in source.bytes().enumerate() {
+        if b == b'\n' {
+            offsets.push(i + 1);
+        }
+    }
+    offsets
+}
+
+fn byte_to_line(offsets: &[usize], pos: usize) -> usize {
+    match offsets.binary_search(&pos) {
+        Ok(idx) => idx + 1,
+        Err(idx) => idx,
+    }
+}
+
+fn strip_comments_preserving_offsets(source: &str) -> String {
+    let mut out = source.as_bytes().to_vec();
+    let len = out.len();
+    let mut i = 0;
+    while i < len {
+        if i + 1 < len && out[i] == b'-' && out[i + 1] == b'-' {
+            while i < len && out[i] != b'\n' {
+                out[i] = b' ';
+                i += 1;
+            }
+        } else if i + 1 < len && out[i] == b'/' && out[i + 1] == b'*' {
+            out[i] = b' ';
+            out[i + 1] = b' ';
+            i += 2;
+            while i + 1 < len && !(out[i] == b'*' && out[i + 1] == b'/') {
+                if out[i] != b'\n' {
+                    out[i] = b' ';
+                }
+                i += 1;
+            }
+            if i + 1 < len {
+                out[i] = b' ';
+                out[i + 1] = b' ';
+                i += 2;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// Parses SQL file content (e.g. migrations, DDL scripts) for table operations:
+/// CREATE TABLE, ALTER TABLE, DROP TABLE, and REFERENCES.
+/// Supports multi-line DDL statements while preserving line number attribution.
 pub fn parse_sql_ddl_tables(source: &str, file_path: &str) -> Vec<SqlTableReference> {
     let mut references = Vec::new();
+    let line_offsets = compute_line_offsets(source);
+    let sanitized = strip_comments_preserving_offsets(source);
 
     let create_re = Regex::new(
         r#"(?i)\bCREATE\s+(?:UNLOGGED\s+|TEMP\s+|TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z0-9_."`]+)"#
@@ -44,73 +98,70 @@ pub fn parse_sql_ddl_tables(source: &str, file_path: &str) -> Vec<SqlTableRefere
         r#"(?i)\bREFERENCES\s+([a-zA-Z0-9_."`]+)\s*(?:\(|$)"#
     ).unwrap();
 
-    for (idx, line) in source.lines().enumerate() {
-        let line_no = idx + 1;
-        let effective = line.find("--")
-            .map(|pos| line[..pos].trim())
-            .unwrap_or_else(|| line.trim());
-
-        if effective.is_empty() {
-            continue;
+    for caps in create_re.captures_iter(&sanitized) {
+        if let Some(tbl) = caps.get(1) {
+            let start = caps.get(0).unwrap().start();
+            let line_no = byte_to_line(&line_offsets, start);
+            references.push(SqlTableReference {
+                table_name: normalize_table_name(tbl.as_str()),
+                operation: "CREATE".to_string(),
+                line_number: line_no,
+                file_path: file_path.to_string(),
+                raw_statement: caps.get(0).unwrap().as_str().trim().to_string(),
+            });
         }
+    }
 
-        if let Some(caps) = create_re.captures(effective) {
-            if let Some(tbl) = caps.get(1) {
+    for caps in alter_re.captures_iter(&sanitized) {
+        if let Some(tbl) = caps.get(1) {
+            let start = caps.get(0).unwrap().start();
+            let line_no = byte_to_line(&line_offsets, start);
+            references.push(SqlTableReference {
+                table_name: normalize_table_name(tbl.as_str()),
+                operation: "ALTER".to_string(),
+                line_number: line_no,
+                file_path: file_path.to_string(),
+                raw_statement: caps.get(0).unwrap().as_str().trim().to_string(),
+            });
+        }
+    }
+
+    for caps in drop_re.captures_iter(&sanitized) {
+        if let Some(tbl) = caps.get(1) {
+            let start = caps.get(0).unwrap().start();
+            let line_no = byte_to_line(&line_offsets, start);
+            references.push(SqlTableReference {
+                table_name: normalize_table_name(tbl.as_str()),
+                operation: "DROP".to_string(),
+                line_number: line_no,
+                file_path: file_path.to_string(),
+                raw_statement: caps.get(0).unwrap().as_str().trim().to_string(),
+            });
+        }
+    }
+
+    for caps in ref_re.captures_iter(&sanitized) {
+        if let Some(tbl) = caps.get(1) {
+            let start = caps.get(0).unwrap().start();
+            let line_no = byte_to_line(&line_offsets, start);
+            let norm = normalize_table_name(tbl.as_str());
+            if !references.iter().any(|r| r.line_number == line_no && r.table_name == norm) {
                 references.push(SqlTableReference {
-                    table_name: normalize_table_name(tbl.as_str()),
-                    operation: "CREATE".to_string(),
+                    table_name: norm,
+                    operation: "REFERENCES".to_string(),
                     line_number: line_no,
                     file_path: file_path.to_string(),
-                    raw_statement: effective.to_string(),
+                    raw_statement: caps.get(0).unwrap().as_str().trim().to_string(),
                 });
-            }
-        }
-
-        if let Some(caps) = alter_re.captures(effective) {
-            if let Some(tbl) = caps.get(1) {
-                references.push(SqlTableReference {
-                    table_name: normalize_table_name(tbl.as_str()),
-                    operation: "ALTER".to_string(),
-                    line_number: line_no,
-                    file_path: file_path.to_string(),
-                    raw_statement: effective.to_string(),
-                });
-            }
-        }
-
-        if let Some(caps) = drop_re.captures(effective) {
-            if let Some(tbl) = caps.get(1) {
-                references.push(SqlTableReference {
-                    table_name: normalize_table_name(tbl.as_str()),
-                    operation: "DROP".to_string(),
-                    line_number: line_no,
-                    file_path: file_path.to_string(),
-                    raw_statement: effective.to_string(),
-                });
-            }
-        }
-
-        if let Some(caps) = ref_re.captures(effective) {
-            if let Some(tbl) = caps.get(1) {
-                let norm = normalize_table_name(tbl.as_str());
-                if !references.iter().any(|r| r.line_number == line_no && r.table_name == norm) {
-                    references.push(SqlTableReference {
-                        table_name: norm,
-                        operation: "REFERENCES".to_string(),
-                        line_number: line_no,
-                        file_path: file_path.to_string(),
-                        raw_statement: effective.to_string(),
-                    });
-                }
             }
         }
     }
 
+    references.sort_by_key(|r| r.line_number);
     references
 }
 
-/// Parses Python (SQLAlchemy, SQLModel), TypeScript (Drizzle, TypeORM), or Prisma files
-/// to identify backend models associated with database tables.
+
 pub fn parse_model_tables(source: &str, file_path: &str) -> Vec<SqlTableReference> {
     let mut references = Vec::new();
 
@@ -251,5 +302,26 @@ export const cotizaciones = pgTable('cotizaciones', {
         let ts_refs = parse_model_tables(ts_code, "schema/cotizaciones.ts");
         assert_eq!(ts_refs.len(), 1);
         assert_eq!(ts_refs[0].table_name, "cotizaciones");
+    }
+
+    #[test]
+    fn test_parse_sql_ddl_multiline_and_views() {
+        let sql = r#"
+CREATE TABLE
+    IF NOT EXISTS
+    public.multiline_orders (
+        id SERIAL PRIMARY KEY,
+        customer_id INT,
+        CONSTRAINT fk_cust
+            FOREIGN KEY (customer_id)
+            REFERENCES customers (id)
+);
+
+CREATE OR REPLACE VIEW active_orders AS
+    SELECT * FROM orders;
+"#;
+        let refs = parse_sql_ddl_tables(sql, "migrations/multiline.sql");
+        assert!(refs.iter().any(|r| r.table_name == "multiline_orders" && r.operation == "CREATE"));
+        assert!(refs.iter().any(|r| r.table_name == "customers" && r.operation == "REFERENCES"));
     }
 }
