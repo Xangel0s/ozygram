@@ -13,6 +13,8 @@ from ozy_brain.schemas import (
     _candidate_file_scores,
     _candidate_files,
     _combined_memory_titles,
+    _completed_phases,
+    _current_phase,
     _execution_policy,
     _extract_provenance,
     _goal,
@@ -247,25 +249,30 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
     communities = detector.partition_graph(cand_files, dependencies)
     cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
 
-    # GraphRAG & Leiden Community Detection
-    from ozy_brain.leiden_communities import LeidenCommunityDetector
-    detector = LeidenCommunityDetector()
-    communities = detector.partition_graph(cand_files, dependencies)
-    cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
+    completed = set(_completed_phases(payload))
+    current = _current_phase(payload)
+    raw_phases = [
+        {"name": "context", "objective": "Gather baseline evidence before making edits", "exit_condition": "Relevant candidate files, memories, graph impact, and risks identified"},
+        {"name": "leaf_contracts", "objective": "Refactor base contracts, models, and schemas first", "exit_condition": "Base structures compile cleanly without contract violations"},
+        {"name": "domain_services", "objective": "Propagate changes through domain and persistence logic", "exit_condition": "Internal mutations and service helpers synchronized"},
+        {"name": "entrypoints", "objective": "Adapt public API, MCP dispatchers, and CLI interfaces", "exit_condition": "Handlers aligned with updated return contracts"},
+        {"name": "validation", "objective": "Verify behavior with focused unit tests followed by test suite", "exit_condition": f"Validation commands pass cleanly ({_validation_summary_label(payload)})"},
+        {"name": "learning", "objective": "Persist durable project knowledge", "exit_condition": "Key decisions, gotchas, or patterns recorded in memory"},
+    ]
+    annotated_phases = []
+    for p in raw_phases:
+        p_name = p["name"]
+        status = "COMPLETED" if p_name in completed else ("ACTIVE" if p_name == current else "PENDING")
+        annotated_phases.append({**p, "status": status})
 
     return {
         "autonomy_level": autonomy,
         "goal": goal,
         "blast_radius_analysis": blast_radius,
         "topological_edit_sequence": topological_sequence,
-        "phases": [
-            {"name": "context", "objective": "Gather baseline evidence before making edits", "exit_condition": "Relevant candidate files, memories, graph impact, and risks identified"},
-            {"name": "leaf_contracts", "objective": "Refactor base contracts, models, and schemas first", "exit_condition": "Base structures compile cleanly without contract violations"},
-            {"name": "domain_services", "objective": "Propagate changes through domain and persistence logic", "exit_condition": "Internal mutations and service helpers synchronized"},
-            {"name": "entrypoints", "objective": "Adapt public API, MCP dispatchers, and CLI interfaces", "exit_condition": "Handlers aligned with updated return contracts"},
-            {"name": "validation", "objective": "Verify behavior with focused unit tests followed by test suite", "exit_condition": f"Validation commands pass cleanly ({_validation_summary_label(payload)})"},
-            {"name": "learning", "objective": "Persist durable project knowledge", "exit_condition": "Key decisions, gotchas, or patterns recorded in memory"},
-        ],
+        "phases": annotated_phases,
+        "completed_phases": list(completed),
+        "current_phase": current,
         "candidate_files": cand_files,
         "suggested_commands": _validation_commands(payload),
         "architectural_domains": [comm.to_dict() for comm in communities],

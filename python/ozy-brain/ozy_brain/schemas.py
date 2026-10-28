@@ -132,6 +132,20 @@ def _goal(payload: dict[str, Any]) -> str:
     return _text(payload, "goal") or _text(payload, "query") or "understand and guide the project safely"
 
 
+def _completed_phases(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("completed_phases") or payload.get("done_phases") or []
+    return [str(p) for p in raw if p]
+
+
+def _current_phase(payload: dict[str, Any]) -> str:
+    return _text(payload, "current_phase") or _text(payload, "active_phase") or "context"
+
+
+def _working_edits(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = payload.get("working_edits") or payload.get("in_flight_edits") or payload.get("diffs") or []
+    return [e for e in raw if isinstance(e, dict)]
+
+
 def _memory_titles(memories: Iterable[Any], limit: int = 5) -> list[str]:
     titles: list[str] = []
     for mem in memories:

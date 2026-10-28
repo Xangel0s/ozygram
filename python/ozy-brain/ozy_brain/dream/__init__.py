@@ -9,6 +9,12 @@ from ozy_brain.dream.evaluator import SimulationReport, evaluate_trajectory_simu
 from ozy_brain.dream.simulator import ReplaySimulator
 from ozy_brain.dream.auto_wire import RiskCriticArbitrator, auto_wire_memory_embeddings
 from ozy_brain.dream.orchestrator import DreamOrchestrator
+from ozy_brain.dream.plan_branching import (
+    PlanExecutionState,
+    WarmStartNode,
+    WarmStartRootNodeBuilder,
+    STANDARD_PHASES,
+)
 
 __all__ = [
     "BaseExplorationPolicy",
@@ -19,4 +25,8 @@ __all__ = [
     "RiskCriticArbitrator",
     "auto_wire_memory_embeddings",
     "DreamOrchestrator",
+    "PlanExecutionState",
+    "WarmStartNode",
+    "WarmStartRootNodeBuilder",
+    "STANDARD_PHASES",
 ]
