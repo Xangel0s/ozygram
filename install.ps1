@@ -1,5 +1,10 @@
 # Ozygram / Ozymem Automatic Release Installer for Windows
 # Run via: powershell -ExecutionPolicy Bypass -File .\install.ps1
+# Or one-liner: irm https://raw.githubusercontent.com/Xangel0s/ozygram/main/install.ps1 | iex
+
+param(
+    [switch]$FromSource = $false
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -15,63 +20,99 @@ Write-Host "[1/4] Preparing installation directories..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $PyDir) | Out-Null
 
-Write-Host "[2/4] Building release binaries (cargo build --release)..." -ForegroundColor Yellow
-if (Test-Path "target\release\ozymem-server.exe") {
-    Move-Item -Force "target\release\ozymem-server.exe" "target\release\ozymem-server.exe.running" -ErrorAction SilentlyContinue
-}
-if (Test-Path "target\release\ozymem.exe") {
-    Move-Item -Force "target\release\ozymem.exe" "target\release\ozymem.exe.running" -ErrorAction SilentlyContinue
-}
-try {
-    cargo build --release
-} catch {
-    Write-Host "[!] Cargo release build failed. Ensure Rust is installed." -ForegroundColor Red
-    exit 1
+$InstalledFromRelease = $false
+
+# If not explicitly compiling from source, attempt fast precompiled release download
+if (-not $FromSource -and -not (Test-Path "target\release\ozymem.exe")) {
+    Write-Host "[2/4] Downloading precompiled release v0.1.7 from GitHub..." -ForegroundColor Yellow
+    $ReleaseZip = Join-Path $env:TEMP "ozymem-windows-x64.zip"
+    $TempExtract = Join-Path $env:TEMP "ozymem-install-extract"
+    $DownloadUrl = "https://github.com/Xangel0s/ozygram/releases/latest/download/ozymem-windows-x64.zip"
+
+    try {
+        Write-Host " -> Fetching $DownloadUrl..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $ReleaseZip -UseBasicParsing
+        
+        if (Test-Path $TempExtract) {
+            Remove-Item -Recurse -Force $TempExtract -ErrorAction SilentlyContinue
+        }
+        Expand-Archive -Path $ReleaseZip -DestinationPath $TempExtract -Force
+        
+        # Copy binaries safely
+        foreach ($bin in @("ozymem-server.exe", "ozymem.exe", "ozygram.exe", "ozy-brain.exe")) {
+            $src = Join-Path $TempExtract $bin
+            $dst = Join-Path $BinDir $bin
+            if (Test-Path $src) {
+                if (Test-Path $dst) {
+                    Move-Item -Force $dst "$dst.old" -ErrorAction SilentlyContinue
+                }
+                Copy-Item -Path $src -Destination $dst -Force
+            }
+        }
+        
+        Remove-Item -Force $ReleaseZip -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $TempExtract -ErrorAction SilentlyContinue
+        $InstalledFromRelease = $true
+        Write-Host " -> Precompiled binaries deployed successfully to $BinDir" -ForegroundColor Green
+    } catch {
+        Write-Host " [WARN] Could not download GitHub release ($($_).Exception.Message), falling back to source build..." -ForegroundColor Yellow
+    }
 }
 
-$ServerRelease  = Join-Path $PSScriptRoot "target\release\ozymem-server.exe"
-$CliRelease     = Join-Path $PSScriptRoot "target\release\ozymem.exe"
-$OzygramRelease = Join-Path $PSScriptRoot "target\release\ozygram.exe"
-$BrainRelease   = Join-Path $PSScriptRoot "target\release\ozy-brain.exe"
+if (-not $InstalledFromRelease) {
+    Write-Host "[2/4] Building release binaries (cargo build --release)..." -ForegroundColor Yellow
+    if (Test-Path "target\release\ozymem-server.exe") {
+        Move-Item -Force "target\release\ozymem-server.exe" "target\release\ozymem-server.exe.running" -ErrorAction SilentlyContinue
+    }
+    if (Test-Path "target\release\ozymem.exe") {
+        Move-Item -Force "target\release\ozymem.exe" "target\release\ozymem.exe.running" -ErrorAction SilentlyContinue
+    }
+    try {
+        cargo build --release
+    } catch {
+        Write-Host "[!] Cargo release build failed. Ensure Rust is installed." -ForegroundColor Red
+        exit 1
+    }
 
-if (-not (Test-Path $ServerRelease) -or -not (Test-Path $CliRelease)) {
-    Write-Host "[!] Release binaries not found in target\release." -ForegroundColor Red
-    exit 1
+    $Root = if ($PSScriptRoot) { $PSScriptRoot } else { "." }
+    $ServerRelease  = Join-Path $Root "target\release\ozymem-server.exe"
+    $CliRelease     = Join-Path $Root "target\release\ozymem.exe"
+    $OzygramRelease = Join-Path $Root "target\release\ozygram.exe"
+    $BrainRelease   = Join-Path $Root "target\release\ozy-brain.exe"
+
+    if (-not (Test-Path $ServerRelease) -or -not (Test-Path $CliRelease)) {
+        Write-Host "[!] Release binaries not found in target\release." -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "[3/4] Installing executables and Ozy Brain worker..." -ForegroundColor Yellow
+    $DestServer  = Join-Path $BinDir "ozymem-server.exe"
+    $DestCli     = Join-Path $BinDir "ozymem.exe"
+    $DestOzygram = Join-Path $BinDir "ozygram.exe"
+    $DestBrain   = Join-Path $BinDir "ozy-brain.exe"
+
+    if (Test-Path $DestServer) { Move-Item -Force $DestServer "$DestServer.old" -ErrorAction SilentlyContinue }
+    if (Test-Path $DestCli) { Move-Item -Force $DestCli "$DestCli.old" -ErrorAction SilentlyContinue }
+    if (Test-Path $DestOzygram) { Move-Item -Force $DestOzygram "$DestOzygram.old" -ErrorAction SilentlyContinue }
+    if (Test-Path $DestBrain) { Move-Item -Force $DestBrain "$DestBrain.old" -ErrorAction SilentlyContinue }
+
+    Copy-Item -Path $ServerRelease -Destination $DestServer -Force
+    Copy-Item -Path $CliRelease    -Destination $DestCli -Force
+    if (Test-Path $OzygramRelease) {
+        Copy-Item -Path $OzygramRelease -Destination $DestOzygram -Force
+    } else {
+        Copy-Item -Path $CliRelease     -Destination $DestOzygram -Force
+    }
+    if (Test-Path $BrainRelease) {
+        Copy-Item -Path $BrainRelease -Destination $DestBrain -Force
+        Write-Host " -> Deployed standalone ozy-brain.exe (Zero-Python runtime bundled)." -ForegroundColor Green
+    }
 }
 
-Write-Host "[3/4] Installing executables and Ozy Brain worker..." -ForegroundColor Yellow
-$DestServer  = Join-Path $BinDir "ozymem-server.exe"
-$DestCli     = Join-Path $BinDir "ozymem.exe"
-$DestOzygram = Join-Path $BinDir "ozygram.exe"
-$DestBrain   = Join-Path $BinDir "ozy-brain.exe"
-
-if (Test-Path $DestServer) {
-    Move-Item -Force $DestServer "$DestServer.old" -ErrorAction SilentlyContinue
-}
-if (Test-Path $DestCli) {
-    Move-Item -Force $DestCli "$DestCli.old" -ErrorAction SilentlyContinue
-}
-if (Test-Path $DestOzygram) {
-    Move-Item -Force $DestOzygram "$DestOzygram.old" -ErrorAction SilentlyContinue
-}
-if (Test-Path $DestBrain) {
-    Move-Item -Force $DestBrain "$DestBrain.old" -ErrorAction SilentlyContinue
-}
-
-Copy-Item -Path $ServerRelease -Destination $DestServer -Force
-Copy-Item -Path $CliRelease    -Destination $DestCli -Force
-if (Test-Path $OzygramRelease) {
-    Copy-Item -Path $OzygramRelease -Destination $DestOzygram -Force
-} else {
-    Copy-Item -Path $CliRelease     -Destination $DestOzygram -Force
-}
-if (Test-Path $BrainRelease) {
-    Copy-Item -Path $BrainRelease -Destination $DestBrain -Force
-    Write-Host " -> Deployed standalone ozy-brain.exe (Zero-Python runtime bundled)." -ForegroundColor Green
-}
-
-if (Test-Path (Join-Path $PSScriptRoot "python\ozy-brain")) {
-    Copy-Item -Path (Join-Path $PSScriptRoot "python\ozy-brain") -Destination (Split-Path $PyDir) -Recurse -Force
+$Root = if ($PSScriptRoot) { $PSScriptRoot } else { "." }
+if (Test-Path (Join-Path $Root "python\ozy-brain")) {
+    Copy-Item -Path (Join-Path $Root "python\ozy-brain") -Destination (Split-Path $PyDir) -Recurse -Force
 }
 
 Write-Host "[4/4] Configuring environment variables..." -ForegroundColor Yellow
@@ -91,6 +132,7 @@ Write-Host "`n======================================================" -Foregroun
 Write-Host "   Ozymem / Ozygram Installed Successfully!           " -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Green
 
+$DestCli = Join-Path $BinDir "ozymem.exe"
 Write-Host "`n[Auto-Configuration] Scanning and auto-configuring installed AI clients..." -ForegroundColor Yellow
 try {
     & $DestCli init --auto
