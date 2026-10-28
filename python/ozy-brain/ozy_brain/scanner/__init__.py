@@ -17,6 +17,20 @@ from .contract_tracer import (
     CrossRepoContractTracer,
 )
 
+from .blast_radius import (
+    BlastRadiusReport,
+    ReverseBlastRadiusEngine,
+)
+from .compute_config import (
+    ComputeMode,
+    MonsterComputeConfig,
+)
+from .counterfactual_solver import (
+    CandidateAction,
+    CounterfactualMctsSolver,
+    CounterfactualResolution,
+)
+
 __all__ = [
     "RepoRole",
     "DiscoveredRepo",
@@ -31,5 +45,12 @@ __all__ = [
     "FastApiContractExtractor",
     "NextJsConsumerExtractor",
     "CrossRepoContractTracer",
+    "BlastRadiusReport",
+    "ReverseBlastRadiusEngine",
+    "ComputeMode",
+    "MonsterComputeConfig",
+    "CandidateAction",
+    "CounterfactualMctsSolver",
+    "CounterfactualResolution",
 ]
 
