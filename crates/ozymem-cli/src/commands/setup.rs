@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 pub async fn run_setup(auto: bool) -> Result<()> {
-    run_init(None, auto, None, false).await
+    run_init(None, auto, None, false, false).await
 }
 
 pub async fn run_init(
@@ -13,7 +13,24 @@ pub async fn run_init(
     auto: bool,
     client_filter: Option<String>,
     dry_run: bool,
+    rollback: bool,
 ) -> Result<()> {
+    let home_dir = home::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let workspace = path
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    if rollback {
+        println!(" [STATUS: ROLLBACK] Restaurando respaldos .ozybak de clientes MCP...");
+        let restored = rollback_mcp_clients(&home_dir, &workspace, client_filter.as_deref());
+        if restored.is_empty() {
+            println!(" -> No se encontraron respaldos .ozybak para restaurar.");
+        } else {
+            for (client_name, cfg_path) in restored {
+                println!(" [STATUS: RESTORED] {} -> {}", client_name, cfg_path.display());
+            }
+        }
+        return Ok(());
+    }
     if dry_run {
         println!(" [STATUS: DRY-RUN] Previsualización activa. Ningún archivo será modificado.");
         println!();
@@ -38,8 +55,7 @@ pub async fn run_init(
 
     // 3. Initialize current workspace
     println!("[3/5] Initializing workspace cognitive substrate...");
-    let workspace = path
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    // workspace already initialized
     let project_name = workspace
         .file_name()
         .and_then(|n| n.to_str())
@@ -377,4 +393,46 @@ fn try_inject_mcp_server(config_path: &Path, server_command: &str, dry_run: bool
     fs::write(config_path, formatted)?;
 
     Ok(())
+}
+
+pub fn rollback_mcp_clients(
+    home: &Path,
+    workspace: &Path,
+    client_filter: Option<&str>,
+) -> Vec<(String, PathBuf)> {
+    let mut restored = Vec::new();
+    let candidates = get_client_candidates(home, workspace);
+
+    for (client_name, path) in candidates {
+        if let Some(filter) = client_filter {
+            if !client_name.to_lowercase().contains(&filter.to_lowercase()) {
+                continue;
+            }
+        }
+
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                continue;
+            }
+            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if let Ok(entries) = fs::read_dir(parent) {
+                let mut backups: Vec<PathBuf> = Vec::new();
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if name.starts_with(file_stem) && name.contains(".ozybak.") {
+                        backups.push(p);
+                    }
+                }
+                backups.sort_by(|a, b| b.cmp(a));
+                if let Some(newest_backup) = backups.first() {
+                    if fs::copy(newest_backup, &path).is_ok() {
+                        let _ = fs::remove_file(newest_backup);
+                        restored.push((client_name, path));
+                    }
+                }
+            }
+        }
+    }
+    restored
 }

@@ -153,13 +153,18 @@ enum Commands {
         tokens: usize,
     },
     /// Initialize Ozygram for current workspace and auto-configure AI MCP clients
+        /// Initialize Ozygram for current workspace and auto-configure AI MCP clients
     Init {
         #[arg(long)]
         auto: bool,
 
-        /// Previsualizar configuración sin modificar archivos en disco
+        /// Previsualizar configuracion sin modificar archivos en disco
         #[arg(long)]
         dry_run: bool,
+
+        /// Restaurar respaldos .ozybak de clientes MCP
+        #[arg(long)]
+        rollback: bool,
 
         #[arg(short, long)]
         path: Option<PathBuf>,
@@ -199,14 +204,14 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let command = args.command.unwrap_or(Commands::Init { auto: false, dry_run: false, path: None, client: None });
+    let command = args.command.unwrap_or(Commands::Init { auto: false, dry_run: false, rollback: false, path: None, client: None });
 
     match &command {
         Commands::Setup { auto } => {
             return run_setup(*auto).await;
         }
-        Commands::Init { auto, dry_run, path, client } => {
-            return run_init(path.clone(), *auto, client.clone(), *dry_run).await;
+        Commands::Init { auto, dry_run, rollback, path, client } => {
+            return run_init(path.clone(), *auto, client.clone(), *dry_run, *rollback).await;
         }
         Commands::Doctor { json } => {
             return run_doctor(*json).await;
