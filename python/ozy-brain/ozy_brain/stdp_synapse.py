@@ -263,6 +263,34 @@ class StdpSynapseEngine:
         except Exception:
             return []
 
+
+    def sample_coupled_files_thompson(
+        self, file_path: str, limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Bayesian Thompson Sampling for STDP Synapses:
+        Draws theta_sample ~ Beta(alpha, beta) for each coupled candidate,
+        balancing exploitation of high-confidence links with exploration of emerging links.
+        """
+        import random
+        synapses = self.get_strongest_synapses_for_file(file_path, limit=limit * 2)
+        if not synapses:
+            return []
+
+        sampled = []
+        for syn in synapses:
+            w = max(0.01, min(0.99, float(syn.get("weight", 0.5))))
+            alpha = 1.0 + 10.0 * w
+            beta = 1.0 + 10.0 * (1.0 - w)
+            sample_val = random.betavariate(alpha, beta)
+            sampled.append({
+                **syn,
+                "thompson_sample": round(sample_val, 4),
+            })
+
+        sampled.sort(key=lambda s: s["thompson_sample"], reverse=True)
+        return sampled[:limit]
+
     def export_hebbian_edges_to_sqlite(self, min_weight: float = 0.65) -> int:
         """Exports strong Hebbian synapses (weight >= min_weight) from DuckDB to SQLite memory_edges table.
 

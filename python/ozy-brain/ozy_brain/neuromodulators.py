@@ -12,6 +12,7 @@ Zero-emoji compliant.
 from __future__ import annotations
 
 import json
+import math
 import logging
 import os
 from dataclasses import asdict, dataclass, field
@@ -190,6 +191,35 @@ class NeuromodulatorEngine:
                 f"AmygdalaThreshold={amygdala_threshold:.2f}, c_puct={mcts_c_puct:.2f}]"
             ),
         }
+
+
+    def compute_predictive_surprise(
+        self,
+        predicted_success_prob: float,
+        actual_success: bool,
+        unexpected_files_count: int = 0,
+    ) -> float:
+        """
+        Friston's Free Energy / Active Inference Predictive Surprise:
+        S = -ln(P(outcome | plan)) + penalty(unexpected_files)
+        Updates Noradrenaline (NE) and Dopamine (D) continuously based on surprise.
+        """
+        p = max(0.01, min(0.99, predicted_success_prob))
+        prob_outcome = p if actual_success else (1.0 - p)
+        surprise = -math.log(prob_outcome) + (0.25 * min(4, unexpected_files_count))
+
+        # Active Inference response:
+        # Surprise elevates Noradrenaline (alertness / focus narrowing)
+        self.state.noradrenaline = max(0.0, min(1.0, self.state.noradrenaline + 0.15 * surprise))
+        if not actual_success:
+            self.state.dopamine = max(0.05, self.state.dopamine - 0.20 * surprise)
+            self.state.serotonin = max(0.10, self.state.serotonin - 0.10 * surprise)
+        else:
+            self.state.dopamine = min(1.0, self.state.dopamine + 0.10 / (1.0 + surprise))
+            self.state.serotonin = min(1.0, self.state.serotonin + 0.05)
+
+        self.save_state()
+        return surprise
 
     def reset_to_homeostasis(self) -> None:
         """Resets all chemical levels to baseline homeostatic equilibrium."""

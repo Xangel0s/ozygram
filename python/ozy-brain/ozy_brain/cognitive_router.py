@@ -58,7 +58,23 @@ def route_cognitive_system(payload: dict[str, Any]) -> CognitiveRouteDecision:
         - Speculative contract breakage detected in ghost patch simulation.
         - Destructive SQL DDL/DML.
     """
-    # Explicit override in payload
+    # Active Inference check: Noradrenaline (NE) elevation forces System 2 deliberation
+    ws_root = payload.get("workspace_root") or payload.get("project") or "."
+    try:
+        from ozy_brain.neuromodulators import NeuromodulatorEngine
+        n_engine = NeuromodulatorEngine(workspace_root=ws_root)
+        n_state = n_engine.load_state()
+        if n_state.noradrenaline >= 0.55:
+            return CognitiveRouteDecision(
+                tier=CognitiveSystemTier.SYSTEM_2_DELIBERATIVE,
+                reason=f"[NEURO_ALERT: HIGH_NORADRENALINE] Elevated stress/surprise (NE={n_state.noradrenaline:.2f}) forces System 2 deliberative committee.",
+                latency_budget_ms=2500,
+                zero_token_guarantee=False,
+                requires_committee=True,
+            )
+    except Exception:
+        pass
+        # Explicit override in payload
     mode = str(payload.get("mode") or "").lower()
     system_override = payload.get("system")
     if mode == "reflex" or system_override == 1 or system_override == "system_1":
