@@ -41,14 +41,16 @@ impl GraphBackend {
             "INSERT INTO amygdala_reflexes (
                 id, file_path, symbol_name, threat_score, pain_trigger,
                 antidote_directive, occurrences, last_triggered, created_at,
-                tenant_id, workspace_root
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                tenant_id, workspace_root, clean_runs, extinction_score
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
             ON CONFLICT(id) DO UPDATE SET
                 occurrences = amygdala_reflexes.occurrences + 1,
                 threat_score = MIN(1.0, MAX(amygdala_reflexes.threat_score, excluded.threat_score) + 0.05),
                 pain_trigger = excluded.pain_trigger,
                 antidote_directive = excluded.antidote_directive,
-                last_triggered = excluded.last_triggered",
+                last_triggered = excluded.last_triggered,
+                clean_runs = 0,
+                extinction_score = 0.0",
             params![
                 reflex_id,
                 norm_path,
@@ -60,7 +62,9 @@ impl GraphBackend {
                 now,
                 created_at,
                 self.tenant_id,
-                inner.workspace_root
+                inner.workspace_root,
+                entry.clean_runs.max(0),
+                entry.extinction_score.clamp(0.0, 1.0),
             ],
         )?;
 
@@ -76,7 +80,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, threat_score, pain_trigger,
                     antidote_directive, occurrences, last_triggered, created_at,
-                    tenant_id, workspace_root
+                    tenant_id, workspace_root, COALESCE(clean_runs, 0), COALESCE(extinction_score, 0.0)
              FROM amygdala_reflexes
              WHERE file_path = ?1 AND tenant_id = ?2
              ORDER BY threat_score DESC, occurrences DESC",
@@ -95,6 +99,8 @@ impl GraphBackend {
                 created_at: row.get(8)?,
                 tenant_id: row.get(9)?,
                 workspace_root: row.get(10)?,
+                clean_runs: row.get(11)?,
+                extinction_score: row.get(12)?,
             })
         })?;
 
@@ -112,7 +118,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, threat_score, pain_trigger,
                     antidote_directive, occurrences, last_triggered, created_at,
-                    tenant_id, workspace_root
+                    tenant_id, workspace_root, COALESCE(clean_runs, 0), COALESCE(extinction_score, 0.0)
              FROM amygdala_reflexes
              WHERE threat_score >= ?1 AND tenant_id = ?2
              ORDER BY threat_score DESC, occurrences DESC",
@@ -131,6 +137,8 @@ impl GraphBackend {
                 created_at: row.get(8)?,
                 tenant_id: row.get(9)?,
                 workspace_root: row.get(10)?,
+                clean_runs: row.get(11)?,
+                extinction_score: row.get(12)?,
             })
         })?;
 
@@ -149,5 +157,102 @@ impl GraphBackend {
             params![id, self.tenant_id],
         )?;
         Ok(affected > 0)
+    }
+
+    /// Records a clean, successful validation run on a file, triggering vmPFC extinction learning.
+    /// Dampens the effective threat without erasing the historical memory (prevents artificial PTSD).
+    pub fn record_amygdala_clean_run(&self, path: &str) -> Result<f64> {
+        let norm_path = normalize_rel_path(path);
+        let inner = self.inner.lock().unwrap();
+
+        let current_runs: i64 = inner.sqlite.query_row(
+            "SELECT COALESCE(MAX(clean_runs), 0) FROM amygdala_reflexes WHERE file_path = ?1 AND tenant_id = ?2",
+            params![norm_path, self.tenant_id],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let new_runs = current_runs + 1;
+        let k = 0.8_f64;
+        let theta = 3.0_f64;
+        let exp_val = (-k * (new_runs as f64 - theta)).exp();
+        let extinction_score = (1.0 / (1.0 + exp_val)).clamp(0.0, 1.0);
+
+        inner.sqlite.execute(
+            "UPDATE amygdala_reflexes
+             SET clean_runs = ?1, extinction_score = ?2
+             WHERE file_path = ?3 AND tenant_id = ?4",
+            params![new_runs, extinction_score, norm_path, self.tenant_id],
+        )?;
+
+        Ok(extinction_score)
+    }
+
+    /// Records a threat relapse upon a new error, resetting clean_runs and extinction inhibition.
+    pub fn record_amygdala_relapse(&self, path: &str) -> Result<()> {
+        let norm_path = normalize_rel_path(path);
+        let inner = self.inner.lock().unwrap();
+
+        inner.sqlite.execute(
+            "UPDATE amygdala_reflexes
+             SET clean_runs = 0, extinction_score = 0.0
+             WHERE file_path = ?1 AND tenant_id = ?2",
+            params![norm_path, self.tenant_id],
+        )?;
+
+        Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_amygdala_extinction_and_relapse() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test_amygdala.db");
+        let backend = GraphBackend::open(Some(db_path.to_str().unwrap())).unwrap();
+
+        let entry = AmygdalaReflexEntry {
+            id: "".to_string(),
+            file_path: "src/critical.rs".to_string(),
+            symbol_name: "".to_string(),
+            threat_score: 0.90,
+            pain_trigger: "crash in compiler".to_string(),
+            antidote_directive: "check arity".to_string(),
+            occurrences: 3,
+            last_triggered: "".to_string(),
+            created_at: "".to_string(),
+            tenant_id: "local".to_string(),
+            workspace_root: "".to_string(),
+            clean_runs: 0,
+            extinction_score: 0.0,
+        };
+
+        // 1. Initial record
+        backend.record_amygdala_reflex(&entry).unwrap();
+        let reflexes = backend.get_amygdala_reflexes_for_file("src/critical.rs").unwrap();
+        assert_eq!(reflexes.len(), 1);
+        assert_eq!(reflexes[0].autonomic_response(), "CRITICAL_VETO");
+        assert_eq!(reflexes[0].effective_threat(), 0.90);
+
+        // 2. Perform 5 clean runs
+        for _ in 0..5 {
+            let _ = backend.record_amygdala_clean_run("src/critical.rs").unwrap();
+        }
+
+        let post_ext = backend.get_amygdala_reflexes_for_file("src/critical.rs").unwrap();
+        assert!(post_ext[0].extinction_score > 0.80);
+        assert!(post_ext[0].effective_threat() < 0.20);
+        assert_eq!(post_ext[0].autonomic_response(), "EXTINGUISHED_SAFE");
+
+        // 3. Relapse event
+        backend.record_amygdala_relapse("src/critical.rs").unwrap();
+        let post_relapse = backend.get_amygdala_reflexes_for_file("src/critical.rs").unwrap();
+        assert_eq!(post_relapse[0].clean_runs, 0);
+        assert_eq!(post_relapse[0].extinction_score, 0.0);
+        assert_eq!(post_relapse[0].autonomic_response(), "CRITICAL_VETO");
     }
 }

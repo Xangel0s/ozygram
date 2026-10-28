@@ -310,7 +310,9 @@ impl GraphBackend {
                 last_triggered TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 tenant_id TEXT NOT NULL DEFAULT 'local',
-                workspace_root TEXT NOT NULL DEFAULT ''
+                workspace_root TEXT NOT NULL DEFAULT '',
+                clean_runs INTEGER NOT NULL DEFAULT 0,
+                extinction_score REAL NOT NULL DEFAULT 0.0
             );
             CREATE INDEX IF NOT EXISTS idx_amygdala_file ON amygdala_reflexes(file_path, tenant_id);
             CREATE INDEX IF NOT EXISTS idx_amygdala_lookup ON amygdala_reflexes(file_path, symbol_name, tenant_id);

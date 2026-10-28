@@ -616,6 +616,31 @@ pub struct AmygdalaReflexEntry {
     pub created_at: String,
     pub tenant_id: String,
     pub workspace_root: String,
+    #[serde(default)]
+    pub clean_runs: i64,
+    #[serde(default)]
+    pub extinction_score: f64,
+}
+
+impl AmygdalaReflexEntry {
+    /// Computes effective threat after vmPFC extinction inhibition: T_eff = T_raw * (1 - I_ext).
+    pub fn effective_threat(&self) -> f64 {
+        let raw = self.threat_score.clamp(0.0, 1.0);
+        let extinction = self.extinction_score.clamp(0.0, 1.0);
+        (raw * (1.0 - extinction)).clamp(0.0, 1.0)
+    }
+
+    /// Evaluates Central Amygdala (CeA) autonomic response level.
+    pub fn autonomic_response(&self) -> &'static str {
+        let eff = self.effective_threat();
+        if eff >= 0.75 {
+            "CRITICAL_VETO"
+        } else if eff >= 0.40 {
+            "CAUTION_ALERT"
+        } else {
+            "EXTINGUISHED_SAFE"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

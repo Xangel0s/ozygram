@@ -228,3 +228,52 @@ class NeuromodulatorEngine:
         self.state.acetylcholine = 0.50
         self.state.serotonin = 0.60
         self.save_state()
+
+
+class LocusCoeruleusModulator:
+    """
+    Locus Coeruleus (LC) Dual-Mode Noradrenergic Engine (Aston-Jones & Cohen).
+    Computes bio-computational switching between:
+    1. Phasic Firing Mode: High task engagement, low entropy, routine exploitation (Sistema 1).
+    2. Tonic Firing Mode: High uncertainty/surprise, disengagement from failing routines,
+       divergent exploration in MCTS with elevated c_puct (Sistema 2).
+    """
+
+    @staticmethod
+    def evaluate_firing_mode(
+        noradrenaline: float,
+        surprise: float = 0.0,
+        c_base: float = math.sqrt(2.0),
+    ) -> Dict[str, Any]:
+        ne_clamped = max(0.0, min(1.0, float(noradrenaline)))
+        surprise_clamped = max(0.0, float(surprise))
+
+        # Tonic mode is engaged under sustained stress (NE >= 0.55) or high surprise (>= 1.80)
+        is_tonic = (ne_clamped >= 0.55) or (surprise_clamped >= 1.80)
+
+        if is_tonic:
+            firing_mode = "TONIC_DIVERGENT"
+            # Elevated exploration constant in MCTS: c_puct scales with tanh of tonic NE
+            c_puct = round(c_base * (1.0 + math.tanh(1.5 * ne_clamped)), 4)
+            cognitive_system = "SYSTEM_2_DELIBERATIVE"
+            temperature = min(0.70, round(0.20 + 0.50 * ne_clamped, 2))
+            badge = "[LOCUS_COERULEUS: TONIC_DIVERGENT_EXPLORATION]"
+            directive = "Failing routine or unexpected surprise detected: activate wide MCTS branching."
+        else:
+            firing_mode = "PHASIC_EXPLOIT"
+            c_puct = round(c_base, 4)
+            cognitive_system = "SYSTEM_1_FAST"
+            temperature = 0.10
+            badge = "[LOCUS_COERULEUS: PHASIC_FOCUSED_EXPLOITATION]"
+            directive = "Routine familiarity confirmed: exploit fast deterministic execution paths."
+
+        return {
+            "firing_mode": firing_mode,
+            "noradrenaline": ne_clamped,
+            "surprise": surprise_clamped,
+            "mcts_c_puct": c_puct,
+            "cognitive_system": cognitive_system,
+            "temperature": temperature,
+            "badge": badge,
+            "directive": directive,
+        }
