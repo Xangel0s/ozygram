@@ -42,6 +42,9 @@ from .postgres_engine import (
     PostgresNativeEngine,
     MctsForestRepository,
 )
+from .chroma_bridge import (
+    ChromaVectorBridge,
+)
 
 __all__ = [
     "RepoRole",
@@ -72,5 +75,6 @@ __all__ = [
     "PostgresConfig",
     "PostgresNativeEngine",
     "MctsForestRepository",
+    "ChromaVectorBridge",
 ]
 
