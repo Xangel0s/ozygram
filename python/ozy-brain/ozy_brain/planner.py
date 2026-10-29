@@ -48,6 +48,22 @@ def _compute_blast_radius(
                         high_severity_files.append(str(target))
                 total_dependents += 1
 
+    # Enrich with PostgreSQL L3 Recursive CTE Blast Radius if available
+    try:
+        from ozy_brain.scanner.tri_hybrid_orchestrator import TriHybridMemoryOrchestrator
+        orch = TriHybridMemoryOrchestrator()
+        for cf in candidate_files[:5]:
+            l3_hits = orch.query_reverse_blast_radius(cf, max_depth=3)
+            for hit in l3_hits:
+                src = hit.get("source_file")
+                if src:
+                    impacted_nodes.add(src)
+                    if hit.get("depth", 1) > 2:
+                        high_severity_files.append(src)
+        orch.close()
+    except Exception:
+        pass
+
     total_touched = len(candidate_files) + len(impacted_nodes)
     if total_touched <= 2 and not high_severity_files:
         risk_tier = "low"
