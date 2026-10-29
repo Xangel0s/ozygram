@@ -330,11 +330,51 @@ class TriHybridMemoryOrchestrator:
         """Delegates recursive CTE Reverse Blast Radius traversal to PostgreSQL."""
         return self.postgres_engine.query_reverse_blast_radius(target_file, max_depth=max_depth)
 
+    def topologically_gated_search(
+        self,
+        query: str,
+        seed_file: str,
+        max_depth: int = 3,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Topologically-Gated Vector Retrieval (TGVR):
+        Restricts semantic retrieval to the structural dependency cone of seed_file.
+        Returns combined TGVR results from PostgreSQL L3 if available, or falls back
+        gracefully to federated RRF search.
+        """
+        if self.postgres_engine.is_available:
+            query_vec = self.chroma_bridge.embed_text(query)
+            hits = self.postgres_engine.topologically_gated_vector_search(
+                query_vector=query_vec,
+                seed_file=seed_file,
+                max_depth=max_depth,
+                limit=limit,
+            )
+            if hits:
+                return [
+                    {
+                        "id": hit["id"],
+                        "source": "postgres_tgvr",
+                        "file_path": hit["file_path"],
+                        "error_signature": hit["error_signature"],
+                        "hazard": hit["hazard"],
+                        "vaccine": hit["vaccine"],
+                        "topological_depth": hit["topological_depth"],
+                        "similarity": hit["similarity"],
+                        "score": hit["tgvr_score"],
+                    }
+                    for hit in hits
+                ]
+
+        return self.federated_rrf_search(query=query, limit=limit, seed_file=seed_file)
+
     def federated_rrf_search(
         self,
         query: str,
         limit: int = 5,
         k: int = 60,
+        seed_file: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Federated 3-Way Reciprocal Rank Fusion (RRF):
@@ -384,10 +424,15 @@ class TriHybridMemoryOrchestrator:
                 }
             scores[key] = scores.get(key, 0.0) + (1.0 / (k + rank))
 
-        # 3. PostgreSQL pgvector Tier (Global SWR failure lake)
+        # 3. PostgreSQL pgvector Tier (Global or Topologically-Gated)
         if self.postgres_engine.is_available:
             query_vec = self.chroma_bridge.embed_text(query)
-            pg_hits = self.postgres_engine.search_swr_ripples_knn(query_vec, limit=limit)
+            if seed_file:
+                pg_hits = self.postgres_engine.topologically_gated_vector_search(
+                    query_vec, seed_file=seed_file, limit=limit
+                )
+            else:
+                pg_hits = self.postgres_engine.search_swr_ripples_knn(query_vec, limit=limit)
             for rank, hit in enumerate(pg_hits, start=1):
                 key = f"swr::{hit['id']}"
                 if key not in items_by_key:

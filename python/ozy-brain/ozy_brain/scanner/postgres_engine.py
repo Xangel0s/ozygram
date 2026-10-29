@@ -283,6 +283,88 @@ class PostgresNativeEngine:
                     })
         return results
 
+    def topologically_gated_vector_search(
+        self,
+        query_vector: List[float],
+        seed_file: str,
+        max_depth: int = 3,
+        limit: int = 5,
+        min_gradient: float = 0.40,
+    ) -> List[Dict[str, Any]]:
+        """
+        Topologically-Gated Vector Retrieval (TGVR) in PostgreSQL L3:
+        Restricts pgvector HNSW cosine similarity within the recursive dependency cone
+        of a seed module/file, combining topological proximity and semantic similarity.
+        Falls back to pure HNSW KNN if no edges exist or cone yields no matches.
+        """
+        if not self.is_available:
+            return []
+
+        clean_seed = seed_file.replace("\\", "/")
+        vec_str = self.format_vector(query_vector)
+
+        sql = """
+        WITH RECURSIVE dependency_cone AS (
+            -- Seed file at depth 0
+            SELECT %s AS file_path, 0 AS depth
+            
+            UNION
+            
+            -- Traverse incoming or outgoing dependency edges up to max_depth
+            SELECT 
+                CASE 
+                    WHEN e.source_file = dc.file_path THEN e.target_file 
+                    ELSE e.source_file 
+                END AS file_path,
+                dc.depth + 1 AS depth
+            FROM ozy_ast_dependency_edges e
+            JOIN dependency_cone dc ON (e.source_file = dc.file_path OR e.target_file = dc.file_path)
+            WHERE dc.depth < %s
+        )
+        SELECT 
+            v.id,
+            v.tenant_id,
+            v.file_path,
+            v.error_signature,
+            v.hazard_description,
+            v.invariant_vaccine,
+            v.error_gradient,
+            dc.depth AS topological_depth,
+            1 - (v.embedding <=> %s::vector) AS cosine_similarity,
+            (1.0 / (60.0 + (v.embedding <=> %s::vector) * 100.0)) + 
+            (1.0 / (60.0 + dc.depth * 10.0)) AS tgvr_score
+        FROM ozy_swr_ripples v
+        JOIN dependency_cone dc ON v.file_path = dc.file_path
+        WHERE v.error_gradient >= %s
+        ORDER BY tgvr_score DESC, (v.embedding <=> %s::vector) ASC
+        LIMIT %s;
+        """
+        results: List[Dict[str, Any]] = []
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=extras.DictCursor) as cur:
+                cur.execute(sql, (clean_seed, max_depth, vec_str, vec_str, min_gradient, vec_str, limit))
+                for row in cur.fetchall():
+                    results.append({
+                        "id": row["id"],
+                        "file_path": row["file_path"],
+                        "error_signature": row["error_signature"],
+                        "hazard": row["hazard_description"],
+                        "vaccine": row["invariant_vaccine"],
+                        "gradient": float(row["error_gradient"]),
+                        "topological_depth": int(row["topological_depth"]),
+                        "similarity": round(float(row["cosine_similarity"]), 4),
+                        "tgvr_score": round(float(row["tgvr_score"]), 6),
+                    })
+
+        # Graceful fallback to pure HNSW KNN if no results in the topological cone
+        if not results:
+            results = self.search_swr_ripples_knn(query_vector, limit=limit, min_gradient=min_gradient)
+            for r in results:
+                r["topological_depth"] = -1
+                r["tgvr_score"] = round(r["similarity"] / 60.0, 6)
+
+        return results
+
     def query_reverse_blast_radius(
         self,
         target_file: str,
