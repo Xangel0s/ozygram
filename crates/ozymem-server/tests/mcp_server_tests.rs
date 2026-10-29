@@ -4305,6 +4305,8 @@ Always use context manager with SessionLocal() as db.
                 pain_trigger: "Deadlock in service dispatch under concurrent orders".to_string(),
                 antidote_directive: "Always verify locks before dispatching concurrent transactions".to_string(),
                 occurrences: 2,
+                clean_runs: 0,
+                extinction_score: 0.0,
                 last_triggered: "2026-10-20T16:00:00Z".to_string(),
                 created_at: "2026-10-20T16:00:00Z".to_string(),
                 tenant_id: "local".to_string(),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable
+import re
 
 
 BRAIN_VERSION = "0.2.0"
@@ -220,6 +221,12 @@ def _is_code_file(path: str, allow_markdown: bool = False) -> bool:
     if last in EXCLUDED_LOCKFILES_AND_SCHEMAS:
         return False
 
+    # Exclude dotfiles, environment templates, and ignore files from code candidates
+    if last.startswith(".") and not clean.endswith((".py", ".rs", ".ts", ".tsx", ".js", ".jsx")):
+        return False
+    if last.startswith(".env") or last.startswith(".git") or last in (".dockerignore", ".editorconfig", ".prettierrc", ".gitattributes", ".gitignore"):
+        return False
+
     # Archivos de configuración especiales en raíz
     if last in ("dockerfile", "makefile", "procfile"):
         return True
@@ -384,6 +391,9 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
         for token in _goal(payload).lower().replace("/", " ").replace("-", " ").replace("_", " ").split()
         if len(token) >= 2 and token not in stop_words
     }
+    for ct in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)", _goal(payload)):
+        if len(ct) >= 3 and ct.lower() not in stop_words:
+            raw_tokens.add(ct.lower())
 
     def _stems(tok: str) -> set[str]:
         res = {tok}
