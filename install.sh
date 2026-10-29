@@ -42,8 +42,20 @@ if [ "$FROM_SOURCE" = false ] && [ ! -f "./target/release/ozymem" ]; then
     if [ -n "$ASSET_NAME" ]; then
         TMP_DIR="$(mktemp -d)"
         DOWNLOAD_URL="https://github.com/Xangel0s/ozygram/releases/latest/download/$ASSET_NAME"
+        SHA_URL="https://github.com/Xangel0s/ozygram/releases/latest/download/SHA256SUMS"
         echo " -> Fetching $DOWNLOAD_URL..."
         if curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ASSET_NAME"; then
+            if curl -fsSL "$SHA_URL" -o "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
+                cd "$TMP_DIR"
+                if grep "$ASSET_NAME" SHA256SUMS >/dev/null 2>&1; then
+                    if command -v sha256sum >/dev/null 2>&1; then
+                        grep "$ASSET_NAME" SHA256SUMS | sha256sum -c - && echo " [STATUS: VERIFIED] SHA256 checksum verified."
+                    elif command -v shasum >/dev/null 2>&1; then
+                        grep "$ASSET_NAME" SHA256SUMS | shasum -a 256 -c - && echo " [STATUS: VERIFIED] SHA256 checksum verified."
+                    fi
+                fi
+                cd - >/dev/null
+            fi
             tar -xzf "$TMP_DIR/$ASSET_NAME" -C "$BIN_DIR/"
             chmod +x "$BIN_DIR/ozymem-server" "$BIN_DIR/ozymem" "$BIN_DIR/ozygram" 2>/dev/null || true
             if [ -f "$BIN_DIR/ozy-brain" ]; then

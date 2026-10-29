@@ -340,7 +340,7 @@ fn get_client_candidates(home: &Path, workspace: &Path) -> Vec<(String, PathBuf)
     list
 }
 
-fn try_inject_mcp_server(config_path: &Path, server_command: &str, dry_run: bool) -> Result<()> {
+pub fn try_inject_mcp_server(config_path: &Path, server_command: &str, dry_run: bool) -> Result<()> {
     let mut root_val: Value = if config_path.exists() {
         let content = fs::read_to_string(config_path)?;
         serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}))

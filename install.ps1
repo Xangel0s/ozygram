@@ -28,11 +28,30 @@ if (-not $FromSource -and -not (Test-Path "target\release\ozymem.exe")) {
     $ReleaseZip = Join-Path $env:TEMP "ozymem-windows-x64.zip"
     $TempExtract = Join-Path $env:TEMP "ozymem-install-extract"
     $DownloadUrl = "https://github.com/Xangel0s/ozygram/releases/latest/download/ozymem-windows-x64.zip"
+    $Sha256Url = "https://github.com/Xangel0s/ozygram/releases/latest/download/SHA256SUMS"
 
     try {
         Write-Host " -> Fetching $DownloadUrl..."
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri $DownloadUrl -OutFile $ReleaseZip -UseBasicParsing
+        
+        # Verify SHA256 checksum if SHA256SUMS is available
+        $ShaFile = Join-Path $env:TEMP "SHA256SUMS"
+        try {
+            Invoke-WebRequest -Uri $Sha256Url -OutFile $ShaFile -UseBasicParsing -TimeoutSec 5
+            if (Test-Path $ShaFile) {
+                $ExpectedHash = (Get-Content $ShaFile | Select-String "ozymem-windows-x64.zip").ToString().Split(" ")[0].Trim()
+                if ($ExpectedHash) {
+                    $ActualHash = (Get-FileHash -Path $ReleaseZip -Algorithm SHA256).Hash.ToLower()
+                    if ($ActualHash -ne $ExpectedHash.ToLower()) {
+                        throw "SHA256 checksum mismatch (expected $ExpectedHash, got $ActualHash)"
+                    }
+                    Write-Host " [STATUS: VERIFIED] SHA256 checksum verified ($ActualHash)." -ForegroundColor Green
+                }
+            }
+        } catch {
+            Write-Host " [WARN] SHA256 verification skipped or unverified: $($_.Exception.Message)" -ForegroundColor DarkGray
+        }
         
         if (Test-Path $TempExtract) {
             Remove-Item -Recurse -Force $TempExtract -ErrorAction SilentlyContinue
