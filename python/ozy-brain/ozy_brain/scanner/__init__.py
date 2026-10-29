@@ -37,6 +37,11 @@ from .memory_store import (
     PostgresVectorBackend,
     SqliteWalBackend,
 )
+from .postgres_engine import (
+    PostgresConfig,
+    PostgresNativeEngine,
+    MctsForestRepository,
+)
 
 __all__ = [
     "RepoRole",
@@ -64,5 +69,8 @@ __all__ = [
     "SqliteWalBackend",
     "MarkdownGitSynchronizer",
     "PostgresVectorBackend",
+    "PostgresConfig",
+    "PostgresNativeEngine",
+    "MctsForestRepository",
 ]
 
