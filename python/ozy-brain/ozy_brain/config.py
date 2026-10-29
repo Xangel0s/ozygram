@@ -27,6 +27,29 @@ OPENROUTER_FREE_MODELS = [
 import sys
 
 
+
+def load_workspace_toml_config(workspace_root: str | None = None) -> dict[str, Any]:
+    """Reads .ozy/config.toml if present, supporting presets and config precedence."""
+    from pathlib import Path
+    root = Path(workspace_root) if workspace_root else Path.cwd()
+    candidate = root / ".ozy" / "config.toml"
+    if not candidate.exists():
+        candidate = root / ".ozymem" / "config.toml"
+    if not candidate.exists():
+        user_ozy = Path.home() / ".ozy" / "config.toml"
+        if user_ozy.exists():
+            candidate = user_ozy
+
+    if not candidate.exists():
+        return {}
+
+    try:
+        import tomllib
+        with open(candidate, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
 def _get_env_var(name: str) -> str | None:
     val = os.getenv(name)
     if val:
@@ -63,7 +86,16 @@ class BrainConfig:
         5. Anthropic (if ANTHROPIC_API_KEY is present)
         6. Offline Fallback (Cero costo / Heurístico local)
         """
-        custom_model = _get_env_var("OZY_BRAIN_MODEL")
+        toml_cfg = load_workspace_toml_config()
+        brain_toml = toml_cfg.get("brain", {})
+        compute_toml = toml_cfg.get("compute", {})
+
+        if compute_toml.get("lightweight_mode") and not os.getenv("OZY_LIGHTWEIGHT_MODE"):
+            os.environ["OZY_LIGHTWEIGHT_MODE"] = "1"
+        if compute_toml.get("max_compute") and not os.getenv("OZY_MAX_COMPUTE"):
+            os.environ["OZY_MAX_COMPUTE"] = "1"
+
+        custom_model = _get_env_var("OZY_BRAIN_MODEL") or brain_toml.get("model")
         openrouter_key = _get_env_var("OPENROUTER_API_KEY")
 
         if openrouter_key:

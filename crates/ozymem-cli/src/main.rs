@@ -202,6 +202,11 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Manage Ozygram configuration, profiles and settings (.ozy/config.toml)
+    Config {
+        #[command(subcommand)]
+        subcommand: Option<ConfigSubcommand>,
+    },
 }
 
 #[tokio::main]
@@ -210,6 +215,9 @@ async fn main() -> anyhow::Result<()> {
     let command = args.command.unwrap_or(Commands::Init { auto: false, dry_run: false, rollback: false, path: None, client: None });
 
     match &command {
+        Commands::Config { subcommand } => {
+            return handle_config_command(subcommand.clone());
+        }
         Commands::Setup { auto } => {
             return run_setup(*auto).await;
         }
@@ -392,6 +400,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("[Core] Estructura física del grafo purgada. Conservando base de conocimientos a largo plazo.");
             }
         }
+        Commands::Config { .. } => unreachable!(),
         Commands::Setup { .. } => unreachable!(),
         Commands::Start { .. } => unreachable!(),
         Commands::Stop { .. } => unreachable!(),

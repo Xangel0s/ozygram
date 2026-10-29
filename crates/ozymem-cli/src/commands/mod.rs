@@ -19,3 +19,6 @@ pub use hook::*;
 pub use dream::*;
 pub use stats::*;
 pub use setup::*;
+
+pub mod config;
+pub use config::*;
