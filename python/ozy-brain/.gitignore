@@ -2,4 +2,14 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 ozy-test/
+ozymem-test/
+ozymem_test*/
 ozygram/
+ozymem/
+crmnew/
+default/
+.ozymem/
+*.duckdb*
+*.rkyv
+*.db-shm
+*.db-wal
