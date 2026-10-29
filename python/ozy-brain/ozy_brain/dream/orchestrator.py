@@ -249,6 +249,20 @@ class DreamOrchestrator:
         if not top_insights:
             top_insights.append("[SYSTEM_HEALTHY] Workspace memory substrate is clean, balanced, and free of regressions.")
 
+        # 5e. ChromaDB Semantic Heuristic Deduplication
+        chroma_dedupe_report: Dict[str, Any] = {"status": "skipped", "pruned_count": 0}
+        try:
+            from ozy_brain.scanner.chroma_bridge import ChromaVectorBridge
+            c_bridge = ChromaVectorBridge(persist_dir=self.chroma_dir)
+            if c_bridge.is_available:
+                chroma_dedupe_report = c_bridge.deduplicate_collection(
+                    collection_name=ChromaVectorBridge.COLLECTION_HEURISTICS,
+                    similarity_threshold=0.90,
+                )
+                c_bridge.close()
+        except Exception as e:
+            chroma_dedupe_report = {"status": "error", "reason": str(e), "pruned_count": 0}
+
         # 5d. Tri-Hybrid Memory Substrate Health & Consolidation
         tri_hybrid_report: Dict[str, Any] = {}
         try:
@@ -298,6 +312,7 @@ class DreamOrchestrator:
             "stdp_synapses": stdp_report,
             "neuromodulators": neuro_status,
             "federated_mesh": federated_report,
+            "chroma_dedupe": chroma_dedupe_report,
             "vector_store": vector_stats,
             "generative_mcts": mcts_reports,
             "plan_branch_optimizations": plan_branch_optimizations,

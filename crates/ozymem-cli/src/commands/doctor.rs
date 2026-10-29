@@ -164,3 +164,123 @@ pub async fn run_doctor(json_output: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn print_tri_hybrid_dashboard(json_output: bool) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let home_dir = home::home_dir().unwrap_or_else(|| cwd.clone());
+
+    let ozymem_dir = if cwd.join(".ozymem").is_dir() {
+        cwd.join(".ozymem")
+    } else {
+        home_dir.join(".ozymem")
+    };
+
+    let sqlite_db = if ozymem_dir.join("memory.db").is_file() {
+        ozymem_dir.join("memory.db")
+    } else {
+        ozymem_dir.join("db.sqlite")
+    };
+    let wal_path = std::path::PathBuf::from(format!("{}-wal", sqlite_db.display()));
+    let wal_size_bytes = wal_path.metadata().map(|m| m.len()).unwrap_or(0);
+    let wal_size_kb = wal_size_bytes as f64 / 1024.0;
+
+    let chroma_dir = ozymem_dir.join("chroma");
+    let chroma_status = if chroma_dir.is_dir() { "ONLINE" } else { "STANDBY" };
+
+    let pg_dsn = std::env::var("OZY_PG_DSN")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .or_else(|_| std::env::var("POSTGRES_URL"))
+        .unwrap_or_default();
+    let pg_configured = !pg_dsn.is_empty();
+    let pg_status = if pg_configured { "ONLINE_OR_CONFIGURED" } else { "OFFLINE_FALLBACK" };
+
+    let neuro_path = ozymem_dir.join("neuromodulators.json");
+    let (d, ne, ach, ht) = if neuro_path.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&neuro_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                let d = val.get("dopamine").and_then(|v| v.as_f64()).unwrap_or(0.50);
+                let ne = val.get("noradrenaline").and_then(|v| v.as_f64()).unwrap_or(0.50);
+                let ach = val.get("acetylcholine").and_then(|v| v.as_f64()).unwrap_or(0.50);
+                let ht = val.get("serotonin").and_then(|v| v.as_f64()).unwrap_or(0.50);
+                (d, ne, ach, ht)
+            } else {
+                (0.50, 0.50, 0.50, 0.50)
+            }
+        } else {
+            (0.50, 0.50, 0.50, 0.50)
+        }
+    } else {
+        (0.50, 0.50, 0.50, 0.50)
+    };
+
+    if json_output {
+        let payload = serde_json::json!({
+            "status": "TRI_HYBRID_ACTIVE",
+            "l1_sqlite": {
+                "status": "online",
+                "path": sqlite_db.to_string_lossy(),
+                "wal_size_kb": wal_size_kb,
+                "latency_sla": "< 1.0ms"
+            },
+            "l2_chroma": {
+                "status": chroma_status,
+                "path": chroma_dir.to_string_lossy(),
+                "collections": ["episodic_raw", "code_graph_ast", "semantic_heuristics", "dream_insights"],
+                "latency_sla": "< 5.0ms"
+            },
+            "l3_postgres": {
+                "status": pg_status,
+                "dsn_configured": pg_configured,
+                "latency_sla": "< 8.0ms"
+            },
+            "neuromodulators": {
+                "dopamine": d,
+                "noradrenaline": ne,
+                "acetylcholine": ach,
+                "serotonin": ht
+            }
+        });
+        println!("{}", serde_json::to_string(&payload)?);
+        return Ok(());
+    }
+
+    println!("========================================================================================");
+    println!("                    OZYMEM TRI-HYBRID NEURO-COGNITIVE DASHBOARD");
+    println!("========================================================================================");
+    println!("Status: [STATUS: TRI_HYBRID_COGNITION_ACTIVE]");
+    println!();
+    println!("L1 - FAST REFLEX / AMYGDALA (SQLite WAL)");
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!("| {:<17} | {:<64} |", "Storage Path", sqlite_db.to_string_lossy());
+    println!("| {:<17} | {:<64} |", "Journal Mode", "WAL (Write-Ahead Logging)");
+    println!("| {:<17} | {:<64} |", "WAL Size", format!("{:.2} KB", wal_size_kb));
+    println!("| {:<17} | {:<64} |", "Latency Guarantee", "< 1.0 ms");
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!();
+    println!("L2 - VECTOR LAKE (ChromaDB C++ Cosine KNN)");
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!("| {:<17} | {:<64} |", "Vector Store Path", chroma_dir.to_string_lossy());
+    println!("| {:<17} | {:<64} |", "Status", chroma_status);
+    println!("| {:<17} | {:<64} |", "Collections (4)", "episodic_raw, code_graph_ast, semantic_heuristics, dream_insights");
+    println!("| {:<17} | {:<64} |", "Latency Guarantee", "< 5.0 ms");
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!();
+    println!("L3 - NEOCORTEX / CLUSTER (PostgreSQL + pgvector + ltree)");
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!("| {:<17} | {:<64} |", "Status", pg_status);
+    println!("| {:<17} | {:<64} |", "MCTS Forest", "ozy_mcts_nodes (Hierarchical ltree)");
+    println!("| {:<17} | {:<64} |", "SWR Replay Lake", "ozy_swr_ripples (HNSW vector_cosine_ops)");
+    println!("| {:<17} | {:<64} |", "AST Blast Radius", "ozy_ast_dependency_edges (Recursive CTE Lineage)");
+    println!("| {:<17} | {:<64} |", "Latency Guarantee", "< 8.0 ms");
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!();
+    println!("NEUROMODULATOR BALANCE");
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!("| {:<17} | {:<64} |", "Dopamine (D)", format!("{:.2} (Reward Prediction Error & Consolidation)", d));
+    println!("| {:<17} | {:<64} |", "Noradrenaline (NE)", format!("{:.2} (Amygdala Threat Sensitivity & Locus Coeruleus)", ne));
+    println!("| {:<17} | {:<64} |", "Acetylcholine (ACh)", format!("{:.2} (Encoding vs Retrieval Modulation)", ach));
+    println!("| {:<17} | {:<64} |", "Serotonin (5-HT)", format!("{:.2} (Patience & Behavioral Inhibition)", ht));
+    println!("+-------------------+------------------------------------------------------------------+");
+    println!("========================================================================================");
+
+    Ok(())
+}

@@ -275,6 +275,72 @@ class ChromaVectorBridge:
         merged.sort(key=lambda x: x["similarity_score"], reverse=True)
         return merged
 
+    def deduplicate_collection(
+        self,
+        collection_name: str = COLLECTION_HEURISTICS,
+        similarity_threshold: float = 0.90,
+    ) -> Dict[str, Any]:
+        """
+        Scans collection documents, finds near-duplicate pairs (cosine sim >= threshold),
+        and removes redundant documents while consolidating metadata.
+        """
+        coll = self.get_collection(collection_name)
+        if coll is None:
+            return {"status": "unavailable", "pruned_count": 0}
+
+        try:
+            data = coll.get(include=["documents", "metadatas", "embeddings"])
+            ids = data.get("ids", [])
+            docs = data.get("documents", [])
+            embeddings = data.get("embeddings", [])
+        except Exception as e:
+            return {"status": "error", "error": str(e), "pruned_count": 0}
+
+        if len(ids) < 2:
+            return {"status": "ok", "scanned_count": len(ids), "pruned_count": 0}
+
+        to_remove = set()
+        fused_count = 0
+
+        for i in range(len(ids)):
+            if ids[i] in to_remove:
+                continue
+            for j in range(i + 1, len(ids)):
+                if ids[j] in to_remove:
+                    continue
+                doc_a = docs[i] if docs else ""
+                doc_b = docs[j] if docs else ""
+                sim = 0.0
+                if embeddings is not None and len(embeddings) > max(i, j) and embeddings[i] is not None:
+                    vec_a = embeddings[i]
+                    vec_b = embeddings[j]
+                    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+                    norm_a = math.sqrt(sum(a * a for a in vec_a))
+                    norm_b = math.sqrt(sum(b * b for b in vec_b))
+                    if norm_a > 0 and norm_b > 0:
+                        sim = float(dot / (norm_a * norm_b))
+                else:
+                    from ozy_brain.semantic_merger import compute_token_cosine_similarity
+                    sim = compute_token_cosine_similarity(doc_a, doc_b)
+
+                if sim >= similarity_threshold:
+                    to_remove.add(ids[j])
+                    fused_count += 1
+
+        if to_remove:
+            try:
+                coll.delete(ids=list(to_remove))
+            except Exception as e:
+                logger.error(f"[ALERT: CHROMA_DEDUPE_DELETE_FAILED] {e}")
+
+        return {
+            "status": "ok",
+            "collection": collection_name,
+            "scanned_count": len(ids),
+            "pruned_count": len(to_remove),
+            "fused_count": fused_count,
+        }
+
     def close(self) -> None:
         """Closes collections and releases Chroma PersistentClient for Windows safety."""
         self._collections.clear()

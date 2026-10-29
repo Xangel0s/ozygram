@@ -32,6 +32,9 @@ enum Commands {
     Doctor {
         #[arg(long)]
         json: bool,
+
+        #[arg(long)]
+        tri_hybrid: bool,
     },
     /// Escanear un directorio local de manera sincrona e indexarlo en el grafo
     Scan {
@@ -213,7 +216,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Init { auto, dry_run, rollback, path, client } => {
             return run_init(path.clone(), *auto, client.clone(), *dry_run, *rollback).await;
         }
-        Commands::Doctor { json } => {
+        Commands::Doctor { json, tri_hybrid } => {
+            if *tri_hybrid {
+                return print_tri_hybrid_dashboard(*json);
+            }
             return run_doctor(*json).await;
         }
         Commands::Start { path, force } => {
