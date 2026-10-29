@@ -1,6 +1,6 @@
 [project]
 name = "ozy-brain"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local reasoning worker for Ozygram"
 requires-python = ">=3.10"
 dependencies = [

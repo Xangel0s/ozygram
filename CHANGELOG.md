@@ -4,6 +4,34 @@ All notable changes to Ozygram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-29
+
+### Added
+- **5 Master MCP Meta-Tools Architecture (ozy_patch, ozy_plan, ozy_context, ozy_memory, ozy_doctor)**:
+  - Consolidated 25+ fragmented endpoints into 5 unified meta-tools, slashing LLM schema prompt consumption by > 1,500 tokens per turn while providing 100% backward-compatible aliases.
+  - Native Rust Active Inference EFE-MCTS engine (ozymem-core::mcts) executing 25 simulations in < 1 ms with Expected Free Energy G(pi) = -V_prag - V_epist.
+  - Hippocampal Theta-Gamma working memory buffer packing 4 strict topological phases (leaf_contracts, domain_services, entrypoints, validation) into extractive +/- 10 line windows.
+- **Fuzzy AST Block Patching Engine (ozymem-parser::patching)**:
+  - Token-level normalization tolerating spacing around operators, punctuation, mixed tabs/spaces, and indentation shift (2 vs 4 spaces).
+  - Strict preservation of line endings (CRLF vs LF) and auto-alignment to target block indentation.
+  - Pre-write Tree-Sitter AST validation vetoing broken syntax before touching disk.
+- **Unified Configuration Centralization (.ozy/config.toml)**:
+  - Deterministic precedence: CLI flags > ENV variables > .ozy/config.toml > Defaults.
+  - Built-in operational presets: laptop (low CPU, 10 MCTS sims), power (Rayon parallelism, 50 sims, L3 PG enabled), and ci (non-interactive, strict invariant rejection).
+  - New CLI commands: ozymem config list, ozymem config get <key>, ozymem config set <key> <val>, and ozymem config init.
+  - Unified Python configuration loader in python/ozy-brain/ozy_brain/config.py.
+- **True Zero-Copy Contract Lookups in engram_store**:
+  - lookup_signature, with_archived, and find_by_name filtering directly on mmap2 entries without allocating intermediate heap structures.
+  - Validated 22.9 ns (p50) lookup latency in Criterion benchmarks across 5,000 archived contracts (19.7x faster than full struct deserialization).
+- **Hardened Release Installers & Safe Editor Management**:
+  - Added SHA256 checksum verification (SHA256SUMS) in install.ps1 and install.sh.
+  - Safe client configuration management in ozymem init: --dry-run non-destructive preview, automatic .ozybak.<timestamp> backups, and atomic --rollback restoration.
+- **Empirical A/B Benchmark Suite (scripts/bench_ab_effectiveness.py)**:
+  - Quantitative validation across real production repositories (crmnew and ozygram):
+    - 92.3% overall token reduction (median 94.0%) with AST contracts and Theta-Gamma extractive windows.
+    - 90% patch resilience vs 10% baseline search/replace.
+    - 100% pre-commit prevention of cross-stack contract drift between FastAPI and Next.js.
+
 ## [0.2.0] - 2026-10-28
 
 ### Added

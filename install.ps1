@@ -24,7 +24,7 @@ $InstalledFromRelease = $false
 
 # If not explicitly compiling from source, attempt fast precompiled release download
 if (-not $FromSource -and -not (Test-Path "target\release\ozymem.exe")) {
-    Write-Host "[2/4] Downloading precompiled release v0.1.7 from GitHub..." -ForegroundColor Yellow
+    Write-Host "[2/4] Downloading precompiled release v0.2.1 from GitHub..." -ForegroundColor Yellow
     $ReleaseZip = Join-Path $env:TEMP "ozymem-windows-x64.zip"
     $TempExtract = Join-Path $env:TEMP "ozymem-install-extract"
     $DownloadUrl = "https://github.com/Xangel0s/ozygram/releases/latest/download/ozymem-windows-x64.zip"
