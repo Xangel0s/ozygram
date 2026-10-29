@@ -211,3 +211,4 @@ def test_mocked_online_postgres_integration(temp_orchestrator):
         assert res["postgres_saved"] is True
         assert mock_cur.execute.call_count == 1
         assert "INSERT INTO ozy_cognitive_gotchas" in mock_cur.execute.call_args[0][0]
+

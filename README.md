@@ -4,10 +4,12 @@
 
 ### *Persistent Cognitive Memory, Code Graph & Autonomous Self-Improvement for AI Coding Agents*
 
-[![Release](https://img.shields.io/badge/Release-v0.1.9-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
+[![Release](https://img.shields.io/badge/Release-v0.2.0-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
 [![Fast Lane](https://img.shields.io/badge/Fast_Lane-Rust_Native-orange?style=for-the-badge&logo=rust)](crates/ozymem-server)
 [![Standalone Brain](https://img.shields.io/badge/Brain-Standalone_Zero--Python-blue?style=for-the-badge)](python/ozy-brain)
-[![Storage](https://img.shields.io/badge/Storage-SQLite_ACID_+_Outbox-003B57?style=for-the-badge&logo=sqlite)](docs/architecture.md)
+[![Storage L1](https://img.shields.io/badge/L1_Edge-SQLite_WAL-003B57?style=for-the-badge&logo=sqlite)](docs/architecture.md)
+[![Storage L2](https://img.shields.io/badge/L2_Vector-ChromaDB_C++_KNN-fc5200?style=for-the-badge)](docs/semantic-search.md)
+[![Storage L3](https://img.shields.io/badge/L3_Cluster-PostgreSQL_+_pgvector_+_ltree-336791?style=for-the-badge&logo=postgresql)](docs/architecture.md)
 [![Vector](https://img.shields.io/badge/Search-FastEmbed_ONNX_+_RRF-success?style=for-the-badge)](docs/semantic-search.md)
 [![Self-Improvement](https://img.shields.io/badge/Offline_Replay-Dream--RSI-purple?style=for-the-badge)](docs/dream-rsi.md)
 [![Platform](https://img.shields.io/badge/Platform-Windows_|_Linux_|_macOS-lightgrey?style=for-the-badge)](https://github.com/Xangel0s/ozygram)
@@ -61,33 +63,44 @@ Stop restarting from zero.<br/>
 
 ---
 
-## [ARCH: DUAL-TIER MODEL]
+## [ARCH: TRI-HYBRID NEURO-COGNITIVE SUBSTRATE (v0.2.0)]
 
-```text
+`	ext
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │  AI Coding Agent (Antigravity / Claude Code / Cursor / Windsurf / VS Code / ...)        │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            │ MCP stdio JSON-RPC (Low Latency)
+                                            │ MCP stdio JSON-RPC (Sub-millisecond)
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
 │  FAST LANE: Rust Core (ozymem-server & ozymem-cli)                                     │
-│  • SQLite ACID WAL Storage (.ozymem/memory.db) with Transactional Outbox Triggers      │
+│  • L1 SQLite WAL (.ozymem/memory.db) with Transactional Outbox Triggers (< 1ms)         │
 │  • Native AST Code Graph (Tree-Sitter: Rust, Python, TS/TSX, JS, Go, SQL)              │
-│  • O(1) Binary Engram Contracts (rkyv + memmap2 memory-mapped contract table)              │
-│  • In-Memory Speculative Ghost Patch Verifier (Read-only caller arity & contract check)  │
+│  • O(1) Binary Engram Contracts (rkyv + memmap2 memory-mapped contract table)          │
+│  • In-Memory Speculative Ghost Patch Verifier (Read-only caller arity & contracts)     │
 │  • Live File Watcher (notify debounced incremental indexing)                           │
-│  • Token Hyper-Optimization (view_skeleton AST function body pruning, LOD 0/1/2) │
+│  • Token Hyper-Optimization (view_skeleton AST function body pruning, LOD 0/1/2)       │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            │ Transactional Outbox (SQLite WAL / IPC)
+                                            │ Resilient Write-Through & Federated Outbox
 ┌───────────────────────────────────────────▼────────────────────────────────────────────┐
-│  POWER LANE: Python Cognitive Engine (ozy-brain)                                       │
-│  • Dense Vector Inference (FastEmbed ONNX local) + SQLite FTS5 BM25 Lexical Ranking    │
-│  • Reciprocal Rank Fusion (RRF) Semantic Search with Deterministic Token-Overlap Re-Rank     │
-│  • Dual System Cognitive Router (System 1 fast reflex < 150ms vs System 2 deliberative)│
-│  • Risk Review Pipeline (Deterministic Rules + Optional LLM Critic)                        │
-│  • Proactive Diagnostic Consumer (instant compiler & runtime repair prescriptions)     │
-│  • Offline Dream-RSI Consolidation (UCT trajectory replay, postmortems, temporal decay)  │
+│  TRI-HYBRID STORAGE SUBSTRATE (Complementary Learning Systems 2.0)                     │
+│  ┌────────────────────────┐  ┌─────────────────────────┐  ┌──────────────────────────┐ │
+│  │ L1: SQLite WAL (Reflex)│  │ L2: ChromaDB (Lake)     │  │ L3: PostgreSQL (Cluster) │ │
+│  │ • Amygdala Threat Scar │  │ • Semantic Heuristics   │  │ • pgvector SWR Ripples   │ │
+│  │ • Contract Drift Cache │  │ • Enriched AST Vectors  │  │ • ltree MCTS Forest      │ │
+│  │ • Transactional Outbox │  │ • Dream Insights (STC)  │  │ • Recursive CTE Blast BFS│ │
+│  │ • Sub-1ms Latency      │  │ • Deterministic 384d KNN│  │ • HNSW Cosine Indexing   │ │
+│  └────────────────────────┘  └─────────────────────────┘  └──────────────────────────┘ │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │ Bidirectional Cognition & Optimization
+┌───────────────────────────────────────────▼────────────────────────────────────────────┐
+│  POWER LANE: Python Cognitive Engine (ozy-brain & Centinela Dream-RSI)                 │
+│  • Warm-Started Branching MCTS Plan Optimizer (intermediate state bifurcation < 0.02ms) │
+│  • SOTA Multi-Dimensional Reward Q(s,a) with Noradrenergic PUCT Modulation (c_puct)    │
+│  • Synaptic Tagging & Capture (STC) Promotion (Q >= 0.85 persistent invariant vaccines) │
+│  • 3-Way Federated Reciprocal Rank Fusion (RRF: SQLite Lexical + Chroma + pgvector)    │
+│  • Cross-Repo Contract Tracer (FastAPI @router endpoints <-> Next.js 16 hooks)         │
+│  • Offline Dream-RSI Consolidation (.ozymem/dream_latest_insights.json pre-computation)│
 └────────────────────────────────────────────────────────────────────────────────────────┘
-```
+`
 
 ---
 
@@ -106,6 +119,11 @@ Find the exact capability, technical mechanism, and documentation for your task:
 | **End-to-end frontend to backend tracing** | Bidirectional Next.js/TSX endpoint resolution & SQL lineage | [Cross-Language](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_graph(action="endpoint_dependents")` |
 | **Deliberate high-risk code changes** | Rule-based risk review pipeline with optional LLM critic | [Dialectic Engine](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_brain(action="risk_review")` |
 | **Autonomous offline self-improvement** | Offline trajectory replay dreaming ($0 API cost) & temporal memory decay | [Dream-RSI Guide](docs/dream-rsi.md) | `ozymem dream run` |
+| **3-Way Federated Memory Search** | Reciprocal Rank Fusion (SQLite Lexical + ChromaDB C++ KNN + pgvector) | [Architecture](docs/architecture.md) | `federated_rrf_search` / `ozy_memory` |
+| **Cross-Repo Contract Drift Auditing** | Bidirectional AST verification connecting FastAPI router with Next.js hooks | [Architecture](docs/architecture.md) | `CrossRepoContractTracer` / `audit_workspace` |
+| **Warm-Started Branching MCTS Plan** | Intermediate state bifurcation with noradrenergic PUCT exploration modulation | [Dream-RSI Guide](docs/dream-rsi.md) | `ozy_brain(action="plan")` |
+| **Persistent Trajectory Forest** | Hierarchical ltree subtree queries with `<@` operator in PostgreSQL | [Architecture](docs/architecture.md) | `MctsForestRepository` |
+| **Global SWR Replay Lake** | HNSW cosine distance indexing (`<=>`) over failure ripples and invariant vaccines | [Architecture](docs/architecture.md) | `search_swr_ripples_knn` |
 
 ---
 
@@ -285,9 +303,12 @@ To maintain complete technical integrity, every claimed capability maps directly
 | **Dream-RSI Engine** | Offline trajectory replay with UCT/UCB1 selection | $0 | `python/ozy-brain/ozy_brain/dream/` |
 | **Risk Review Pipeline** | Rule-based heuristics + optional LLM risk critic | $0 / Optional | `python/ozy-brain/ozy_brain/agents/` |
 | **Unified MCP Tools** | 23 active tools (+ 57 legacy aliases configurable) | $0 | `crates/ozymem-server/src/schemas.rs` |
+| **Tri-Hybrid Memory Substrate** | SQLite WAL + ChromaDB + PostgreSQL (pgvector + ltree) | $0 | `python/ozy-brain/ozy_brain/scanner/` |
+| **Warm-Started Branching MCTS** | Warm-start root s_0 bifurcation + Noradrenergic PUCT | $0 | `python/ozy-brain/ozy_brain/dream/plan_branching.py` |
+| **Cross-Repo Contract Bridge** | FastAPI router <-> Next.js hooks bidirectional AST tracer | $0 | `python/ozy-brain/ozy_brain/scanner/contract_tracer.py` |
 
 
-## [PERFORMANCE: EMPIRICAL BENCHMARKS (v0.1.9)]
+## [PERFORMANCE: EMPIRICAL BENCHMARKS (v0.2.0)]
 
 All latency metrics are empirically benchmarked in Rust (`criterion`) and Python (`pytest`), with zero simulated overhead:
 
@@ -301,6 +322,10 @@ All latency metrics are empirically benchmarked in Rust (`criterion`) and Python
 | **STDP Thompson Sampling** | Python (`stdp_synapse.py`) | **< 0.3ms** Bayesian Beta sampling over coupled synapse graphs | `python/ozy-brain/tests/test_basal_ganglia_and_stdp.py` |
 | **Working Memory Compactor** | Python (`working_memory.py`) | **> 70% token budget reduction** in working memory in < 2ms | `python/ozy-brain/tests/test_v018_algorithmic_advances.py` |
 | **Leiden Community GraphRAG** | Python (`leiden_communities.py`) | **< 15ms** modularity $Q$ domain partitioning over AST networks | `python/ozy-brain/tests/test_leiden_communities.py` |
+| **Warm-Start Root Builder** | Python (`plan_branching.py`) | **< 0.02ms** s_0 state bifurcation from intermediate phases | `python/ozy-brain/tests/test_plan_branching_warmstart.py` |
+| **STC Synaptic Consolidation** | Python (`tri_hybrid_orchestrator.py`) | **< 1ms** local WAL + ChromaDB vaccine indexing (Q >= 0.85) | `python/ozy-brain/tests/test_tri_hybrid_orchestrator.py` |
+| **3-Way Federated RRF Search** | Python (`tri_hybrid_orchestrator.py`) | **< 2ms** reciprocal rank fusion across 3 engines | `python/ozy-brain/tests/test_tri_hybrid_orchestrator.py` |
+| **Recursive CTE Reverse Blast** | PostgreSQL (`postgres_engine.py`) | **< 3ms** inverted recursive AST caller traversal | `python/ozy-brain/tests/test_postgres_native_engine.py` |
 
 ## [CLI CHEAT SHEET]
 

@@ -101,3 +101,4 @@ def test_chroma_bridge_lifecycle_and_knn():
     finally:
         bridge.close()
         shutil.rmtree(temp_dir, ignore_errors=True)
+

@@ -281,3 +281,4 @@ class ChromaVectorBridge:
         if self.client is not None:
             del self.client
             self.client = None
+

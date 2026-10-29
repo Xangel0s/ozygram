@@ -6,12 +6,14 @@ Welcome to the official, modular documentation for **Ozygram**, the persistent c
 
 ## [DOCUMENTATION DIRECTORY]
 
-### 1. [Dual-Tier Architecture & Outbox (`docs/architecture.md`)](architecture.md)
-- Two-lane decoupling: **Fast Lane (Rust)** and **Power Lane (Python)**.
+### 1. [Tri-Hybrid Architecture & Outbox (`docs/architecture.md`)](architecture.md)
+- Tri-Hybrid Complementary Learning Systems 2.0 (CLS 2.0):
+  - **L1 SQLite WAL**: Sub-millisecond (< 1ms) threat cache and local transactional outbox.
+  - **L2 ChromaDB**: Local C++ cosine KNN across 4 cognitive collections with deterministic 384d embeddings.
+  - **L3 PostgreSQL (pgvector + ltree)**: Neocortex collaborative cluster, HNSW SWR Lake, persistent MCTS forest, and recursive CTE Reverse Blast Radius traversal.
+- 3-Way Federated Reciprocal Rank Fusion (RRF) and Synaptic Tagging & Capture (STC) promotion ($Q \ge 0.85$).
 - Monorepo crate breakdown (`crates/ozymem-core`, `crates/ozymem-parser`, `crates/ozymem-server`, `crates/ozymem-cli`, `python/ozy-brain`).
-- Single source of transactional truth with local SQLite ACID storage.
-- Transactional Outbox Pattern (`memory_outbox`) with native SQLite triggers and asynchronous background draining.
-- Resilience: Background daemon auto-spawning and deterministic Circuit Breaker fallback.
+- Outbox pattern with native SQLite triggers, resilient write-through, and zero-loss failover.
 
 ### 2. [Hybrid Semantic Search & RRF Fusion (`docs/semantic-search.md`)](semantic-search.md)
 - Fusing sparse lexical search (SQLite FTS5 / BM25) and dense semantic search.

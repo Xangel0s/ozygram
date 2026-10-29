@@ -4,6 +4,29 @@ All notable changes to Ozygram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-28
+
+### Added
+- **Tri-Hybrid Neuro-Cognitive Memory Substrate (CLS 2.0)**:
+  - **L1 SQLite WAL (Fast Reflex / Amygdala)**: Sub-millisecond (< 1ms) threat cache, drift alerts, and local transactional outbox with zero network overhead.
+  - **L2 ChromaDB (Vector Lake)**: Local in-memory and disk C++ cosine KNN across 4 cognitive collections (`semantic_heuristics`, `code_graph_ast`, `dream_insights`, `episodic_raw`) powered by deterministic 384-dimensional L2-normalized embeddings (< 0.05ms, ||v||_2 = 1.0) with FastEmbed fallback.
+  - **L3 PostgreSQL + pgvector + ltree (Neocortex / Collaborative Cluster)**: Persistent MCTS Trajectory Forest with hierarchical `ltree` queries (`<@`), global SWR Replay Lake with HNSW `vector_cosine_ops` indexing, and recursive CTE Reverse Blast Radius traversal across full-stack repositories.
+  - **3-Way Federated Reciprocal Rank Fusion (RRF)**: Merges SQLite lexical BM25 matching, ChromaDB local dense cosine KNN, and PostgreSQL pgvector SWR ripples into a unified rank score: RRF(d) = sum(1 / (60 + rank_m(d))).
+  - **Synaptic Tagging & Capture (STC) Promotion**: High-reward MCTS branches (Q >= 0.85, e.g. `DualActiveContract`) are automatically captured and consolidated into ChromaDB `dream_insights` and SQLite WAL gotchas as persistent invariant vaccines.
+  - **Resilient Write-Through & Offline Graceful Degradation**: Synchronous write-through to SQLite WAL and ChromaDB, buffering or replicating to PostgreSQL if online with 0% data loss on network failure.
+
+- **Warm-Started Branching MCTS Plan Optimizer (v2.6.0)**:
+  - **Intermediate State Bifurcation**: Warm-starts MCTS tree search (s_0) directly from intermediate completed phases (`completed_phases`, `current_phase`, `working_edits`, STC synaptic tags) with < 1ms latency, eliminating cold-start re-exploration overhead.
+  - **Multi-Dimensional Reward (Q(s, a))**: Evaluates candidate branches favoring non-breaking `DualActiveContract` (Q >= 0.85) over uncoordinated breaking cutovers (Q < 0.65).
+  - **Noradrenergic PUCT Exploration Modulation**: Locus Coeruleus dynamically modulates c_puct (1.414 for disciplined leaf/validation contracts vs 2.400 for divergent domain service exploration).
+  - **Bidirectional Re-injection & Offline Sleep Pre-Optimization**: Automatically enriches `ozybrain/plan` steps and recommendations with `[OPTIMIZED_BY_DREAM_RSI]`, pre-computes fragile file branches during the 30-min idle sleep cycle into `.ozymem/dream_latest_insights.json`, and synthesizes Git markdown Gotcha vaccines via `persist_mitigation_vaccine`.
+
+- **Live Dream-RSI Centinela & Multi-Repo Contract Bridge (v2.5.0)**:
+  - Multi-Repo Workspace Scanner discovering consolidated sub-repos (`api-geofal-crm` [FastAPI] + `crm-geofal` [Next.js 16]).
+  - Bidirectional AST Contract Tracer connecting `@router` endpoints with `resilientFetch`/`useQuery` hooks and detecting `ContractDriftAlert`.
+  - Transitive Reverse Blast Radius over inverted AST import graph BFS determining direct and indirect component/view breakage.
+  - Ephemeral Copy-on-Write RAM mutation and caller arity verification with `MonsterComputeConfig` (OZY_MAX_COMPUTE=1).
+
 ## [0.1.7] - 2026-10-26
 
 ### Added

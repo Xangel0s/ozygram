@@ -234,3 +234,32 @@ To eliminate blind iteration on complex layouts, column widths, and responsive t
 4. **Literal Search Guidelines**:
    - Agents must prioritize exact literal search (`rg -F` or `grep_search` with literal strings) for symbols, routes, and paths to eliminate regex escaping hazards.
 
+---
+
+## 11. Tri-Hybrid Neuro-Cognitive Memory Substrate (v0.2.0 & CLS 2.0)
+
+Ozygram v0.2.0 implements **Complementary Learning Systems 2.0 (CLS 2.0)** by orchestrating three specialized storage engines, extracting the maximum capability from each without redundancies:
+
+### Storage Engines & Neurobiological Roles
+1. **L1 SQLite WAL (Fast Reflex / Amygdala)**:
+   - Sub-millisecond (< 1ms) threat cache (`centinela_gotchas`, `centinela_drift_alerts`).
+   - Zero-network overhead, completely local, serving as an immediate Amygdala pre-emption substrate for `ozy_context` and pre-flight checks.
+   - Local transactional outbox buffering events when the external cluster is unreachable.
+2. **L2 ChromaDB (Vector Lake)**:
+   - In-memory & disk-backed C++ cosine KNN across 4 cognitive collections:
+     - `semantic_heuristics`: Architectural gotchas, conventions, and rules.
+     - `code_graph_ast`: Function and class embeddings enriched with AST metadata.
+     - `dream_insights`: Proactive audit reports and high-reward STC vaccines.
+     - `episodic_raw`: Ingestion buffer for MCP calls, execution traces, and raw errors.
+   - Deterministic 384-dimensional L2-normalized unit embeddings (||v||_2 = 1.0) with FastEmbed fallback.
+3. **L3 PostgreSQL + pgvector + ltree (Neocortex / Collaborative Cluster)**:
+   - **MCTS Trajectory Forest (`ozy_mcts_nodes`)**: Persistent hierarchical exploration tree indexed with PostgreSQL's native `ltree` extension (`gist` index). Enables fast subtree queries with the `<@` operator.
+   - **SWR Replay Ripples Lake (`ozy_swr_ripples`)**: Failure replay ripples indexed with HNSW `vector_cosine_ops` (`vector(384)`), querying nearest failure invariants with the `<=>` operator.
+   - **Recursive CTE Reverse Blast Radius (`query_reverse_blast_radius`)**: Multi-hop inverted AST dependency graph traversal executing in PostgreSQL in < 3ms.
+
+### Neurobiological Algorithms
+- **Synaptic Tagging & Capture (STC)**: When MCTS branch exploration discovers high-reward strategies ($Q \ge 0.85$, such as `DualActiveContract`), the node is tagged and captured, automatically promoting it into ChromaDB `dream_insights` and SQLite WAL gotchas as a persistent invariant vaccine.
+- **3-Way Federated Reciprocal Rank Fusion (RRF)**: Merges SQLite lexical BM25 matching, ChromaDB local dense cosine KNN, and PostgreSQL pgvector SWR ripples into a unified rank score:
+  $$\text{RRF}(d) = \sum_{m \in \{\text{sqlite}, \text{chroma}, \text{postgres}\}} \frac{1}{60 + r_m(d)}$$
+- **Resilient Write-Through & Offline Graceful Degradation**: Synchronous write-through to SQLite WAL and ChromaDB, buffering or replicating to PostgreSQL if online with 0% data loss on network failure.
+
