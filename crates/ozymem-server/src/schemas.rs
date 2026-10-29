@@ -9,6 +9,48 @@ pub fn handle_tools_list(
 ) -> anyhow::Result<Option<mcp_common::JsonRpcResponse>> {
             let tools = vec![
                 mcp_common::ToolDefinition {
+                    name: "ozy_patch",
+                    description: "Unified code patching & modification tool: fuzzy AST block patching (action='apply'), in-memory test-time simulation (action='simulate'), and surgical AST symbol replacement (action='replace_symbol'). Replaces ozy_ast_patch, ozy_simulate_patch, and ozy_replace_symbol.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["apply", "simulate", "replace_symbol"],
+                                "default": "apply",
+                                "description": "Acción a ejecutar:
+- 'apply': aplica parche de bloque con tolerancia de espacios y auto-alineación Tree-Sitter (req: file_path, target_code, replacement)
+- 'simulate': simula parche en RAM volátil verificando aridad e invariantes (req: file_path, patch)
+- 'replace_symbol': reemplaza una función o clase por nombre (req: file_path, symbol_name, new_code)"
+                            },
+                            "file_path": { "type": "string", "description": "Ruta relativa del archivo a modificar" },
+                            "target_code": { "type": "string", "description": "Bloque de código original a sustituir (soporta coincidencia exacta y fuzzy whitespace)" },
+                            "replacement": { "type": "string", "description": "Nuevo bloque de código con auto-alineación sintáctica" },
+                            "symbol_name": { "type": "string", "description": "Nombre del símbolo AST (para action='replace_symbol')" },
+                            "new_code": { "type": "string", "description": "Alias de replacement para action='replace_symbol'" },
+                            "patch": { "type": "string", "description": "Diff o parche unificado para action='simulate'" },
+                            "dry_run": { "type": "boolean", "default": false, "description": "Si es true, genera diff sin modificar el archivo en disco" }
+                        },
+                        "required": ["file_path"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_plan",
+                    description: "Unified cognitive planning & exploration tool: topological edit sequence, Active Inference EFE-MCTS, reverse blast radius analysis, and Hippocampal Theta-Gamma working memory packing. Replaces ozy_brain(action='plan').",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "goal": { "type": "string", "description": "Objetivo específico de la tarea de ingeniería o refactorización" },
+                            "file_path": { "type": "string", "description": "Archivo semilla o punto de partida opcional" },
+                            "project": { "type": "string", "description": "Proyecto activo" },
+                            "max_tokens": { "type": "integer", "default": 4000 }
+                        },
+                        "required": ["goal"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "ozy_context",
                     description: "Unified context tool: task bundle, file context, project memory context, project schema, indexed files, and recent lessons. Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
                     input_schema: json!({

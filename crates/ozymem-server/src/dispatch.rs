@@ -399,6 +399,76 @@ pub async fn handle_request(
                         },
                     }
                 }
+                                "ozy_patch" | "patch" => {
+                    let action = tool_call.arguments.get("action").and_then(Value::as_str).unwrap_or("apply");
+                    match action {
+                        "simulate" => {
+                            match crate::symbols::handle_simulate_patch(backend, &tool_call) {
+                                Ok(res) => res,
+                                Err(e) => ToolCallResult {
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: format!("[ALERT: ERROR] {e}"),
+                                    }],
+                                    is_error: Some(true),
+                                },
+                            }
+                        }
+                        "replace_symbol" => {
+                            match crate::symbols::handle_replace_symbol(backend, &tool_call) {
+                                Ok(res) => res,
+                                Err(e) => ToolCallResult {
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: format!("[ALERT: ERROR] {e}"),
+                                    }],
+                                    is_error: Some(true),
+                                },
+                            }
+                        }
+                        _ => {
+                            match crate::symbols::handle_ast_patch(backend, &tool_call) {
+                                Ok(res) => res,
+                                Err(e) => ToolCallResult {
+                                    content: vec![ContentBlock {
+                                        kind: "text",
+                                        text: format!("[ALERT: ERROR] {e}"),
+                                    }],
+                                    is_error: Some(true),
+                                },
+                            }
+                        }
+                    }
+                }
+                "ozy_plan" | "plan" => {
+                    let goal_opt = tool_call.arguments.get("goal").and_then(Value::as_str);
+                    if goal_opt.is_none() {
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: "[ALERT: BAD_REQUEST] 'goal' es requerido para ozy_plan.".to_string(),
+                            }],
+                            is_error: Some(true),
+                        }
+                    } else {
+                        match handle_ozy_brain(backend, &tool_call, "plan").await {
+                            Ok(report_str) => ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: report_str,
+                                }],
+                                is_error: None,
+                            },
+                            Err(e) => ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("[ALERT: ERROR] {e}"),
+                                }],
+                                is_error: Some(true),
+                            },
+                        }
+                    }
+                }
                 "ozy_ast_patch" | "ast_patch" => {
                     match crate::symbols::handle_ast_patch(backend, &tool_call) {
                         Ok(res) => res,

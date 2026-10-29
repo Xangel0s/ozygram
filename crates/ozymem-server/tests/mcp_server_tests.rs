@@ -2934,6 +2934,112 @@ export function handleReorderCard(a: number, b: number) {
     }
 
     #[tokio::test]
+    async fn test_tools_ozy_patch_meta_tool_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_meta_patch_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let py_code = "def greet(name):\n    return f'Hello {name}'\n";
+        let py_path = tmp_root.join("greet.py");
+        std::fs::write(&py_path, py_code).unwrap();
+
+        // Call unified ozy_patch with action='apply'
+        let patch_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_patch",
+                "arguments": {
+                    "action": "apply",
+                    "file_path": "greet.py",
+                    "target_code": "return f'Hello {name}'",
+                    "replacement": "return f'Welcome, {name}!'",
+                    "dry_run": false
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, patch_req, None, None).await.unwrap().unwrap();
+        let patch_json: Value = serde_json::from_str(resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(patch_json["success"], true);
+
+        let disk_content = std::fs::read_to_string(&py_path).unwrap();
+        assert!(disk_content.contains("Welcome, {name}!"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+
+    #[tokio::test]
+    async fn test_tools_ozy_plan_meta_tool_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_meta_plan_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // 1. Missing goal fails fast with structured error
+        let bad_plan_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_plan",
+                "arguments": {}
+            })),
+        };
+        let resp_bad = handle_request(&backend_ref, bad_plan_req, None, None).await.unwrap().unwrap();
+        let content_bad = resp_bad.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(content_bad.contains("[ALERT: BAD_REQUEST]"));
+
+        // 2. Valid goal dispatches cleanly
+        let good_plan_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_plan",
+                "arguments": {
+                    "goal": "Refactor CRM endpoints for resilience",
+                    "project": "crmnew"
+                }
+            })),
+        };
+        let resp_good = handle_request(&backend_ref, good_plan_req, None, None).await.unwrap().unwrap();
+        assert!(resp_good.result.is_some());
+        let content_good = resp_good.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(!content_good.is_empty());
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
     async fn test_tools_ast_patch_fuzzy_block_tolerance_mcp() {
         let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_fuzzy_patch_{}", std::process::id()));
