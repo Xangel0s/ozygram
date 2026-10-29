@@ -4,6 +4,11 @@ pub mod engram;
 pub mod sql_ddl;
 pub mod ghost_signature;
 pub mod incremental;
+pub mod poincare;
+
+pub use poincare::{
+    embed_ast_node_poincare, embed_path_hierarchy, PoincarePoint, EPSILON_BOUNDARY, POINCARE_DIM,
+};
 
 pub use engram::{extract_engram_contracts, EngramContract, EngramTable, ArchivedEngramContract, ArchivedEngramTable};
 
