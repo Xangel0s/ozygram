@@ -46,3 +46,4 @@ def test_planner_auto_mcts_activation_without_manual_phase():
     # Assert DREAM_RSI badge is injected into recommendations and steps
     assert any("[OPTIMIZED_BY_DREAM_RSI]" in rec for rec in res.recommendations)
     assert any("[DREAM_RSI]" in step for step in res.plan)
+

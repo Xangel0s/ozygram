@@ -103,3 +103,4 @@ def test_contract_preview_injected_in_planner_steps():
     assert "contracts" in first_step
     assert "validate_python_patch_in_memory" in first_step["contracts"]
     assert "[EXPORTS:" in first_step["action"]
+

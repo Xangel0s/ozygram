@@ -70,7 +70,7 @@ class JSONRPCHandler(socketserver.StreamRequestHandler):
                     "error": {"code": -32603, "message": str(exc)},
                 }
 
-            out = json.dumps(res, ensure_ascii=False) + "\n"
+            out = json.dumps(res, separators=(",", ":"), ensure_ascii=False) + "\n"
             self.wfile.write(out.encode("utf-8"))
             self.wfile.flush()
 
@@ -78,6 +78,23 @@ class JSONRPCHandler(socketserver.StreamRequestHandler):
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+    def server_bind(self) -> None:
+        super().server_bind()
+        try:
+            import socket
+            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+
+    def get_request(self):
+        sock, addr = super().get_request()
+        try:
+            import socket
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+        return sock, addr
 
 
 START_TIME = time.time()

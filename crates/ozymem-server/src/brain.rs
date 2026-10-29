@@ -425,9 +425,43 @@ pub fn try_call_ozy_brain_persistent(action: &str, payload: &Value, timeout_ms: 
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpStream;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::net::UnixStream;
+        let socket_path = "/tmp/ozymem_brain.sock";
+        if std::path::Path::new(socket_path).exists() {
+            if let Ok(mut stream) = UnixStream::connect(socket_path) {
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(timeout_ms)));
+                let req = json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": action,
+                    "params": payload
+                });
+                if let Ok(mut line) = serde_json::to_string(&req) {
+                    line.push('\n');
+                    if stream.write_all(line.as_bytes()).is_ok() && stream.flush().is_ok() {
+                        let mut reader = BufReader::new(stream);
+                        let mut resp_line = String::new();
+                        if reader.read_line(&mut resp_line).is_ok() {
+                            if let Ok(parsed) = serde_json::from_str::<Value>(resp_line.trim()) {
+                                if let Some(res) = parsed.get("result") {
+                                    return Ok(res.clone());
+                                } else if parsed.get("error").is_none() {
+                                    return Ok(parsed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let port = std::env::var("OZY_BRAIN_PORT").unwrap_or_else(|_| "9473".to_string());
     let addr = format!("127.0.0.1:{port}");
     let mut stream = TcpStream::connect_timeout(&addr.parse()?, std::time::Duration::from_millis(timeout_ms.min(800)))?;
+    let _ = stream.set_nodelay(true);
     stream.set_read_timeout(Some(std::time::Duration::from_millis(timeout_ms)))?;
 
     let req = json!({

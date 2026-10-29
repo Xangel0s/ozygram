@@ -67,3 +67,4 @@ def test_e2e_ozybase_scenario_simulation():
     dream_recs = [r for r in res.recommendations if "[OPTIMIZED_BY_DREAM_RSI]" in r]
     assert len(dream_recs) >= 1
     assert "DualActiveContract" in dream_recs[0]
+
