@@ -304,6 +304,20 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
                     state_payload={"working_edits": state.working_edits, "candidate_files": cand_files},
                     projected_churn=best_act.projected_churn,
                 )
+                # Auto-Persist Invariant Gotcha Markdown Vaccine
+                from ozy_brain.scanner.memory_store import GotchaMemory
+                gotcha_id = f"gotcha_mcts_{best_act.strategy.lower()}_{int(time.time()*1000) % 100000}"
+                gotcha = GotchaMemory(
+                    id=gotcha_id,
+                    topic_key=f"gotchas/{best_act.phase}",
+                    title=f"MCTS Branch Optimization: {best_act.strategy} for {best_act.phase}",
+                    severity="high" if opt_res.best_score >= 0.85 else "medium",
+                    applies_to=cand_files[:5],
+                    tags=["dream-rsi", "mcts", best_act.strategy.lower()],
+                    flawed_assumption=f"Assuming direct uncoordinated changes in {best_act.phase} without branch isolation.",
+                    countermeasure=f"Apply {best_act.strategy} branch strategy ({best_act.description}) preserving backward compatibility.",
+                )
+                orch.save_gotcha(gotcha, sync_markdown=True)
                 orch.close()
             except Exception:
                 pass
