@@ -7,12 +7,16 @@ pub mod mcp_common;
 pub mod registry;
 pub mod sync;
 pub mod engram_store;
+pub mod mcts;
+pub mod theta_gamma;
 
 pub use git_backend::{
     DiscoveredRepo, EphemeralWorktree, GitBackend, MultiRepoScanner, RepoLiveDiff, RepoRole,
     SynapticTag, SynapticTagger, ValidationResult,
 };
 pub use bundle::{export_bundle, import_bundle, BundleExportSummary, BundleImportSummary, KnowledgeBundle};
+pub use mcts::{EfeResult, MctsAction, MctsNode, MctsState, MctsStatePatch, MctsTree};
+pub use theta_gamma::{GammaSlot, ThetaGammaBuffer, ThetaGammaContext, ThetaGammaPhaseBin};
 pub use engram_store::{FastEngramReader, IncrementalEngramStore, ENGRAM_FILE};
 pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};
 pub use mcp_common::McpBackend;
