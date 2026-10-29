@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Deterministic 384D Count-Sketch / SimHash embedding engine with unit Euclidean norm (||v||_2 = 1.0) and < 50 ns latency.
   - Guarantees 100% vector capabilities in SQLite WAL, ChromaDB, and pgvector without requiring any internet connection or initial 130 MB ONNX download.
 
+### Changed
+- **Legacy Test Artifact Purge & Gitignore Hardening**:
+  - Purgados 12 artefactos temporales y bases de datos huérfanas de pruebas (`analytics.duckdb`, `engrams.rkyv`, `ozymem/`, `ozymem-test/`).
+  - Blindados `.gitignore` raíz y `python/ozy-brain/.gitignore` con patrones estrictos para garantizar un árbol de trabajo 100% limpio en CI y entornos locales.
+  - Validación completa de 89/89 tests unitarios y de integración de `ozymem-server` en verde.
+
 ## [0.2.0] - 2026-10-28
 
 ### Added
