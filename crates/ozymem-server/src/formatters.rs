@@ -4,6 +4,28 @@ use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::McpBackend;
 use std::path::Path;
 
+pub(crate) fn format_archived_engram_contract(contract: &ozymem_parser::ArchivedEngramContract) -> String {
+    let deps = if contract.dependencies.is_empty() {
+        String::from("none")
+    } else {
+        contract.dependencies.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+    };
+    let mut out = format!(
+        "[ENGRAM_CONTRACT: {}]\nFile: {}:{}\nKind: {}\nLanguage: {}\nSignature: {}\nDependencies: [{}]",
+        contract.symbol_path.as_str(),
+        contract.file_path.as_str(),
+        contract.line_number,
+        contract.kind.as_str(),
+        contract.language.as_str(),
+        contract.signature.as_str(),
+        deps
+    );
+    if !contract.doc_summary.is_empty() {
+        out.push_str(&format!("\nDoc: {}", contract.doc_summary.as_str()));
+    }
+    out
+}
+
 pub(crate) fn format_engram_contract(contract: &ozymem_parser::EngramContract) -> String {
     let deps = if contract.dependencies.is_empty() {
         String::from("none")

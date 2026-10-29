@@ -80,6 +80,44 @@ impl IncrementalEngramStore {
         None
     }
 
+    /// Consulta zero-copy directa sobre el contrato archivado en mmap sin clonar en heap
+    pub fn with_archived<R, F>(&self, symbol_path: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&ozymem_parser::ArchivedEngramContract) -> R,
+    {
+        let key = EngramTable::hash_symbol(symbol_path);
+        if let Ok(mem) = self.mem_table.read() {
+            if mem.contains_key(&key) {
+                return None;
+            }
+        }
+        if let Ok(reader_guard) = self.base_reader.read() {
+            if let Some(ref reader) = *reader_guard {
+                return reader.lookup_archived(symbol_path).map(f);
+            }
+        }
+        None
+    }
+
+    /// Obtiene la firma de un contrato con allocación mínima (solo 1 String de retorno)
+    pub fn lookup_signature(&self, symbol_path: &str) -> Option<String> {
+        let key = EngramTable::hash_symbol(symbol_path);
+        if let Ok(mem) = self.mem_table.read() {
+            if let Some(entry) = mem.get(&key) {
+                return match entry {
+                    MemoryEntry::Active(c) => Some(c.signature.clone()),
+                    MemoryEntry::Deleted => None,
+                };
+            }
+        }
+        if let Ok(reader_guard) = self.base_reader.read() {
+            if let Some(ref reader) = *reader_guard {
+                return reader.lookup_signature(symbol_path);
+            }
+        }
+        None
+    }
+
     /// Inserta o actualiza un contrato directamente en la MemTable en RAM
     pub fn insert(&self, contract: EngramContract) {
         let key = EngramTable::hash_symbol(&contract.symbol_path);
@@ -104,15 +142,13 @@ impl IncrementalEngramStore {
             }
         }
 
-        // 2. Base Reader
+        // 2. Base Reader (filtrado Zero-Copy en mmap sin allocar sobre toda la tabla)
         if let Ok(reader_guard) = self.base_reader.read() {
             if let Some(ref reader) = *reader_guard {
-                for contract in reader.iter_all() {
+                for contract in reader.find_by_name(symbol_name) {
                     let key = EngramTable::hash_symbol(&contract.symbol_path);
                     if !seen_keys.contains(&key) {
-                        if contract.name == symbol_name || contract.symbol_path.ends_with(&format!("::{}", symbol_name)) {
-                            results.push(contract);
-                        }
+                        results.push(contract);
                     }
                 }
             }
@@ -297,4 +333,49 @@ mod tests {
         store.compact_and_persist().unwrap();
         assert_eq!(store.total_contracts(), 0);
     }
+
+    #[test]
+    fn test_zero_copy_archived_and_signature_lookup() {
+        let dir = tempdir().unwrap();
+        let store_path = dir.path().join("test_zero_copy.rkyv");
+        let store = IncrementalEngramStore::open(store_path.clone()).unwrap();
+
+        let c1 = EngramContract {
+            symbol_path: "src/billing.rs::charge".to_string(),
+            file_path: "src/billing.rs".to_string(),
+            name: "charge".to_string(),
+            signature: "pub fn charge(amount: f64) -> Result<()>".to_string(),
+            line_number: 10,
+            end_line: 25,
+            kind: "Function".to_string(),
+            language: "Rust".to_string(),
+            dependencies: vec!["Result".to_string()],
+            doc_summary: "Charges billing amount".to_string(),
+        };
+
+        // 1. In MemTable
+        store.insert(c1.clone());
+        assert_eq!(store.lookup_signature("src/billing.rs::charge"), Some("pub fn charge(amount: f64) -> Result<()>".to_string()));
+
+        // 2. Compact to mmap
+        store.compact_and_persist().unwrap();
+
+        // 3. Zero-copy with_archived on mmap
+        let called = store.with_archived("src/billing.rs::charge", |archived| {
+            assert_eq!(archived.name.as_str(), "charge");
+            assert_eq!(archived.signature.as_str(), "pub fn charge(amount: f64) -> Result<()>");
+            assert_eq!(archived.line_number, 10);
+            true
+        });
+        assert_eq!(called, Some(true));
+
+        // 4. lookup_signature directly from mmap
+        assert_eq!(store.lookup_signature("src/billing.rs::charge"), Some("pub fn charge(amount: f64) -> Result<()>".to_string()));
+
+        // 5. lookup_by_name uses find_by_name
+        let by_name = store.lookup_by_name("charge");
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].name, "charge");
+    }
 }
+

@@ -30,6 +30,21 @@ pub(crate) fn handle_lookup_engram(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing 'symbol_path'"))?;
 
+    // 1. Zero-Copy direct mmap lookup (< 25 ns)
+    if let Some(text) = backend.engram_store.with_archived(symbol_path, |archived| {
+        let mut out = "Found 1 engram contract(s) in O(1) time (Zero-Copy mmap):\n\n".to_string();
+        out.push_str(&crate::formatters::format_archived_engram_contract(archived));
+        out
+    }) {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock {
+                kind: "text",
+                text,
+            }],
+            is_error: None,
+        });
+    }
+
     let mut contracts = Vec::new();
     if let Some(c) = backend.engram_store.lookup(symbol_path) {
         contracts.push(c);
