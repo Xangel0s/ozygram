@@ -114,3 +114,161 @@ class WorkingMemoryCompactor:
             estimated_tokens_saved=tokens_saved,
         )
 
+
+
+class ThetaGammaWorkingMemoryBuffer:
+    """
+    Hippocampal Theta-Gamma Phase Precession Working Memory Buffer (Lisman & Idiart).
+    Prevents LLM attention dilution ('lost in the middle') by structuring working context
+    into 4 strictly ordered Theta phase bins (leaves to entrypoints), each bounding
+    Gamma item slots to extractive +-10 line windows (<= 300 tokens per slot).
+    """
+
+    THETA_PHASE_NAMES = {
+        1: "leaf_contracts",
+        2: "domain_services",
+        3: "entrypoints",
+        4: "validation",
+    }
+
+    def __init__(self, window_lines: int = 10, max_tokens_per_slot: int = 300):
+        self.window_lines = window_lines
+        self.max_tokens_per_slot = max_tokens_per_slot
+
+    @classmethod
+    def classify_file_phase(cls, file_path: str) -> tuple[str, int]:
+        """Classifies a file path into its natural Theta phase bin (1 to 4)."""
+        fp = file_path.lower().replace("\\", "/")
+
+        if any(k in fp for k in ["test", "spec", "eval", "mock"]):
+            return (cls.THETA_PHASE_NAMES[4], 4)
+        if any(k in fp for k in ["type", "model", "schema", "contract", ".d.ts", "entity", "dto"]):
+            return (cls.THETA_PHASE_NAMES[1], 1)
+        if any(k in fp for k in ["route", "endpoint", "controller", "handler", "component", "page", "view", "main.", "server."]):
+            return (cls.THETA_PHASE_NAMES[3], 3)
+        # Default to domain services / helpers / mutations
+        return (cls.THETA_PHASE_NAMES[2], 2)
+
+    def extract_gamma_window(
+        self,
+        content: str,
+        symbol_hint: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extracts a bounded +-10 line extractive window around the target symbol,
+        preserving contract integrity while pruning surrounding noise.
+        """
+        lines = content.splitlines()
+        total_lines = len(lines)
+        if total_lines == 0:
+            return {"snippet": "", "start_line": 0, "end_line": 0, "tokens": 0}
+
+        target_line_idx = 0
+        if symbol_hint:
+            for idx, l in enumerate(lines):
+                if symbol_hint in l:
+                    target_line_idx = idx
+                    break
+        else:
+            # Fall back to first export or definition
+            for idx, l in enumerate(lines):
+                if any(k in l for k in ["export ", "def ", "fn ", "pub fn ", "class ", "interface "]):
+                    target_line_idx = idx
+                    break
+
+        start = max(0, target_line_idx - self.window_lines)
+        end = min(total_lines, target_line_idx + self.window_lines + 1)
+        snippet_lines = lines[start:end]
+        snippet = "\n".join(snippet_lines)
+
+        tokens = max(1, len(snippet) // 4)
+        if tokens > self.max_tokens_per_slot:
+            # Truncate to token limit
+            char_limit = self.max_tokens_per_slot * 4
+            snippet = snippet[:char_limit] + "\n... [TRUNCATED_GAMMA_SLOT]"
+            tokens = self.max_tokens_per_slot
+
+        return {
+            "snippet": snippet,
+            "start_line": start + 1,
+            "end_line": end,
+            "tokens": tokens,
+        }
+
+    def pack_context(
+        self,
+        files: List[str],
+        symbol_hints: Optional[Dict[str, List[str]]] = None,
+        file_contents: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Packs candidate files into Theta phase bins and extracts compact Gamma slots.
+        Returns ThetaGammaContext dictionary compatible with BrainResponse.
+        """
+        hints = symbol_hints or {}
+        contents = file_contents or {}
+
+        bins: Dict[int, List[Dict[str, Any]]] = {1: [], 2: [], 3: [], 4: []}
+        raw_tokens_total = 0
+        gamma_tokens_total = 0
+
+        for f in files:
+            phase_name, phase_idx = self.classify_file_phase(f)
+            file_body = contents.get(f, f"// Content placeholder for {f}")
+            raw_tokens_total += max(1, len(file_body) // 4)
+
+            syms = hints.get(f, [])
+            primary_sym = syms[0] if syms else None
+            window = self.extract_gamma_window(file_body, symbol_hint=primary_sym)
+
+            gamma_tokens_total += window["tokens"]
+            bins[phase_idx].append({
+                "file_path": f.replace("\\", "/"),
+                "symbol": primary_sym or "contract_interface",
+                "start_line": window["start_line"],
+                "end_line": window["end_line"],
+                "snippet": window["snippet"],
+                "tokens": window["tokens"],
+            })
+
+        phases_list = []
+        for idx in range(1, 5):
+            slots = bins[idx]
+            p_tokens = sum(s["tokens"] for s in slots)
+            phases_list.append({
+                "phase_name": self.THETA_PHASE_NAMES[idx],
+                "theta_index": idx,
+                "gamma_slots": slots,
+                "total_tokens": p_tokens,
+            })
+
+        tokens_saved = max(0, raw_tokens_total - gamma_tokens_total)
+        ratio = round(tokens_saved / max(1, raw_tokens_total), 4)
+
+        return {
+            "phases": phases_list,
+            "total_gamma_tokens": gamma_tokens_total,
+            "tokens_saved_vs_raw": tokens_saved,
+            "compression_ratio": ratio,
+        }
+
+    @classmethod
+    def format_bounded_prompt(cls, context_dict: Dict[str, Any]) -> str:
+        """Formats the Theta-Gamma context into bounded prefill text for LLMs."""
+        lines = [
+            "[THETA_GAMMA_WORKING_MEMORY - PHASE PRECESSION ACTIVE]",
+            f"Compression: {context_dict.get('compression_ratio', 0.0) * 100:.1f}% saved "
+            f"({context_dict.get('tokens_saved_vs_raw', 0)} tokens pruned, {context_dict.get('total_gamma_tokens', 0)} tokens retained)",
+            "",
+        ]
+        for p in context_dict.get("phases", []):
+            slots = p.get("gamma_slots", [])
+            if not slots:
+                continue
+            lines.append(f"=== Theta-{p['theta_index']}: {p['phase_name']} ({p['total_tokens']} tokens) ===")
+            for s in slots:
+                lines.append(f"• {s['file_path']} [L{s['start_line']}-L{s['end_line']}] ({s['symbol']}):")
+                for s_line in s["snippet"].splitlines()[:12]:
+                    lines.append(f"    {s_line}")
+                lines.append("")
+        return "\n".join(lines)

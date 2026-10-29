@@ -70,6 +70,40 @@ DOMAIN_SYNONYMS: dict[str, list[str]] = {
 }
 
 
+
+@dataclass
+class ThetaGammaPhaseBin:
+    """Represents an oscillatory theta phase bin holding nested gamma slots."""
+    phase_name: str
+    theta_index: int
+    gamma_slots: list[dict[str, Any]]
+    total_tokens: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase_name": self.phase_name,
+            "theta_index": self.theta_index,
+            "gamma_slots": self.gamma_slots,
+            "total_tokens": self.total_tokens,
+        }
+
+
+@dataclass
+class ThetaGammaContext:
+    """Bounded working memory context structured by Hippocampal Theta-Gamma phase precession."""
+    phases: list[ThetaGammaPhaseBin]
+    total_gamma_tokens: int
+    tokens_saved_vs_raw: int
+    compression_ratio: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phases": [p.to_dict() for p in self.phases],
+            "total_gamma_tokens": self.total_gamma_tokens,
+            "tokens_saved_vs_raw": self.tokens_saved_vs_raw,
+            "compression_ratio": self.compression_ratio,
+        }
+
 @dataclass
 class BrainResponse:
     action: str
@@ -88,6 +122,7 @@ class BrainResponse:
     mental_model: dict[str, Any] | None = None
     provenance: list[dict[str, Any]] | None = None
     procedural_rules: list[dict[str, Any]] | None = None
+    theta_gamma_context: dict[str, Any] | None = None
     brain_version: str = BRAIN_VERSION
     brain_schema_version: str = BRAIN_SCHEMA_VERSION
 
@@ -109,6 +144,7 @@ class BrainResponse:
             "mental_model": self.mental_model or {},
             "provenance": self.provenance or [],
             "procedural_rules": self.procedural_rules or [],
+            "theta_gamma_context": self.theta_gamma_context or {},
             "brain_version": self.brain_version,
             "brain_schema_version": self.brain_schema_version,
         }
