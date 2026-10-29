@@ -45,6 +45,9 @@ from .postgres_engine import (
 from .chroma_bridge import (
     ChromaVectorBridge,
 )
+from .tri_hybrid_orchestrator import (
+    TriHybridMemoryOrchestrator,
+)
 
 __all__ = [
     "RepoRole",
@@ -76,5 +79,6 @@ __all__ = [
     "PostgresNativeEngine",
     "MctsForestRepository",
     "ChromaVectorBridge",
+    "TriHybridMemoryOrchestrator",
 ]
 

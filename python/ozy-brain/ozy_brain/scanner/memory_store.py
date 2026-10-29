@@ -263,6 +263,53 @@ class SqliteWalBackend(DreamMemoryStore):
             )
             return cursor.rowcount
 
+    def search_lexical(self, query: str, limit: int = 10) -> List[GotchaMemory]:
+        """Lexical search across titles, flawed assumptions, and countermeasures."""
+        tokens = [t.strip().lower() for t in query.split() if len(t.strip()) >= 3]
+        if not tokens:
+            return self.get_active_threats(limit=limit)
+
+        like_clauses = []
+        params = []
+        for t in tokens:
+            like_clauses.append("(LOWER(title) LIKE ? OR LOWER(flawed_assumption) LIKE ? OR LOWER(countermeasure) LIKE ?)")
+            pattern = f"%{t}%"
+            params.extend([pattern, pattern, pattern])
+
+        sql = f"""
+        SELECT id, kind, topic_key, title, author, date, severity,
+               applies_to, tags, flawed_assumption, countermeasure, created_at
+        FROM centinela_gotchas
+        WHERE {" OR ".join(like_clauses)}
+        ORDER BY created_at DESC
+        LIMIT ?
+        """
+        params.append(limit)
+
+        with self._connection() as conn:
+            cursor = conn.execute(sql, tuple(params))
+            rows = cursor.fetchall()
+
+        results: List[GotchaMemory] = []
+        for r in rows:
+            results.append(
+                GotchaMemory(
+                    id=r["id"],
+                    kind=r["kind"],
+                    topic_key=r["topic_key"],
+                    title=r["title"],
+                    author=r["author"],
+                    date=r["date"],
+                    severity=r["severity"],
+                    applies_to=json.loads(r["applies_to"]),
+                    tags=json.loads(r["tags"]),
+                    flawed_assumption=r["flawed_assumption"],
+                    countermeasure=r["countermeasure"],
+                    created_at=r["created_at"],
+                )
+            )
+        return results
+
 
 class MarkdownGitSynchronizer:
     """Exports and synchronizes GotchaMemory objects as Git-versionable Markdown files."""
