@@ -1,7 +1,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{DependencyHintKind, ParsedDependencyHint};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AstDependencyEdge {
+    pub source_file: String,
+    pub target_file: String,
+    pub import_statement: String,
+    pub edge_kind: String,
+    pub start_line: usize,
+}
 
 const INTERNAL_CRATE_NAMES: &[&str] = &[
     "ozymem_core",
@@ -101,6 +112,67 @@ pub fn resolve_dependency_target(
             }
         }
     }
+}
+
+/// Extracts all resolved internal AST dependency edges from a single file.
+pub fn extract_ast_dependency_edges(
+    file_path: &str,
+    source_code: &str,
+) -> Vec<AstDependencyEdge> {
+    let path = Path::new(file_path);
+    let lang = crate::SupportedLanguage::from_path(path);
+    let Ok(hints) = crate::extract_dependency_hints(file_path, lang, source_code) else {
+        return Vec::new();
+    };
+
+    let mut edges = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for hint in hints {
+        if let Some(target) = resolve_dependency_target(&hint, path) {
+            let target_str = target.to_string_lossy().replace('\\', "/");
+            let source_str = file_path.replace('\\', "/");
+            if target_str == source_str {
+                continue;
+            }
+            let edge_kind = match hint.kind {
+                DependencyHintKind::ModItem => "MOD",
+                DependencyHintKind::UseDeclaration => "USE",
+                DependencyHintKind::ImportStatement => "IMPORTS",
+                DependencyHintKind::ExportStatement => "EXPORTS",
+            };
+            let key = (source_str.clone(), target_str.clone());
+            if seen.insert(key) {
+                edges.push(AstDependencyEdge {
+                    source_file: source_str,
+                    target_file: target_str,
+                    import_statement: hint.raw_text,
+                    edge_kind: edge_kind.to_string(),
+                    start_line: hint.start_line,
+                });
+            }
+        }
+    }
+    edges
+}
+
+/// Batch extracts AST dependency edges across multiple files in a workspace.
+pub fn extract_batch_ast_dependency_edges(
+    files: &[(&str, &str)],
+) -> Vec<AstDependencyEdge> {
+    let mut all_edges = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for (file_path, source_code) in files {
+        let edges = extract_ast_dependency_edges(file_path, source_code);
+        for edge in edges {
+            let key = (edge.source_file.clone(), edge.target_file.clone());
+            if seen.insert(key) {
+                all_edges.push(edge);
+            }
+        }
+    }
+    all_edges
 }
 
 fn resolve_python_target(
@@ -610,6 +682,27 @@ mod tests {
         };
         let resolved_abs = resolve_dependency_target(&hint_abs, &user_py).expect("should resolve abs models");
         assert_eq!(resolved_abs, canon(root.join("app/models.py")));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extracts_ast_dependency_edges_for_workspace_files() {
+        let root = std::env::temp_dir().join(format!("ozymem-edges-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        create_file(&root.join("pyproject.toml"));
+        create_file(&root.join("app/__init__.py"));
+        create_file(&root.join("app/models.py"));
+        create_file(&root.join("app/routers/user.py"));
+
+        let user_py = root.join("app/routers/user.py");
+        let user_code = "from ..models import User\nimport os\n";
+
+        let edges = extract_ast_dependency_edges(&user_py.to_string_lossy(), user_code);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].edge_kind, "IMPORTS");
+        assert_eq!(edges[0].import_statement, "from ..models import User");
+        assert!(edges[0].target_file.ends_with("app/models.py"));
 
         let _ = fs::remove_dir_all(&root);
     }

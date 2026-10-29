@@ -324,6 +324,43 @@ class PostgresNativeEngine:
                     })
         return results
 
+    def bulk_insert_ast_dependency_edges(
+        self,
+        edges: List[Dict[str, Any]],
+    ) -> int:
+        """
+        Inserts AST dependency edges into ozy_ast_dependency_edges table in batch.
+        Idempotent: ON CONFLICT (source_file, target_file) DO UPDATE SET edge_kind, import_statement.
+        """
+        if not self.is_available or not edges:
+            return 0
+
+        sql = """
+        INSERT INTO ozy_ast_dependency_edges (
+            source_file, target_file, import_statement, edge_kind
+        ) VALUES (%s, %s, %s, %s)
+        ON CONFLICT (source_file, target_file) DO UPDATE SET
+            import_statement = EXCLUDED.import_statement,
+            edge_kind = EXCLUDED.edge_kind;
+        """
+        rows = [
+            (
+                str(e.get("source_file", "")).replace("\\", "/"),
+                str(e.get("target_file", "")).replace("\\", "/"),
+                str(e.get("import_statement", "")),
+                str(e.get("edge_kind", "IMPORTS")),
+            )
+            for e in edges
+            if e.get("source_file") and e.get("target_file")
+        ]
+        if not rows:
+            return 0
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                extras.execute_batch(cur, sql, rows)
+        return len(rows)
+
 
 class MctsForestRepository:
     """

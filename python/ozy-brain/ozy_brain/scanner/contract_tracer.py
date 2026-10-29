@@ -346,10 +346,45 @@ class CrossRepoContractTracer:
         return alerts
 
     @classmethod
-    def audit_workspace(
-        cls, workspace_root: Path, synaptic_tagger: Optional[SynapticTagger] = None
-    ) -> List[ContractDriftAlert]:
-        """Discover sibling repos, parse full-stack routes, and return detected drift alerts."""
+    def extract_cross_repo_dependency_edges(
+        cls,
+        backend_endpoints: List[BackendEndpoint],
+        frontend_consumers: List[FrontendConsumer],
+    ) -> List[Dict[str, Any]]:
+        """
+        Synthesizes AST dependency edges between frontend files and backend route files
+        based on endpoint consumption contracts.
+        """
+        backend_by_path: Dict[str, List[BackendEndpoint]] = {}
+        for ep in backend_endpoints:
+            backend_by_path.setdefault(ep.canonical_path, []).append(ep)
+
+        edges: List[Dict[str, Any]] = []
+        seen = set()
+
+        for fc in frontend_consumers:
+            matching = backend_by_path.get(fc.canonical_path, [])
+            for ep in matching:
+                edge_key = (fc.file_path.replace("\\", "/"), ep.file_path.replace("\\", "/"))
+                if edge_key not in seen:
+                    seen.add(edge_key)
+                    edges.append({
+                        "source_file": edge_key[0],
+                        "target_file": edge_key[1],
+                        "import_statement": f"{fc.http_method} {fc.canonical_path}",
+                        "edge_kind": "CONSUMES_ENDPOINT",
+                        "start_line": fc.line_number,
+                    })
+        return edges
+
+    @classmethod
+    def crawl_workspace_dependency_lineage(
+        cls,
+        workspace_root: Path,
+        synaptic_tagger: Optional[SynapticTagger] = None,
+        now_secs: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Discover sibling repos, parse full-stack routes, and return detected drift alerts & cross-repo edges."""
         repos = MultiRepoScanner.discover_sibling_repos(workspace_root)
         backend_repos = [r for r in repos if r.role in (RepoRole.BACKEND_FASTAPI, RepoRole.FULLSTACK_MONOREPO)]
         frontend_repos = [r for r in repos if r.role in (RepoRole.FRONTEND_NEXTJS, RepoRole.FULLSTACK_MONOREPO)]
@@ -357,12 +392,12 @@ class CrossRepoContractTracer:
         backend_endpoints: List[BackendEndpoint] = []
         for br in backend_repos:
             for py_file in br.path.rglob("*.py"):
-                if "tests" in py_file.parts or ".venv" in py_file.parts:
+                if "tests" in py_file.parts or ".venv" in py_file.parts or ".git" in py_file.parts:
                     continue
                 try:
                     code = py_file.read_text(encoding="utf-8", errors="ignore")
                     if "@router." in code or "@app." in code:
-                        rel_path = str(py_file.relative_to(workspace_root))
+                        rel_path = str(py_file.relative_to(workspace_root)).replace("\\", "/")
                         backend_endpoints.extend(FastApiContractExtractor.extract_from_source(code, rel_path))
                 except Exception as e:
                     logger.debug("Failed to read %s: %s", py_file, e)
@@ -371,19 +406,37 @@ class CrossRepoContractTracer:
         for fr in frontend_repos:
             for ts_file in fr.path.rglob("*"):
                 if ts_file.suffix in (".ts", ".tsx", ".js", ".jsx"):
-                    if "node_modules" in ts_file.parts or ".next" in ts_file.parts:
+                    if "node_modules" in ts_file.parts or ".next" in ts_file.parts or ".git" in ts_file.parts:
                         continue
                     try:
                         code = ts_file.read_text(encoding="utf-8", errors="ignore")
                         if "/api/" in code:
-                            rel_path = str(ts_file.relative_to(workspace_root))
+                            rel_path = str(ts_file.relative_to(workspace_root)).replace("\\", "/")
                             frontend_consumers.extend(NextJsConsumerExtractor.extract_from_source(code, rel_path))
                     except Exception as e:
                         logger.debug("Failed to read %s: %s", ts_file, e)
 
-        return cls.trace_contracts(
+        edges = cls.extract_cross_repo_dependency_edges(backend_endpoints, frontend_consumers)
+        alerts = cls.trace_contracts(
             backend_endpoints=backend_endpoints,
             frontend_consumers=frontend_consumers,
             synaptic_tagger=synaptic_tagger,
+            now_secs=now_secs,
         )
+        return {
+            "backend_endpoints": backend_endpoints,
+            "backend_endpoints_count": len(backend_endpoints),
+            "frontend_consumers": frontend_consumers,
+            "frontend_consumers_count": len(frontend_consumers),
+            "cross_repo_edges": edges,
+            "drift_alerts": alerts,
+        }
+
+    @classmethod
+    def audit_workspace(
+        cls, workspace_root: Path, synaptic_tagger: Optional[SynapticTagger] = None
+    ) -> List[ContractDriftAlert]:
+        """Discover sibling repos, parse full-stack routes, and return detected drift alerts."""
+        res = cls.crawl_workspace_dependency_lineage(workspace_root, synaptic_tagger=synaptic_tagger)
+        return res["drift_alerts"]
 

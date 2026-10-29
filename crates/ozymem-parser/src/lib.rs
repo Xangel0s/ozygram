@@ -18,7 +18,10 @@ pub use incremental::{AstMutationEdit, IncrementalAstCache};
 pub use ghost_signature::{
     parse_call_site_argument_count, parse_function_signature, FunctionParam, FunctionSignature,
 };
-pub use dependency_resolution::{is_internal_dependency_hint, resolve_dependency_target};
+pub use dependency_resolution::{
+    extract_ast_dependency_edges, extract_batch_ast_dependency_edges, is_internal_dependency_hint,
+    resolve_dependency_target, AstDependencyEdge,
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

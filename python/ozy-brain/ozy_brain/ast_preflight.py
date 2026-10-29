@@ -117,6 +117,10 @@ def extract_file_contract_skeleton(
             Path("ozygram") / clean_path,
             Path.cwd() / clean_path,
         ]
+        for base in [Path.cwd()] + list(Path.cwd().parents)[:3]:
+            candidates.append(base / clean_path)
+            if "python/ozy-brain/" in clean_path:
+                candidates.append(base / clean_path.split("python/ozy-brain/")[-1])
         for cand in candidates:
             if cand and cand.is_file():
                 target_path = cand
