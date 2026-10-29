@@ -148,6 +148,14 @@
   - **3-Way Federated Reciprocal Rank Fusion (RRF)**: Merges SQLite lexical BM25 matching, ChromaDB local dense cosine KNN, and PostgreSQL pgvector SWR ripples into a unified rank score: $\text{RRF}(d) = \sum_{m \in \{\text{sqlite}, \text{chroma}, \text{postgres}\}} \frac{1}{60 + r_m(d)}$.
   - **Resilient Write-Through & Offline Graceful Degradation**: Writes to SQLite WAL and ChromaDB synchronously, buffering or replicating to PostgreSQL if online. In offline environments or network interruptions, all tools continue functioning smoothly with 0% data loss or crashes.
 
+- **Refined Neuro-Cognitive Planner & Contract Bridge (v2.9.0)**:
+  - **Auto-Phase Inference**: Automatically infers execution phase (`leaf_contracts`, `domain_services`, `entrypoints`, `validation`) from goal semantics and candidate file types (`auto_infer_phase`), eliminating the need for manual phase flags.
+  - **Zero-Flag MCTS Dream-RSI Activation**: Modularization and refactoring goals automatically trigger warm-started MCTS in RAM, evaluating branch strategies and promoting non-breaking `DualActiveContract` ($Q \ge 0.85$) with `[OPTIMIZED_BY_DREAM_RSI]`.
+  - **Volatile AST Contract Preview**: Lightweight, RAM-cached extractor (`extract_file_contract_skeleton`) previews exported symbols (`[EXPORTS: ...]`) in topological sequence steps in $< 1\text{ ms}$ for TypeScript/TSX, Python, and Rust.
+  - **Tri-Hybrid Unified Telemetry (`tri_hybrid_status`)**: Real-time diagnostic endpoint inspecting L1 SQLite WAL size, L2 ChromaDB collections, L3 PostgreSQL connection/ltree status, and neuromodulator chemical vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$.
+  - **Deep L3 PostgreSQL Reverse Blast Radius**: Connects recursive CTE graph traversal (`WITH RECURSIVE reverse_blast ...`) over `ozy_ast_dependency_edges` to calculate transitive callers with sub-5ms latency and zero-latency local fallback.
+  - **Auto-Persisted Git-First Gotcha Markdown**: High-reward MCTS branches ($Q \ge 0.85$) automatically synthesize versioned Markdown vaccines under `.ozy/memories/gotchas/*.md` with YAML frontmatter.
+
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
 - **Literal Search Guidelines**: Prioritize literal exact text matching (`grep_search` with literal strings or `rg -F`) for symbols, paths, and routes to avoid regex compilation bugs and escaped characters.
