@@ -252,7 +252,7 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
     cross_domain_info = detector.detect_cross_domain_blast(cand_files, communities)
 
     completed = set(_completed_phases(payload))
-    current = _current_phase(payload)
+    current = _current_phase(payload, cand_files)
     raw_phases = [
         {"name": "context", "objective": "Gather baseline evidence before making edits", "exit_condition": "Relevant candidate files, memories, graph impact, and risks identified"},
         {"name": "leaf_contracts", "objective": "Refactor base contracts, models, and schemas first", "exit_condition": "Base structures compile cleanly without contract violations"},
@@ -271,7 +271,9 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
     dream_opt: dict[str, Any] = {}
     try:
         from ozy_brain.dream.plan_branching import PlanExecutionState, PlanBranchingMctsOptimizer
-        state = PlanExecutionState.from_payload(payload)
+        payload_with_phase = dict(payload)
+        payload_with_phase.setdefault("current_phase", current)
+        state = PlanExecutionState.from_payload(payload_with_phase)
         opt_res = PlanBranchingMctsOptimizer.optimize_plan(
             state=state,
             candidate_files=cand_files,

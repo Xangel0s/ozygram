@@ -138,8 +138,57 @@ def _completed_phases(payload: dict[str, Any]) -> list[str]:
     return [str(p) for p in raw if p]
 
 
-def _current_phase(payload: dict[str, Any]) -> str:
-    return _text(payload, "current_phase") or _text(payload, "active_phase") or "context"
+def auto_infer_phase(goal: str, candidate_files: list[str] | None = None) -> str:
+    """
+    Intelligently infers the active execution phase from user goal semantics and candidate file types.
+    Prevents the planner from idling in 'context' phase when active refactoring, modularization,
+    or contract migration is requested.
+    """
+    g_lower = (goal or "").lower()
+    cands = candidate_files or []
+
+    # 1. Validation / Test phase keywords
+    if any(k in g_lower for k in ("run tests", "verify tests", "validate suite", "e2e test", "check coverage", "pytest", "cargo test")):
+        return "validation"
+
+    # 2. Schema / Contract mutation keywords
+    contract_keywords = ("schema", "dto", "contract", "type contract", "pydantic", "interface", "protocol", "models")
+    if any(k in g_lower for k in contract_keywords):
+        return "leaf_contracts"
+
+    # Check if candidate files are predominantly contracts/types/schemas
+    contract_files_count = sum(
+        1 for f in cands
+        if any(term in str(f).lower() for term in ("types", "schema", "models", "contract", "dto"))
+    )
+    if cands and contract_files_count >= len(cands) / 2:
+        return "leaf_contracts"
+
+    # 3. Active Refactoring / Domain / UI / Services mutation keywords
+    mutation_keywords = (
+        "modularize", "refactor", "implement", "extract", "migrate",
+        "break down", "separate", "subcomponents", "custom hooks",
+        "isolate", "redesign", "service", "rewrite", "feature folder",
+        "component", "components", "architecture"
+    )
+    if any(k in g_lower for k in mutation_keywords):
+        return "domain_services"
+
+    # 4. Public API / Dispatcher / Router keywords
+    if any(k in g_lower for k in ("endpoint", "router", "route", "mcp tool", "cli command", "controller", "dispatcher")):
+        return "entrypoints"
+
+    # Default fallback for passive exploration or baseline discovery
+    return "context"
+
+
+def _current_phase(payload: dict[str, Any], candidate_files: list[str] | None = None) -> str:
+    explicit = _text(payload, "current_phase") or _text(payload, "active_phase")
+    if explicit:
+        return explicit
+    cands = candidate_files or payload.get("candidate_files") or payload.get("files") or []
+    clean_cands = [f if isinstance(f, str) else str(f.get("path", "")) for f in cands if isinstance(f, (str, dict))]
+    return auto_infer_phase(_goal(payload), clean_cands)
 
 
 def _working_edits(payload: dict[str, Any]) -> list[dict[str, Any]]:
