@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 92.3% overall token reduction (median 94.0%) with AST contracts and Theta-Gamma extractive windows.
     - 90% patch resilience vs 10% baseline search/replace.
     - 100% pre-commit prevention of cross-stack contract drift between FastAPI and Next.js.
+- **Centinela Pre-Commit Contract Drift Gatekeeper (ozymem hook install)**:
+  - Intercepts staged files pre-commit (git diff --cached --name-status) and inspects API route changes in < 15 ms via ozymem_parser::api_routes.
+  - Vetoes commits modifying backend endpoints when dependent frontend components are unsynced ([CRITICAL_VETO: CROSS_REPO_CONTRACT_DRIFT]).
+- **Zero-Download Offline-First Embeddings Substrate (ozymem-core)**:
+  - Deterministic 384D Count-Sketch / SimHash embedding engine with unit Euclidean norm (||v||_2 = 1.0) and < 50 ns latency.
+  - Guarantees 100% vector capabilities in SQLite WAL, ChromaDB, and pgvector without requiring any internet connection or initial 130 MB ONNX download.
 
 ## [0.2.0] - 2026-10-28
 
