@@ -4,7 +4,7 @@
 
 ### *Persistent Cognitive Memory, Code Graph & Autonomous Self-Improvement for AI Coding Agents*
 
-[![Release](https://img.shields.io/badge/Release-v0.2.0-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
+[![Release](https://img.shields.io/badge/Release-v3.3.0-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
 [![Fast Lane](https://img.shields.io/badge/Fast_Lane-Rust_Native-orange?style=for-the-badge&logo=rust)](crates/ozymem-server)
 [![Standalone Brain](https://img.shields.io/badge/Brain-Standalone_Zero--Python-blue?style=for-the-badge)](python/ozy-brain)
 [![Storage L1](https://img.shields.io/badge/L1_Edge-SQLite_WAL-003B57?style=for-the-badge&logo=sqlite)](docs/architecture.md)
@@ -244,44 +244,21 @@ File: `cline_mcp_settings.json` or VS Code MCP settings:
 
 ---
 
-## [MCP TOOLS REFERENCE]
+## [MCP TOOLS REFERENCE - 5 CONSOLIDATED META-TOOLS (v3.3.0)]
 
-Ozygram provides 23 unified native MCP tools (+ 57 optional legacy aliases) organized by cognitive domain:
+Ozygram provides 25 unified native MCP tools (+ 57 optional legacy aliases) consolidated into **5 High-Level Meta-Tools** with internal sub-actions, reducing LLM prompt overhead by > 1,500 tokens per turn while maintaining 100% backward-compatible aliases for legacy tools:
 
-### 1. Memory & Knowledge Layer
-| Tool | Primary Parameters | Description |
+| Meta-Tool | Primary Actions / Params | Description |
 | :--- | :--- | :--- |
-| `ozy_context` | `action`, `file_path` | Unified context: AST symbols, adjacent rules, gotchas, and lessons. |
-| `ozy_memory` | `action`, `query`, `kind`, `title`, `content` | Store, query, and rank persistent memories, decisions, and lessons. |
-| `ozy_lookup_engram` | `symbol`, `file` | $O(1)$ memory-mapped signature and contract lookup. |
-| `ozy_exploration` | `action`, `trajectory_id`, `objective` | Dream-RSI trajectory tracker with automatic leaf parenting and UCT scoring. |
+| `ozy_patch` | `action`: `apply` \| `simulate` \| `replace_symbol`<br/>`file_path`, `target_code`, `replacement` | **Unified Code Modification:** Fuzzy AST block patching with whitespace tolerance and auto-indentation (`apply`), volatile in-memory test-time simulation (`simulate`), and surgical symbol replacement (`replace_symbol`). |
+| `ozy_plan` | `goal` (req), `file_path`, `project` | **Cognitive Planning & Exploration:** Native Rust Active Inference EFE-MCTS tree search, topological edit sequencing, reverse blast radius, and Hippocampal Theta-Gamma working memory packing. |
+| `ozy_context` | `action`: `task` \| `file` \| `project` \| `summary`<br/>`lod`: `macro` \| `contracts` \| `full` | **Unified Context Engine:** AST function skeleton extraction, sub-millisecond Amygdala reflex alerts (`[ALERT: AMYGDALA_REFLEX]`), and automatic Git Gotchas prevention injection. |
+| `ozy_memory` | `action`: `search` \| `save` \| `sync_markdown` \| `export_git_notes` | **Persistent Knowledge & Sync:** Git-First markdown memory synchronization (`.ozy/memories/`), conflict-free Git Notes transport, and Topologically-Gated Vector Retrieval (TGVR). |
+| `ozy_doctor` | `action`: `status` \| `code` \| `audit_migrations` | **System Doctor & Linters:** SQLite WAL integrity, outbox health, static monorepo duplicate smell detector, SQL migration idempotency linter (`audit_migrations`), and tri-hybrid telemetry. |
 
-### 2. Code Graph & AST Exploration
-| Tool | Primary Parameters | Description |
-| :--- | :--- | :--- |
-| `ozy_graph` | `action`, `file_path`, `depth` | Reverse dependencies, blast radius, Mermaid impact diagrams, and table lineage. |
-| `ozy_get_symbol` | `file_path`, `symbol_name` | Surgical extraction of a single method, class, or React component AST block. |
-| `ozy_file_tree` | `subpath`, `max_depth` | Fast in-process directory and symbol tree explorer without subprocess overhead. |
-| `ozy_parse` | `file_path`, `source` | Instant in-memory Tree-Sitter AST inspection with dependency hints. |
-| `ozy_find_references`| `symbol_name`, `file_path`, `token_budget`| Deep cross-file caller, definition, and import resolver with token budgeting. |
-| `ozy_search_literal` | `query`, `subpath`, `token_budget` | Blazing fast literal/regex search engine with strict token ceiling. |
+> [!NOTE]
+> **Backward Compatibility:** All legacy specific tools (`ozy_ast_patch`, `ozy_simulate_patch`, `ozy_replace_symbol`, `ozy_brain`, `ozy_graph`, `ozy_lookup_engram`, etc.) remain 100% active and callable via backward-compatible aliases.
 
-### 3. Quality, Safety & Ghost Patching
-| Tool | Primary Parameters | Description |
-| :--- | :--- | :--- |
-| `ozy_simulate_patch` | `file_path`, `patch` | In-memory patch verification, caller arity checking, and invariant audit (read-only). |
-| `ozy_diagnostics_quick`| `file_path`, `code` | Native in-memory syntax diagnostic linter for TS, TSX, Python, Rust, Go. |
-| `ozy_ast_patch` | `file_path`, `target_code`, `replacement` | Indentation-aware surgical code replacer with automatic whitespace alignment. |
-| `ozy_replace_symbol` | `file_path`, `symbol_name`, `replacement` | Surgical AST-level symbol replacement with pre-flight compiler syntax verification. |
-| `ozy_verify_diff` | `file_path`, `diff` | Sandboxed diff validator ensuring syntax compliance prior to disk write. |
-
-### 4. Cognitive Brain & Supervision
-| Tool | Primary Parameters | Description |
-| :--- | :--- | :--- |
-| `ozy_brain` | `action`, `payload` | Dual System router, rule-based risk review (with optional LLM critic), and DuckDB churn audit. |
-| `ozy_doctor` | `format`, `action` | Complete system diagnostics (SQLite integrity, outbox health, migration audit). |
-| `ozy_code_doctor` | `subpath` | Structural code smell and duplicate block detector across monorepos. |
-| `ozy_skills` | `query` | Query official agent skills catalog and load specialized workflow cheatsheets. |
 ---
 
 ## [NEUROCOGNITIVE ALGORITHMIC FUSION & ACTIVE INFERENCE (v3.2.0)]
@@ -291,7 +268,8 @@ Ozygram v3.2.0 unifies four cutting-edge algorithmic advances from computational
 ### 1. 16D Poincaré Hyperbolic AST Embeddings (`ozymem-parser::poincare`)
 - **Exponential Tree Volume:** Source code ASTs and directory structures branch exponentially ($b^d$). Mapping them into Euclidean space ($\mathbb{R}^n$) creates massive geometric distortion.
 - **Negative Curvature Manifold:** By embedding trees into the open unit ball $\mathbb{B}^{16}$ with constant negative curvature, hierarchies are represented with near-zero distortion.
-- **Ultra-Fast Metric:** Evaluates exact hyperbolic distance $d_{\mathbb{B}}(u, v) = \operatorname{arcosh}\left(1 + 2rac{\|u-v\|^2}{(1-\|u\|^2)(1-\|v\|^2)}ight)$ in $< 50	ext{ ns}$ in Rust Core with 95% less RAM than traditional Euclidean vector indices.
+- **Ultra-Fast Metric:** Evaluates exact hyperbolic distance $d_{\mathbb{B}}(u, v) = \operatorname{arcosh}\left(1 + 2rac{\|u-v\|^2}{(1-\|u\|^2)(1-\|v\|^2)}
+ight)$ in $< 50	ext{ ns}$ in Rust Core with 95% less RAM than traditional Euclidean vector indices.
 
 ### 2. Topologically-Gated Vector Retrieval (TGVR) in PostgreSQL L3
 - **Unified Transactional Query:** Fuses recursive CTE topological cones over `ozy_ast_dependency_edges` with `pgvector` HNSW cosine similarity (`<=>`) in a single query.

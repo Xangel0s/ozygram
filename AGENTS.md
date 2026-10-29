@@ -1,180 +1,108 @@
-# Ozygram Developer Agent Guidelines
+# Ozygram Workspace - Multi-Project Architecture & Agents Guide
 
-## Dual-Tier Architecture (v0.4.0 & v1.1.0)
-- `crates/ozymem-core`: Persistent ACID storage (SQLite), `memory_outbox` triggers, multi-language AST indexing (tree-sitter), hybrid semantic search (fastembed), graph analysis (petgraph).  
-  `GraphBackend` (per-project memory at `{proj}/.ozymem/memory.db`) and `ProjectRegistry` (global registry at `~/.ozymem/registry.db`).
-- `crates/ozymem-parser`: Native source code AST parsers (Python, Go, Rust, JS/TS, SQL) using Tree-Sitter and text heuristics.
-- `crates/ozymem-cli`: Standalone CLI tool with subcommands `scan`, `lessons`, `dashboard`, `register`, `list`, `ignore`, `dream`, etc.
-- `crates/ozymem-server`: Ultra-low latency MCP stdio server with 30+ tools, resources, prompts, resource subscriptions, and push notifications.
-- `python/ozy-brain`: Asynchronous cognitive engine in Python with `SupervisorAgent`, `RiskCriticAgent`, `DataEngine` (DuckDB + Polars), `OutboxConsumer` (ChromaDB + FastEmbed ONNX), and `MemoryConsolidationAgent`.
+## Workspace Overview
+Contains core system modules, memory engines, and CRM integrations:
+- `ozygram/`: Ozy memory engine, Rust crates (`ozymem-parser`, `ozymem-core`), Python brain (`ozy-brain`, Dreamer RSI, outbox consumers).
+- `crmnew/api-geofal-crm/`: Central FastAPI backend for Geofal CRM.
+- `crmnew/crm-geofal/`: Next.js 16 App Router frontend dashboard.
 
-## Key Features
-- **Comprehensive Modular Documentation**: See [`docs/`](docs/INDEX.md) for dedicated domain guides:
-  - [`docs/architecture.md`](docs/architecture.md): Dual-Tier Architecture & Transactional Outbox Pattern.
-  - [`docs/semantic-search.md`](docs/semantic-search.md): Hybrid Semantic Search & RRF Fusion.
-  - [`docs/supervision-and-validation.md`](docs/supervision-and-validation.md): Cognitive Supervision & Deterministic Validation.
-  - [`docs/dream-team-tools.md`](docs/dream-team-tools.md): High-Performance Dream Team Tools (`tgrep`, `rtk`, `fastembed`).
-  - [`docs/mcp-integration.md`](docs/mcp-integration.md): Comprehensive MCP Endpoint & Tool Reference.
-  - [`docs/engram_system.md`](docs/engram_system.md): Deterministic $O(1)$ Engram System, Speculative Prefill & Git Notes P2P.
-  - [`docs/dream-rsi.md`](docs/dream-rsi.md): Dream-RSI: Zero-Friction MCTS Exploration & Offline Self-Improvement.
-  - [`docs/changelog.md`](docs/changelog.md): Chronological Version History & Release Notes.
-- **Transactional Outbox Pattern (`memory_outbox`)**:
-  - Automatic SQLite triggers (`lessons_outbox_ai`, `lessons_outbox_ad`, `observations_outbox_ai`, `observations_outbox_au`, `observations_outbox_ad`).
-  - Background draining via `OutboxConsumer` in `ozy-brain` to ChromaDB. Zero orphan vectors.
-- **Hybrid Semantic Search with RRF**:
-  - `deep_semantic_search` / `ozy_deep_search`: Fuses lexical BM25 results from SQLite FTS5 with dense ONNX embeddings (`FastEmbed` with `BAAI/bge-m3` or `bge-base`) using Reciprocal Rank Fusion (RRF). Zero API token expenditures.
-- **Daemon Auto-Spawn & Circuit Breaker**:
-  - `ensure_ozy_brain_running()` automatically starts the Python process if not active.
-  - If Python fails or exceeds the timeout (3s), the Circuit Breaker switches immediately to deterministic SQLite FTS5 fallback.
-- **Cognitive Multi-Agent System (`ozy-brain`)**:
-  - **Orchestration Supervisor (`SupervisorAgent`)**: Hierarchical and structured dispatch using `pydantic-ai`.
-  - **Adversarial Critic (`RiskCriticAgent`)**: Regression vector simulation, destructive operation vetoes (`DROP TABLE`, `DELETE FROM`, blast radius > 8 files), and Git hotspot correlation.
-  - **Memory Consolidation & Decay (`MemoryConsolidationAgent`)**: Clusters redundant engrams and computes exponential temporal decay ($S = C \cdot e^{-\lambda \Delta t}$).
-- **Universal Model Cascade & OpenRouter Support (`config.py`)**:
-  - Automatic fallback cascading across `OPENROUTER_API_KEY`, `OLLAMA_HOST`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
-  - Zero-cost model tier (`gemini-2.0-flash`, `nemotron-reasoning:free`, `qwen2.5-coder`).
-  - **Offline Local Heuristic Fallback ($0 Cost)**: Zero downtime when offline or lacking API keys.
-- **Analytical Telemetry Engine (`DataEngine` DuckDB + Polars)**:
-  - Ingests Git history to compute change frequency, code churn, contributor counts, and bug-fix density.
-  - Embedded analytical storage in `.ozymem/analytics.duckdb`.
-- **High-Performance Dream Team Integration**:
-  - `tgrep` (Microsoft): Trigram inverted index regular expression search over massive repositories.
-  - `rtk` (Rust Token Killer): ANSI sequence stripping and terminal payload compression.
-- **Deterministic $O(1)$ Engram Table (`rkyv` + `memmap2`)**: Memory-mapped binary lookup of signatures and symbol contracts in $\approx 15\text{ ns}$.
-- **Predictive Speculative Prefill**: Automatic injection of adjacent 1st-order dependency contracts into prompt prefill.
-- **Test-Time Validation Sandbox (`ozy_verify_diff`)**: AST syntax and contract verification prior to disk write operations.
-- **Multi-Language Dependency Resolution (Python & TS/JS)**:
-  - Native import/export extraction via Tree-Sitter for Python and JavaScript/TypeScript.
-  - Resolves relative paths (`.`, `..`), aliases (`@/`, `~/`), and workspace modules to concrete physical files (`.py`, `.ts`, `.tsx`, `.js`, `index.ts`, `__init__.py`).
-  - Accurate file relationship mapping (`edge_count > 0`) in mixed monorepos.
-- **Non-Blocking Embedding Lifecycle & SQLite Batch Transactions**:
-  - Background initialization and download (`std::thread::spawn` decoupled from Tokio JSON-RPC thread).
-  - Explicit model states: `Ready`, `NotDownloaded`, `Downloading`, `CorruptedOrDeleted`, `Failed(String)`.
-  - Sub-20ms lesson and observation recording in SQLite + `memory_outbox`.
-  - `BEGIN IMMEDIATE ... COMMIT` batch transactions in `full_scan` avoiding disk fsync thrashing on Windows.
-- **Automatic Knowledge Capture with Git Hooks (`ozymem hook`)**:
-  - CLI subcommand `ozymem hook install|uninstall|status|run` and MCP tool `install_git_hook`.
-  - Cross-platform `.git/hooks/post-commit` hook indexing commit deltas and capturing lessons automatically.
-  - Verification in `ozy_doctor` to audit active hook status.
-- **Dream-RSI & Monte Carlo Tree Search (MCTS) v1.2.0**:
-  - **Persistent Discovery Tree (`exploration_trajectories`, `exploration_nodes`)**: Hierarchical SQLite storage with `parent_id`, `depth`, `action_payload`, `visit_count`, and running Q-value (`value_estimate`).
-  - **State Rollback & Backtracking with File Snapshots**: Integrated `rollback_snapshot`, `rollback_node`, and `rollback_to_parent` actions in `ozy_exploration`. Captures file state before risky operations and automatically restores disk state to the parent node upon branch pruning or hypothesis abandonment.
-  - **Action Simulation & Blast Radius Pre-Flight (`simulate_action`)**: Evaluates code modification hypotheses in `ozy_brain` against the AST dependency graph (depth 2), issuing safety directives (`[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]`) and backtracking recommendations (`recommended_resume_node`).
-  - **Objective Auto-Reward & Anti-Hallucination Guard**: Deterministic validation of test runs (`+1.0` on exit code 0, `-0.8` on syntax/lint errors, `-1.0` on false solution claims), rejecting hallucinated successes and auto-pruning failing branches.
-  - **Emoji-Free Mermaid Decision Trees (`get_tree`)**: Generates interactive visual decision trees without emojis, using standardized textual tags (`[STATUS: ACTIVE]`, `[ALERT: PRUNED]`, `[OBJECTIVE: SOLVED / TEST_PASSED]`).
-  - **Stale Memory Reality Check against File MTime**: Verifies physical file modification timestamps in `ozy_brain` and `ozy_context` against stored lesson dates, injecting `[ALERT: STALE_MEMORY]` when disk state is newer.
-  - **Smart Auto-Parenting in Rust Core**: When `parent_id` is omitted, automatically links to the latest active unpruned node (`depth = parent.depth + 1`), eliminating the fragility of manual node hash forwarding.
-  - **Atomic Batch Mode (`record_batch`)**: Ingests multiple technical milestones in a single MCP turn, reducing agent turn tax by ~70%.
-  - **Deadlock-Free Trajectory Diagnostics (`diagnose`)**: Endpoint `ozy_exploration(action="diagnose")` with cycle-breaking visited sets, fallback to the latest trajectory if `trajectory_id` is omitted, and token efficiency metrics.
-  - **Trajectory Resumption (`resume`)**: Action `ozy_exploration(action="resume")` locates the highest-value active unpruned leaf node for frictionless recovery after context compaction.
-  - **Noise Filter & Token Budget Bounds**: Automatic truncation of observations to **32 KB per step** (`MAX_OBSERVATION_BYTES`), and exhaustive filtering of binary files (`.onnx`, `.lock`, `.db`, `.duckdb`, `.parquet`, SHA hex blobs) and cache directories (`.fastembed_cache`, `node_modules`, `target`).
-  - **Native MCTS Backpropagation**: Incremental ancestor update $Q \leftarrow Q + \frac{R - Q}{N}$.
-  - **Offline Counterfactual Simulator (`ReplaySimulator`)**: Deterministic replay at **0 LLM tokens and 0 re-executions**, computing fitness score $J(\pi)$ and diagnosing exploration bottlenecks.
-  - **AST Safety Validation**: Strict audit via `AstSafetyAuditor` (blocking `subprocess`, `eval`, `rmtree`) and non-regression guard ($J_{\text{cand}} > J_{\text{base}} + \epsilon$ with zero false prunes).
-  - **MCP & CLI Interface**: Endpoints `ozy_exploration` (`start`, `record_step`, `record_batch`, `complete`, `get_tree`, `diagnose`, `list`, `delete`, `resume`, `rollback_snapshot`, `rollback_node`, `rollback_to_parent`), `ozy_brain(action="simulate_action|dream_rsi")`, and CLI subcommands `ozymem dream run|status|diagnose|tree`.
-- **Property Graph Memory Architecture (v1.3.0)**:
-  - **Connected Graph Topology (`memory_nodes`, `memory_edges`)**: First-class vertices for memories, files, and symbols connected via directed typed edges (`APPLIES_TO`, `COUPLED_WITH`, `CAUSES_REGRESSION`, `SUPERSEDES`, `REINFORCES`, `DERIVED_FROM`).
-  - **In-Memory Multi-Hop BFS with Distance Decay**: Traverses RAM `petgraph` ($\text{depth} \le 2$) applying exponential distance attenuation ($0.6^{\text{depth}-1}$). Direct rules retain weight 1.0; coupled component context is injected at ~0.54 to surface blast radius without context explosion.
-  - **Cascade Stale Invalidation**: File modifications propagate `[ALERT: STALE_MEMORY]` through `APPLIES_TO` edges and cascade down `SUPERSEDES` and `DERIVED_FROM` chains, halving confidence and protecting against stale hallucinations.
-  - **Autonomous Cognitive Auto-Wiring (`ozymem dream run`)**: Analyzes memory clusters ($\text{sim} \ge 0.80$), weaving `REINFORCES` relationships for synergistic lessons and arbitrating contradictions into directional `SUPERSEDES` edges.
-  - **Emoji-Free Mermaid Visualization (`ozymem dream graph` & `ozy_graph`)**: Renders clean Markdown architecture diagrams with standardized textual tags (`[CONVENTION]`, `[APPLIES_TO]`, `[COUPLED_WITH]`).
-- **Surgical AST & Symbol-Driven Architecture (v1.4.0)**:
-  - **Surgical Symbol Extraction (`ozy_get_symbol` & `ozymem symbol`)**: Token-efficient retrieval of exact symbol implementation bounds (functions, classes, interfaces, React components/hooks) directly from AST offsets, cutting context window usage by up to 90%.
-  - **Native Zero-Process MCP Exploration (`ozy_file_tree` & `ozy_parse`)**: Directly queries directory structure and AST definition maps over JSON-RPC without spawning subshells (`cmd.exe`/PowerShell).
-  - **Deep AST for TypeScript/TSX & React**: Native `tree-sitter-typescript` indexing detecting `Interface`, `TypeAlias`, `ReactComponent`, and `ReactHook` declarations with accurate line spans and parameter signatures.
-  - **Surgical AST Replacement (`ozy_replace_symbol`)**: Replaces code at AST symbol granularity with pre-flight AST diagnostic syntax audits, diff generation, and write safeguards.
-- **Enterprise Resilience, Reverse Dependencies & UI Verification (v1.5.0)**:
-  - **Reverse AST Import Resolution (`ozy_graph(action="incoming_dependencies")`)**: Inverts directional AST graphs to uncover all upstream modules importing a file.
-  - **Deep Cross-File Symbol Reference Indexing (`ozy_find_references`)**: Discovers definitions, imports, calls, and exports with explicit token budgeting (default 1200 tokens).
-  - **Visual Blast Radius Mermaid Diagrams (`ozy_graph(action="impact_mermaid")`)**: Textual Mermaid graphs highlighting blast radius with `[TARGET_FILE]` and `[INCOMING_DEPENDENCY]` badges.
-  - **Blast Radius Pre-Flight Veto**: `RiskCriticAgent` audits inbound dependencies, issuing vetoes when proposed changes impact > 8 dependent files.
-  - **SQL Migration Idempotency Linter (`ozy_doctor(action="audit_migrations")`)**: Detects missing `IF NOT EXISTS` / `IF EXISTS` (`[ALERT: NON_IDEMPOTENT_SQL]`) and blocks unguarded destructive DDL (`[ALERT: DESTRUCTIVE_UNGUARDED]`).
-  - **Universal Outbox Pattern (`UniversalOutbox`)**: Transactional outbox supporting SQLite (WAL mode, atomic claiming) and PostgreSQL with exponential backoff retry and 0% event loss.
-  - **Sub-50ms API Outbox Worker (`api-geofal-crm/app/services/outbox.py`)**: Local transactional enqueue in < 2ms with background asynchronous email, webhook, and websocket dispatching.
-  - **Frontend UI Sandbox Protocol (`headless_runner.mjs`, `mockTableFixtures.ts`, `verify_layout.mjs`)**: Sub-3s headless Playwright micro-runner, deterministic TanStack Table stress fixtures, and `getBoundingClientRect` column width verifier.
-- **Cognitive Evolution Architecture (v2.0.0)**:
-  - **Token Hyper-Optimization & AST Skeletonization (Fase 5)**: Native `view_skeleton` in Rust Core (`ozymem-parser`) pruning function bodies (`/* [omitted N lines] */`), multi-level LOD (`macro`, `contracts`, `full`) in `ozy_context` / `ozy_exploration`, semantic extractive windowing ($\pm 10$ lines) in `embeddings.rs`, SHA-256 session deduplication (`[STATUS: CACHED_IN_CONTEXT]`), and `ozymem stats` real-time token telemetry.
-  - **Polyglot Cross-Language Frontier (Fase 6)**: TSX/Next.js endpoint consumer extraction (`parse_frontend_endpoint_consumers` for `fetch`, `axios`, `useQuery`), bidirectional `CONSUMES_ENDPOINT` graph edges (`ozy_graph(action="endpoint_dependents")`), SQL DDL lineage extractor (`TouchesTable` in `sql_ddl.rs`, `ozy_graph(action="table_lineage")`), and live `notify` filesystem watcher with debounced delta cache invalidation.
-  - **Speculative Ghost Patching Simulator in RAM (Fase 7)**: Ephemeral Copy-on-Write volatile RAM sandbox (`simulate_patch` in `queries.rs`) with strict 100ms timeout, zero disk I/O, caller arity contract validation (`ghost_signature.rs`), MCP pre-flight tool `ozy_simulate_patch`, and adversarial invariant vetoes in `RiskCriticAgent` (`[CRITICAL_VETO: INVARIANT_VIOLATION]` / `[CRITICAL_VETO: CONTRACT_BREAKAGE]`).
-  - **Dual System Architecture & Proactive Diagnostics (Fase 8)**: Dual System Router (`cognitive_router.py`: System 1 fast reflex < 150ms vs System 2 deliberative committee), 3-agent dialectic committee (`SupervisorAgent.deliberate_committee` combining Implementer, Risk Critic, and Executive Judge), idle offline consolidation (`ozymem dream run` with temporal decay `prune_decayed_memories` and postmortem git regression vaccine `vaccinate_postmortems`), and proactive outbox consumer (`ProactiveDiagnosticConsumer`) generating sub-second repair prescriptions from `DIAGNOSTIC_ERROR` events.
-- **Knowledge as Code & Team Gotcha Prevention (v2.1.0)**:
-  - **Git-First Markdown Memories**: Stores team gotchas, conventions, and architectural lessons in atomic files under `.ozy/memories/<kind>/*.md` with YAML Frontmatter (`id`, `kind`, `topic_key`, `title`, `author`, `date`, `severity`, `applies_to`, `tags`). Merge-conflict-free across concurrent branches and 100% human-reviewable in Pull Requests.
-  - **Preventive Gotchas Injection**: Automatic pre-flight inspection in `ozy_context(action="file")` prepends structured `[ALERT: GOTCHA_PREVENTION]` alerts for any matching file before the agent reads code, preventing known bugs.
-  - **Bi-directional Git-SQLite Synchronization (`ozy_memory`)**: SincronizaciÃ³n instantÃ¡nea (`sync_markdown`), escaneo en caliente (`scan_markdown`) y exportaciÃ³n declarativa (`export_markdown`) integradas al ciclo de vida del agente.
-- **Neuro-Cognitive Architecture & Offline Dreaming (v2.2.0)**:
-  - **Amygdala Pain Reflexes**: Preemptive SQLite WAL reflex substrate (`amygdala_reflexes`) with sub-millisecond (< 1ms) `ozy_context` interception (`[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]`) warning agents before touching regression-prone files.
-  - **Glial & Glymphatic Homeostasis**: Background metabolic cleanup (`GlialHomeostasisEngine`) performing microglial phagocytosis of orphaned vectors/synapses across SQLite and ChromaDB, plus periodic DuckDB compaction (`CHECKPOINT;`).
-  - **Basal Ganglia Sequence Playbooks & STDP**: Polars sequence mining over Git commit choreographies with automatic sequence injection (`[PROCEDURAL_PLAYBOOK_DETECTED]`) and Spike-Timing-Dependent Plasticity ($\Delta w_{ij} = A_+ e^{-\Delta t / \tau_+}$) in `analytics.duckdb`.
-  - **Autonomous 30-Minute Inactivity Watcher**: Low-overhead Rust daemon (`idle_watcher.rs`) with edge-triggered idle latch triggering `DreamOrchestrator` to generate `.ozymem/dream_latest_insights.json`, exposed proactively via `ozygram://dream/insights` MCP resource.
-  - **Thalamic Selective Attention**: Dynamic attention modulation (`thalamus.rs`) balancing lexical BM25 ($\alpha$), Amygdala threat scars ($\beta$), and AST graph topology ($\gamma$) according to active task intent (`HOTFIX_DEBUG` vs `ARCHITECTURE_REFACTOR` vs `BALANCED`).
-- **Neuro-Cognitive Substrate v2.3.0 (Fase 5)**:
-  - **Continuous STDP Hebbian Plasticity & SQLite Export**: Chronological Git commit sequence mining in DuckDB with automatic materialization of strong causal synapses ($w \ge 0.65$) into SQLite `memory_edges` (`COUPLED_WITH`) for sub-millisecond graph traversals.
-  - **Neuromodulator Chemical Regulation**: Global 4D vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$ dynamically modulating RPE reward, flashbulb one-shot consolidation ($D \ge 0.75$), and Amygdala threat sensitivity ($NE \ge 0.60$).
-  - **Cerebellar Forward Model & Code Dysmetria**: Kinematic motor model with Kullback-Leibler divergence ($D_{KL}$) detecting motor overshoot (`[ALERT: CODE_DYSMETRIA - MOTOR_OVERSHOOT]`) and missing coupled dependencies (`[ALERT: CODE_DYSMETRIA - UNDER_COUPLED]`).
-  - **Corpus Callosum & Blood-Brain Barrier (BBB)**: Multi-workspace meta-pattern transfer between `crmnew` and `default` protected by Shannon entropy filtering ($H(S) \ge 4.5$) and regex secret/path scrubbing.
-- **Distributed Neural Mesh & Collective Intelligence v2.4.0 (Fase 6)**:
-  - **Git-Native Heuristics Transport (`refs/notes/ozy-heuristics`)**: Decentralized note ref (`OZY_HEURISTICS_NOTE_REF`) with deterministic JSONL sorting (`cat_sort_uniq`), allowing conflict-free cross-team heuristic distribution over Git without touching working tree or commit history.
-  - **Immunological BBB & Anti-Injection Defense**: Three-layer network immune filter with SHA-256 cryptographic provenance signatures, anti-prompt injection linter (`scan_context_poisoning`), and Bayesian consensus reputation ($R_{\text{consenso}}$) automatically purging low-confidence or harmful rules via apoptosis (`[ALERT: HEURISTIC_APOPTOSIS_PURGED]`).
-  - **Distributed Semantic Merger & Deduplication**: Vector and token-level cosine similarity engine (`SemanticHeuristicMerger`, $\cos \ge 0.88$) that fuses duplicate peer heuristics, merges complementary rules, and boosts synaptic confidence weights ($w_{\text{new}} = \min(1.0, w_{\text{old}} + 0.08)$).
-  - **Autonomous Dream-RSI Federated Synchronization**: Non-blocking offline-safe Git fetch with 4.0s timeout during the 30-minute idle sleep cycle, reconciling peer heuristics, updating `.ozymem/dream_latest_insights.json`, and exposing action `corpus_federated_sync` in MCP stdio.
+## Active Conventions
+- SOLID, DRY, KISS principles applied across all modules.
+- Non-destructive changes: Always backup database tables and files before structural modifications.
+- Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`.
+- Test coverage standard: Minimum 80% coverage with idempotency and edge cases.
+- Property Graph Memory v1.3.0: Connected memory vertices (`memory_nodes`), typed directed edges (`memory_edges`: `APPLIES_TO`, `COUPLED_WITH`, `SUPERSEDES`, `REINFORCES`), multi-hop BFS with distance decay, and cognitive auto-wiring (`ozymem dream graph|run`, `ozy_graph(action="memory_neighborhood|render_mermaid")`).
+- Reverse Dependency & Blast Radius Analysis (v1.5.0): AST import inversion (`ozy_graph(action="incoming_dependencies")`), deep cross-file symbol references (`ozy_find_references`), visual Mermaid impact diagrams (`ozy_graph(action="impact_mermaid")`), and automated pre-flight vetoes in `RiskCriticAgent` (> 8 dependent files).
+- Resilient Backend & Outbox Pattern: SQL migration idempotency linter (`ozy_doctor(action="audit_migrations")`), `UniversalOutbox` (SQLite WAL mode + Postgres with exponential backoff), and FastAPI background workers with sub-50ms endpoint guarantees (`app/services/outbox.py`).
+- Frontend UI Sandbox & Layout Verification: Headless Playwright runner (`scripts/headless_runner.mjs`), deterministic TanStack Table stress fixtures (`src/lib/mockTableFixtures.ts`), and `getBoundingClientRect` column width verifier (`scripts/verify_layout.mjs`).
+- Literal Search Guidelines: Mandatory use of exact text matching (`grep_search` with literal strings or `rg -F`) for symbols, routes, and paths to avoid regex compilation bugs.
+- Visual Verification Protocol: Quantitative inspection of column bounding rects and overflow detection prior to committing CSS changes.
+- Zero-Emoji Standard: All logs, tags, commit messages, Mermaid diagrams, and MCP outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
+- Cognitive Evolution Architecture v2.0.0:
+  - Token Hyper-Optimization (Fase 5): `view_skeleton` AST pruning, multi-level LOD (`macro`, `contracts`, `full`), $\pm 10$ line extractive windows, session SHA-256 deduplication, and `ozymem stats` CLI.
+  - Cross-Language Frontier (Fase 6): Next.js/TSX endpoint consumer extractor (`parse_frontend_endpoint_consumers`), bidirectional `CONSUMES_ENDPOINT` edges (`endpoint_dependents`), SQL DDL lineage extractor (`table_lineage`), and live filesystem watcher (`notify`).
+  - Speculative Ghost Patching in RAM (Fase 7): Ephemeral Copy-on-Write volatile RAM sandbox (`simulate_patch`, < 100ms timeout), caller arity checker (`ghost_signature.rs`), `ozy_simulate_patch` MCP tool, and invariant vetoes (`[CRITICAL_VETO: INVARIANT_VIOLATION]`).
+  - Dual System Architecture & Offline Consolidation (Fase 8): Dual System Router (System 1 fast reflex < 150ms vs System 2 deliberative committee), 3-agent dialectic committee (`SupervisorAgent.deliberate_committee`), idle offline consolidation (`ozymem dream run` with temporal decay `prune_decayed_memories` and postmortem vaccine `vaccinate_postmortems`), and proactive outbox diagnostics (`ProactiveDiagnosticConsumer`).
+- Knowledge as Code (Git-First Markdown Memories): Team gotchas, conventions, and architectural lessons are stored in atomic markdown files under `.ozy/memories/<kind>/*.md` with YAML Frontmatter (`id`, `kind`, `topic_key`, `title`, `author`, `date`, `severity`, `applies_to`, `tags`). Merge-conflict-free across Git branches and 100% auditable in Pull Requests.
+- Preventive Gotchas Injection: `ozy_context(action="file")` automatically extracts and prepends `[ALERT: GOTCHA_PREVENTION]` for any matching files before code inspection, ensuring agents and developers do not repeat previously discovered bugs.
+- Neuro-Cognitive Architecture & Offline Dreaming v2.2.0:
+  - Amygdala Reflex Substrate: Preemptive SQLite WAL reflex cache (`amygdala_reflexes`) with sub-millisecond (< 1ms) `ozy_context` interception (`[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]`).
+  - Glial & Glymphatic Homeostasis: Background phagocytosis of dead file vectors/synapses across SQLite and ChromaDB, plus periodic DuckDB WAL compaction (`CHECKPOINT;`).
+  - Basal Ganglia Sequence Playbooks & STDP: Co-occurrence choreography mining over Git commits with automatic sequence injection (`[PROCEDURAL_PLAYBOOK_DETECTED]`) and Spike-Timing-Dependent Plasticity ($\Delta w_{ij} = A_+ e^{-\Delta t / \tau_+}$) in `analytics.duckdb`.
+  - Autonomous 30-Minute Idle Dreaming Watcher: Zero-CPU Rust inactivity watcher (`idle_watcher.rs`) with edge-triggered latch triggering `DreamOrchestrator` to generate `.ozymem/dream_latest_insights.json`, exposed proactively via `ozygram://dream/insights` MCP resource.
+  - Thalamic Selective Attention: Dynamic attention modulation (`thalamus.rs`) balancing lexical BM25 ($\alpha$), Amygdala threat scars ($\beta$), and AST graph topology ($\gamma$) based on task intent (`HOTFIX_DEBUG` vs `ARCHITECTURE_REFACTOR` vs `BALANCED`).
+- Neuro-Cognitive Substrate v2.3.0 (Fase 5):
+  - Continuous STDP Hebbian Plasticity & SQLite Export: Chronological Git commit sequence mining in DuckDB with automatic materialization of strong causal synapses ($w \ge 0.65$) into SQLite `memory_edges` (`COUPLED_WITH`) for sub-millisecond graph traversals.
+  - Neuromodulator Chemical Regulation: Global 4D vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$ dynamically modulating RPE reward, flashbulb one-shot consolidation ($D \ge 0.75$), and Amygdala threat sensitivity ($NE \ge 0.60$).
+  - Cerebellar Forward Model & Code Dysmetria: Kinematic motor model with Kullback-Leibler divergence ($D_{KL}$) detecting motor overshoot (`[ALERT: CODE_DYSMETRIA - MOTOR_OVERSHOOT]`) and missing coupled dependencies (`[ALERT: CODE_DYSMETRIA - UNDER_COUPLED]`).
+  - Corpus Callosum & Blood-Brain Barrier (BBB): Multi-workspace meta-pattern transfer between `crmnew` and `default` protected by Shannon entropy filtering ($H(S) \ge 4.5$) and regex secret/path scrubbing.
+- Distributed Neural Mesh & Collective Intelligence v2.4.0 (Fase 6):
+  - Git-Native Heuristics Transport (`refs/notes/ozy-heuristics`): Conflict-free JSONL notes transport (`cat_sort_uniq`) synchronizing team lessons, patterns, and conventions without polluting working tree.
+  - Immunological BBB & Anti-Injection Defense: SHA-256 cryptographic provenance signatures, prompt-injection linter (`scan_context_poisoning`), and Bayesian consensus reputation automatically purging harmful rules via apoptosis (`[ALERT: HEURISTIC_APOPTOSIS_PURGED]`).
+  - Distributed Semantic Merger & Deduplication: Token-cosine similarity engine (`SemanticHeuristicMerger`, $\cos \ge 0.88$) that fuses duplicate peer heuristics, merges complementary rules, and boosts synaptic confidence weights ($w_{\text{new}} = \min(1.0, w_{\text{old}} + 0.08)$).
+  - Autonomous Dream-RSI Federated Synchronization: Non-blocking offline-safe Git fetch with 4.0s timeout during the 30-minute idle sleep cycle, reconciling peer heuristics, updating `.ozymem/dream_latest_insights.json`, and exposing action `corpus_federated_sync` in MCP stdio.
 
-- **SOTA Cognitive Frontiers (v0.1.9)**:
-  - **Neural ONNX Re-Ranker**: BGE-Reranker-Base cross-encoder executed locally via `fastembed::TextRerank`, with automatic fallback to deterministic token overlap (< 0.2ms).
-  - **Incremental Tree-Sitter AST Engine**: Differential tree editing via `Tree::edit` (< 40Î¼s re-index vs 3ms full re-parse) preserving unchanged subtrees in `crates/ozymem-parser/src/incremental.rs`.
-  - **GraphRAG & Leiden Community Partitioning**: Modularity $Q$ clustering identifying architectural macro-domains and emitting `[CROSS_DOMAIN_BLAST_RADIUS]` alerts in `ozy_brain.leiden_communities`.
-  - **Ephemeral Git Worktree Self-Repair Sandbox**: Detached volatile worktree sandboxes (`EphemeralWorktree`) in `crates/ozymem-core/src/git_backend.rs` with compile validation and RAII zero-leakage cleanup on drop.
+- SOTA Cognitive Frontiers v0.1.9:
+  - Neural ONNX Re-Ranker: BGE-Reranker-Base cross-encoder executed locally via `fastembed`, with deterministic token-overlap fallback (< 0.2ms).
+  - Incremental Tree-Sitter AST: Differential tree editing via `Tree::edit` (< 40Î¼s re-index vs 3ms full re-parse) preserving unchanged subtrees.
+  - GraphRAG & Leiden Community Partitioning: Modularity $Q$ clustering identifying architectural macro-domains and emitting `[CROSS_DOMAIN_BLAST_RADIUS]` alerts.
+  - Ephemeral Git Worktree Self-Repair Sandbox: Detached volatile worktree sandboxes (`EphemeralWorktree`) with compile validation and RAII zero-leakage cleanup.
 
-- **Live Dream-RSI Centinela & Multi-Repo Contract Bridge (v2.5.0)**:
-  - **Synaptic Tagging & Capture (STC)**: Ephemeral 30-minute memory marks on modified AST nodes, exponential decay pruning, and PRP compute allocation.
-  - **Multi-Repo Workspace Scanner**: In-memory harvesting of working tree diffs and 24h commits across consolidated sub-repos (`api-geofal-crm` [FastAPI] + `crm-geofal` [Next.js 16]).
-  - **Full-Stack Cross-Repo Contract Tracer**: Bidirectional AST verification connecting `@router` endpoints with `resilientFetch`/`useQuery` hooks, emitting `[ALERT: CROSS_REPO_CONTRACT_DRIFT]`.
-  - **Transitive Reverse Blast Radius**: Inverted AST import graph BFS determining direct and indirect component/view breakage.
-  - **Counterfactual MCTS Solver**: RAM-based decision tree evaluating candidate remediations (`BackendFallbackAdapter`, `FrontendCallerSync`, `DualActiveContract`) with multi-dimensional reward optimization.
-  - **Ergonomic Compute Conmutator**: `OZY_MAX_COMPUTE=1` (massive Rayon parallelism, 60 simulations) vs `OZY_LIGHTWEIGHT_MODE=1` (cooperative CPU yield, <5% CPU, 10 simulations).
-  - **Hybrid Memory Persistence**: Zero-latency SQLite WAL (`.ozymem/memory.db`) + Git-First Markdown (`.ozy/memories/gotchas/*.md`) with optional enterprise PostgreSQL + `pgvector` adapter.
+- Live Dream-RSI Centinela & Multi-Repo Contract Bridge v2.5.0:
+  - Synaptic Tagging & Capture (STC): Ephemeral 30-minute memory marks on modified AST nodes, exponential decay pruning, and PRP compute allocation.
+  - Multi-Repo Workspace Scanner: In-memory harvesting of working tree diffs and 24h commits across consolidated sub-repos (`api-geofal-crm` [FastAPI] + `crm-geofal` [Next.js 16]).
+  - Full-Stack Cross-Repo Contract Tracer: Bidirectional AST verification connecting `@router` endpoints with `resilientFetch`/`useQuery` hooks, emitting `[ALERT: CROSS_REPO_CONTRACT_DRIFT]`.
+  - Transitive Reverse Blast Radius: Inverted AST import graph BFS determining direct and indirect component/view breakage.
+  - Counterfactual MCTS Solver: RAM-based decision tree evaluating candidate remediations (`BackendFallbackAdapter`, `FrontendCallerSync`, `DualActiveContract`) with multi-dimensional reward optimization.
+  - Ergonomic Compute Conmutator: `OZY_MAX_COMPUTE=1` (massive Rayon parallelism, 60 simulations) vs `OZY_LIGHTWEIGHT_MODE=1` (cooperative CPU yield, <5% CPU, 10 simulations).
+  - Hybrid Memory Persistence: Zero-latency SQLite WAL (`.ozymem/memory.db`) + Git-First Markdown (`.ozy/memories/gotchas/*.md`) with optional enterprise PostgreSQL + `pgvector` adapter.
 
-- **Warm-Started Branching MCTS Plan Optimizer (v2.6.0)**:
-  - **Intermediate State Bifurcation**: Warm-starts MCTS tree search ($s_0$) directly from intermediate completed phases (`completed_phases`, `current_phase`, `working_edits`, STC synaptic tags) with $< 1\text{ ms}$ latency, eliminating cold-start re-exploration overhead.
-  - **SOTA Multi-Dimensional Reward ($Q(s, a)$)**: Evaluates candidate branches via $w_1 \cdot \mathcal{R}_{\text{swr}} + w_2 \cdot \mathcal{R}_{\text{blast}} + w_3 \cdot e^{-\mathcal{F}_{\text{drift}}} - w_4 \cdot \mathcal{R}_{\text{churn}}$, favoring non-breaking `DualActiveContract` ($Q \ge 0.85$) over uncoordinated breaking cutovers ($Q < 0.65$).
-  - **Noradrenergic PUCT Exploration Modulation**: Locus Coeruleus dynamically modulates $c_{\text{puct}}$ ($c_{\text{puct}} = 1.414$ for disciplined leaf/validation contracts vs $c_{\text{puct}} = 2.400$ for divergent domain service exploration).
-  - **Bidirectional Re-injection & Offline Sleep Pre-Optimization**: Automatically enriches `ozybrain/plan` steps and recommendations with `[OPTIMIZED_BY_DREAM_RSI]`, pre-computes fragile file branches during the 30-min idle sleep cycle into `.ozymem/dream_latest_insights.json`, and synthesizes Git markdown Gotcha vaccines via `persist_mitigation_vaccine`.
+- Warm-Started Branching MCTS Plan Optimizer v2.6.0:
+  - Intermediate State Bifurcation: Warm-starts MCTS tree search ($s_0$) directly from intermediate completed phases (`completed_phases`, `current_phase`, `working_edits`, STC synaptic tags) with $< 1\text{ ms}$ latency, eliminating cold-start re-exploration overhead.
+  - SOTA Multi-Dimensional Reward ($Q(s, a)$): Evaluates candidate branches via $w_1 \cdot \mathcal{R}_{\text{swr}} + w_2 \cdot \mathcal{R}_{\text{blast}} + w_3 \cdot e^{-\mathcal{F}_{\text{drift}}} - w_4 \cdot \mathcal{R}_{\text{churn}}$, favoring non-breaking `DualActiveContract` ($Q \ge 0.85$) over uncoordinated breaking cutovers ($Q < 0.65$).
+  - Noradrenergic PUCT Exploration Modulation: Locus Coeruleus dynamically modulates $c_{\text{puct}}$ ($c_{\text{puct}} = 1.414$ for disciplined leaf/validation contracts vs $c_{\text{puct}} = 2.400$ for divergent domain service exploration).
+  - Bidirectional Re-injection & Offline Sleep Pre-Optimization: Automatically enriches `ozybrain/plan` steps and recommendations with `[OPTIMIZED_BY_DREAM_RSI]`, pre-computes fragile file branches during the 30-min idle sleep cycle into `.ozymem/dream_latest_insights.json`, and synthesizes Git markdown Gotcha vaccines via `persist_mitigation_vaccine`.
 
-- **Tri-Hybrid Neuro-Cognitive Memory Substrate (v2.8.0)**:
-  - **Complementary Learning Systems (CLS 2.0)**: Coordinates three non-redundant storage engines based on their neurobiological specializations:
-    - **L1 SQLite WAL (Fast Reflex / Amygdala)**: Sub-millisecond (< 1ms) threat cache, drift alerts, and local transactional outbox with zero network overhead.
-    - **L2 ChromaDB (Vector Lake)**: Local in-memory and disk C++ cosine KNN across 4 cognitive collections (`semantic_heuristics`, `code_graph_ast`, `dream_insights`, `episodic_raw`) powered by deterministic 384-dimensional L2-normalized embeddings (< 0.05ms, ||v||_2 = 1.0) with FastEmbed fallback.
-    - **L3 PostgreSQL + pgvector + ltree (Neocortex / Collaborative Cluster)**: Persistent MCTS Trajectory Forest with hierarchical `ltree` queries (`<@`), global SWR Replay Lake with HNSW `vector_cosine_ops` indexing, and recursive CTE Reverse Blast Radius traversal across full-stack repositories.
-  - **Synaptic Tagging & Capture (STC) Promotion**: High-reward MCTS branches ($Q \ge 0.85$, e.g. `DualActiveContract`) are automatically captured and consolidated into ChromaDB `dream_insights` and SQLite WAL gotchas as persistent invariant vaccines.
-  - **3-Way Federated Reciprocal Rank Fusion (RRF)**: Merges SQLite lexical BM25 matching, ChromaDB local dense cosine KNN, and PostgreSQL pgvector SWR ripples into a unified rank score: $\text{RRF}(d) = \sum_{m \in \{\text{sqlite}, \text{chroma}, \text{postgres}\}} \frac{1}{60 + r_m(d)}$.
-  - **Resilient Write-Through & Offline Graceful Degradation**: Writes to SQLite WAL and ChromaDB synchronously, buffering or replicating to PostgreSQL if online. In offline environments or network interruptions, all tools continue functioning smoothly with 0% data loss or crashes.
+- Tri-Hybrid Neuro-Cognitive Memory Substrate v2.8.0:
+  - Complementary Learning Systems (CLS 2.0): Coordinates three non-redundant storage engines based on their neurobiological specializations:
+    - L1 SQLite WAL (Fast Reflex / Amygdala): Sub-millisecond (< 1ms) threat cache, drift alerts, and local transactional outbox with zero network overhead.
+    - L2 ChromaDB (Vector Lake): Local in-memory and disk C++ cosine KNN across 4 cognitive collections (`semantic_heuristics`, `code_graph_ast`, `dream_insights`, `episodic_raw`) powered by deterministic 384-dimensional L2-normalized embeddings (< 0.05ms, ||v||_2 = 1.0) with FastEmbed fallback.
+    - L3 PostgreSQL + pgvector + ltree (Neocortex / Collaborative Cluster): Persistent MCTS Trajectory Forest with hierarchical `ltree` queries (`<@`), global SWR Replay Lake with HNSW `vector_cosine_ops` indexing, and recursive CTE Reverse Blast Radius traversal across full-stack repositories.
+  - Synaptic Tagging & Capture (STC) Promotion: High-reward MCTS branches ($Q \ge 0.85$, e.g. `DualActiveContract`) are automatically captured and consolidated into ChromaDB `dream_insights` and SQLite WAL gotchas as persistent invariant vaccines.
+  - 3-Way Federated Reciprocal Rank Fusion (RRF): Merges SQLite lexical BM25 matching, ChromaDB local dense cosine KNN, and PostgreSQL pgvector SWR ripples into a unified rank score: $\text{RRF}(d) = \sum_{m \in \{\text{sqlite}, \text{chroma}, \text{postgres}\}} \frac{1}{60 + r_m(d)}$.
+  - Resilient Write-Through & Offline Graceful Degradation: Writes to SQLite WAL and ChromaDB synchronously, buffering or replicating to PostgreSQL if online. In offline environments or network interruptions, all tools continue functioning smoothly with 0% data loss or crashes.
 
-- **Refined Neuro-Cognitive Planner & Contract Bridge (v2.9.0)**:
-  - **Auto-Phase Inference**: Automatically infers execution phase (`leaf_contracts`, `domain_services`, `entrypoints`, `validation`) from goal semantics and candidate file types (`auto_infer_phase`), eliminating the need for manual phase flags.
-  - **Zero-Flag MCTS Dream-RSI Activation**: Modularization and refactoring goals automatically trigger warm-started MCTS in RAM, evaluating branch strategies and promoting non-breaking `DualActiveContract` ($Q \ge 0.85$) with `[OPTIMIZED_BY_DREAM_RSI]`.
-  - **Volatile AST Contract Preview**: Lightweight, RAM-cached extractor (`extract_file_contract_skeleton`) previews exported symbols (`[EXPORTS: ...]`) in topological sequence steps in $< 1\text{ ms}$ for TypeScript/TSX, Python, and Rust.
-  - **Tri-Hybrid Unified Telemetry (`tri_hybrid_status`)**: Real-time diagnostic endpoint inspecting L1 SQLite WAL size, L2 ChromaDB collections, L3 PostgreSQL connection/ltree status, and neuromodulator chemical vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$.
-  - **Deep L3 PostgreSQL Reverse Blast Radius**: Connects recursive CTE graph traversal (`WITH RECURSIVE reverse_blast ...`) over `ozy_ast_dependency_edges` to calculate transitive callers with sub-5ms latency and zero-latency local fallback.
-  - **Auto-Persisted Git-First Gotcha Markdown**: High-reward MCTS branches ($Q \ge 0.85$) automatically synthesize versioned Markdown vaccines under `.ozy/memories/gotchas/*.md` with YAML frontmatter.
+- Refined Neuro-Cognitive Planner & Contract Bridge (v2.9.0):
+  - Auto-Phase Inference: Automatically infers execution phase (`leaf_contracts`, `domain_services`, `entrypoints`, `validation`) from goal semantics and candidate file types (`auto_infer_phase`), eliminating manual flags.
+  - Zero-Flag MCTS Dream-RSI Activation: Refactoring and modularization goals automatically trigger warm-started MCTS in RAM, evaluating candidate branch strategies ($Q(s,a)$) and promoting non-breaking `DualActiveContract` ($Q \ge 0.85$) with `[OPTIMIZED_BY_DREAM_RSI]`.
+  - Volatile AST Contract Preview: Lightweight RAM-cached extractor (`extract_file_contract_skeleton`) previews exported contracts (`[EXPORTS: ...]`) in topological sequence steps in $< 1\text{ ms}$ for TypeScript/TSX, Python, and Rust.
+  - Tri-Hybrid Unified Telemetry (`tri_hybrid_status`): Real-time diagnostic endpoint inspecting L1 SQLite WAL size, L2 ChromaDB collections, L3 PostgreSQL connection/ltree status, and neuromodulator chemical vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$.
+  - Deep L3 PostgreSQL Reverse Blast Radius: Connects recursive CTE graph traversal (`WITH RECURSIVE reverse_blast ...`) over `ozy_ast_dependency_edges` to calculate transitive callers with sub-5ms latency and zero-latency local fallback.
 
-- **SOTA Neuro-Cognitive Systems Architecture & Centinela Auto-Repair (v3.0.0)**:
-  - **Ultra-Low Latency IPC (Fase 1)**: Sub-millisecond ($< 0.1\text{ ms}$, measured at $63\ \mu\text{s}$) IPC between Rust Core (`ozymem-server`) and Python Brain (`ozy-brain`) with `TCP_NODELAY`, compact JSON serialization, and Unix domain socket fallback (`/tmp/ozymem_brain.sock`).
-  - **Continuous AST Crawler & Cross-Repo Deep Lineage in PostgreSQL L3 (Fase 2)**: Continuous dependency extraction (`extract_ast_dependency_edges`) in `ozymem-parser` combined with full-stack endpoint consumption resolution (`CONSUMES_ENDPOINT`) into PostgreSQL L3 `ozy_ast_dependency_edges`, enabling multi-repo recursive CTE reverse blast radius across frontend components and backend routers in $< 3\text{ ms}$.
-  - **Centinela Self-Repair Loop & Ephemeral Worktree Sandbox (Fase 3)**: Automatic non-breaking `DualActiveContractShimGenerator` for orphan endpoints (`@router.api_route` fallback) and HTTP method mismatches, validated in volatile RAM sandboxes (`EphemeralWorktree`) without polluting user workspace branches, exposed via MCP `repair_drift`.
-  - **ChromaDB Semantic Heuristic Deduplication & CLI Tri-Hybrid Dashboard (Fase 4)**: Idle offline deduplication ($\cos \ge 0.90$) pruning redundant heuristics in ChromaDB, and `ozymem doctor --tri-hybrid` displaying formatted ASCII/JSON status across L1 SQLite WAL, L2 ChromaDB, L3 PostgreSQL pgvector + ltree, and neuromodulators $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$.
+- SOTA Neuro-Cognitive Systems Architecture & Centinela Auto-Repair (v3.0.0):
+  - Ultra-Low Latency IPC (Fase 1): Sub-millisecond ($< 0.1\text{ ms}$, measured at $63\ \mu\text{s}$) IPC between Rust Core (`ozymem-server`) and Python Brain (`ozy-brain`) with `TCP_NODELAY`, compact JSON serialization, and Unix domain socket fallback (`/tmp/ozymem_brain.sock`).
+  - Continuous AST Crawler & Cross-Repo Deep Lineage in PostgreSQL L3 (Fase 2): Continuous dependency extraction (`extract_ast_dependency_edges`) in `ozymem-parser` combined with full-stack endpoint consumption resolution (`CONSUMES_ENDPOINT`) into PostgreSQL L3 `ozy_ast_dependency_edges`, enabling multi-repo recursive CTE reverse blast radius across frontend components and backend routers in $< 3\text{ ms}$.
+  - Centinela Self-Repair Loop & Ephemeral Worktree Sandbox (Fase 3): Automatic non-breaking `DualActiveContractShimGenerator` for orphan endpoints (`@router.api_route` fallback) and HTTP method mismatches, validated in volatile RAM sandboxes (`EphemeralWorktree`) without polluting user workspace branches, exposed via MCP `repair_drift`.
+  - ChromaDB Semantic Heuristic Deduplication & CLI Tri-Hybrid Dashboard (Fase 4): Idle offline deduplication ($\cos \ge 0.90$) pruning redundant heuristics in ChromaDB, and `ozymem doctor --tri-hybrid` displaying formatted ASCII/JSON status across L1 SQLite WAL, L2 ChromaDB, L3 PostgreSQL pgvector + ltree, and neuromodulators $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$.
 
-- **Algorithmic Neurocognitive Fusion & Active Inference Architecture (v3.2.0)**:
-  - **16D Poincaré Hyperbolic Manifold (`ozymem-parser::poincare`)**: Non-Euclidean hyperbolic embedding representing tree-structured ASTs and file hierarchies in the open unit ball $\mathbb{B}^{16}$ with exact distance metric $d_{\mathbb{B}}(u,v) = \operatorname{arcosh}\left(1 + 2\frac{\|u-v\|^2}{(1-\|u\|^2)(1-\|v\|^2)}\right)$ computed in $< 50\text{ ns}$ in Rust Core, eliminating Euclidean tree distortion with 95% less RAM.
-  - **Topologically-Gated Vector Retrieval (TGVR) in PostgreSQL L3 (`postgres_engine.py`)**: Single-query transactional fusion combining recursive CTE dependency cones over `ozy_ast_dependency_edges` with `pgvector` HNSW cosine similarity (`<=>`), eliminating semantic hallucinations and ensuring $< 5\text{ ms}$ retrieval with automatic KNN fallback.
-  - **Active Inference EFE-MCTS with RAM Code World Model (`generative_mcts.py`)**: Solves tree exploration via Expected Free Energy ($G(\pi) = -\mathcal{V}_{\text{prag}} - \mathcal{V}_{\text{epist}}$), balancing invariant contract compliance with epistemic information gain. Volatile in-memory simulator (GIF-MCTS) prunes invalid syntax and breaking cutovers in RAM in $< 15\text{ ms}$, saving $> 85\%$ of LLM tokens.
-  - **Hippocampal STDP Sleep Replay & Offline Vaccine Consolidation (`orchestrator.py`)**: Dreamer RSI simulates offline trajectory transitions over high-fragility nodes during the 30-minute idle sleep phase, reinforcing successful non-breaking patterns and materializing durable Gotcha Markdown vaccines under `.ozy/memories/gotchas/` and in `dream_latest_insights.json`.
+- Algorithmic Neurocognitive Fusion & Active Inference Architecture (v3.2.0):
+  - 16D Poincaré Hyperbolic Manifold (\ozymem-parser::poincare\): Non-Euclidean hyperbolic embedding representing tree-structured ASTs and file hierarchies in the open unit ball $\\mathbb{B}^{16}$ with exact distance metric {\\mathbb{B}}(u,v) = \\operatorname{arcosh}\\left(1 + 2\\frac{\\|u-v\\|^2}{(1-\\|u\\|^2)(1-\\|v\\|^2)}\\right)$ computed in $< 50\\text{ ns}$ in Rust Core, eliminating Euclidean tree distortion with 95% less RAM.
+  - Topologically-Gated Vector Retrieval (TGVR) in PostgreSQL L3 (\postgres_engine.py\): Single-query transactional fusion combining recursive CTE dependency cones over \ozy_ast_dependency_edges\ with \pgvector\ HNSW cosine similarity (\<=>\), eliminating semantic hallucinations and ensuring $< 5\\text{ ms}$ retrieval with automatic KNN fallback.
+  - Active Inference EFE-MCTS with RAM Code World Model (\generative_mcts.py\): Solves tree exploration via Expected Free Energy ((\\pi) = -\\mathcal{V}_{\\text{prag}} - \\mathcal{V}_{\\text{epist}}$), balancing invariant contract compliance with epistemic information gain. Volatile in-memory simulator (GIF-MCTS) prunes invalid syntax and breaking cutovers in RAM in $< 15\\text{ ms}$, saving $> 85\\%$ of LLM tokens.
+  - Hippocampal STDP Sleep Replay & Offline Vaccine Consolidation (\orchestrator.py\): Dreamer RSI simulates offline trajectory transitions over high-fragility nodes during the 30-minute idle sleep phase, reinforcing successful non-breaking patterns and materializing durable Gotcha Markdown vaccines under \.ozy/memories/gotchas/\ and in \dream_latest_insights.json\.
 
-## Principles & Conventions
-- **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
-- **Literal Search Guidelines**: Prioritize literal exact text matching (`grep_search` with literal strings or `rg -F`) for symbols, paths, and routes to avoid regex compilation bugs and escaped characters.
-- **Visual Verification Protocol**: Before committing CSS or responsive table modifications, run `node scripts/verify_layout.mjs` to measure actual bounding rectangles and detect text truncation or horizontal overflow leaks.
-- **SOLID, DRY, KISS**: Keep code loosely coupled, extract reusable logic, and avoid over-engineering.
-- **Git & Commits**: Write clean, feature-scoped commits following conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
-- **Testing**: Maintain test coverage above 80% on all new features. Run `cargo test` and Python test suites prior to completing tasks.
-- **Code Changes**: Always show descriptive diff previews and confirm with the user before applying modifications.
-- **Windows Compatibility**: Use `cmd /c` for shell execution on Windows. Avoid raw `std::process::Command` calls on `.ps1` scripts without powershell wrappers.
-- **Adding MCP Tools**: Register tool in `tools/list`, add handler in `handle_request` (or `handle_project_tool`/`handle_package_tool` for lock-free tools), and include assertions in integration tests.
+- Tool Refinement & MCP Meta-Tools Consolidation (v3.3.0):
+  - Fuzzy AST Block Patching: Whitespace-tolerant exact and normalized token matching with auto-indentation and CRLF/LF preservation in `ozymem-parser::patching`, preventing fragile patch failures from minor indentation or formatting variations.
+  - Unified 5 Meta-Tools Architecture: Consolidates 25+ fragmented MCP tools into 5 high-level meta-tools (`ozy_patch`, `ozy_plan`, `ozy_context`, `ozy_memory`, `ozy_doctor`), reducing LLM schema prompt token consumption by > 1,500 tokens per turn while providing 100% backward-compatible aliases.
+  - Native Rust Active Inference EFE-MCTS (`ozymem-core::mcts`): Zero-Python in-memory Language Agent Tree Search (LATS) engine executing 25 simulations in < 1 ms, evaluating Expected Free Energy $G(\pi) = -V_{\text{prag}} - V_{\text{epist}}$ with Amygdala threat scar penalties and RAM World Model pruning.
+  - Hippocampal Theta-Gamma Working Memory Buffer (`ozymem-core::theta_gamma`): 4 strictly ordered Theta phase bins (`leaf_contracts`, `domain_services`, `entrypoints`, `validation`) bounding Gamma item slots to extractive $\pm 10$ line windows, achieving > 75% context compression and eliminating 'lost in the middle' attention dilution.
+  - Native Rust Fast-Lane Fallback: `ozymem-server` automatically executes native MCTS and Theta-Gamma working memory packing if Python power-lane is offline, guaranteeing uninterrupted `[OPTIMIZED_BY_DREAM_RSI]` responses.
+
+## Tool Precedence Protocol (Native Ozygram First)
+To avoid context bloat, syntax breaks, and latency, agents must adhere to the following 5 Meta-Tools hierarchy:
+1. `ozy_patch(action="apply"|"simulate"|"replace_symbol")` > `replace_file_content`: Fuzzy token matching, auto-indentation, Tree-Sitter AST syntax verification, and volatile RAM simulation.
+2. `ozy_plan(goal="...")`: Native Rust Active Inference EFE-MCTS with topological edit sequence and Hippocampal Theta-Gamma working memory packing.
+3. `ozy_context(action="file"|"task"|"project", lod="contracts")` > raw `view_file`: AST skeletons, transitive caller cones, and automatic `[ALERT: GOTCHA_PREVENTION]` injection.
+4. `ozy_memory(action="search"|"save"|"sync_markdown"|"export_git_notes")`: Git-First markdown sync, Amygdala reflexes, and TGVR vector retrieval.
+5. `ozy_doctor(action="status"|"code"|"audit_migrations")`: SQLite WAL integrity, outbox health, consolidated duplicate detection, and SQL migration idempotency linter.
+

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn test_mcp_tool_count_matches_docs_and_schemas() {
-    // 1. By default, only active unified tools starting with 'ozy_' are visible (23 tools)
+    // 1. By default, only active unified tools starting with 'ozy_' are visible (25 tools)
     let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
     let request = mcp_common::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
@@ -21,8 +21,8 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
 
     assert_eq!(
         active_tools.len(),
-        23,
-        "Default active tools must be exactly 23 as documented in README.md"
+        25,
+        "Default active tools must be exactly 25 as documented in README.md"
     );
 
     for tool in active_tools {
@@ -46,8 +46,8 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
         let readme_content = std::fs::read_to_string(&readme_path)
             .expect("should read workspace README.md");
         assert!(
-            readme_content.contains("23 unified native MCP tools")
-                || readme_content.contains("23 active tools"),
+            readme_content.contains("25 unified native MCP tools")
+                || readme_content.contains("25 active tools"),
             "README.md must explicitly mention 23 active/unified tools"
         );
         assert!(

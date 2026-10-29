@@ -82,3 +82,37 @@ fn test_ast_syntax_verification_detects_malformed_code() {
     assert!(res.success);
     assert_eq!(res.ast_verified, false, "Must detect syntax error in patched AST");
 }
+
+#[test]
+fn test_real_crmnew_file_fuzzy_patch() {
+    let source = r#""""
+Main FastAPI application entry point.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request, HTTPException, Depends
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+
+from app.auth import JWTAuthMiddleware, get_current_user, current_actor
+"#;
+
+    // Target with spaces around parentheses and operators (common LLM hallucinated whitespace)
+    let fuzzy_target = r#"load_dotenv( Path( __file__ ).resolve().parents[ 1 ] / ".env" , override=False )"#;
+    let replacement = r#"# Ensure local environment variables are loaded
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)"#;
+
+    let res = apply_fuzzy_ast_patch("crmnew/api-geofal-crm/app/main.py", source, fuzzy_target, replacement, false)
+        .expect("Must patch crmnew code successfully");
+
+    assert!(res.success);
+    assert_eq!(res.matched_by, "fuzzy_whitespace");
+    assert!(res.ast_verified);
+    let patched = res.patched_content.unwrap();
+    assert!(patched.contains("# Ensure local environment variables are loaded"));
+}
