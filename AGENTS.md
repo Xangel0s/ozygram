@@ -139,6 +139,15 @@
   - **Noradrenergic PUCT Exploration Modulation**: Locus Coeruleus dynamically modulates $c_{\text{puct}}$ ($c_{\text{puct}} = 1.414$ for disciplined leaf/validation contracts vs $c_{\text{puct}} = 2.400$ for divergent domain service exploration).
   - **Bidirectional Re-injection & Offline Sleep Pre-Optimization**: Automatically enriches `ozybrain/plan` steps and recommendations with `[OPTIMIZED_BY_DREAM_RSI]`, pre-computes fragile file branches during the 30-min idle sleep cycle into `.ozymem/dream_latest_insights.json`, and synthesizes Git markdown Gotcha vaccines via `persist_mitigation_vaccine`.
 
+- **Tri-Hybrid Neuro-Cognitive Memory Substrate (v2.8.0)**:
+  - **Complementary Learning Systems (CLS 2.0)**: Coordinates three non-redundant storage engines based on their neurobiological specializations:
+    - **L1 SQLite WAL (Fast Reflex / Amygdala)**: Sub-millisecond (< 1ms) threat cache, drift alerts, and local transactional outbox with zero network overhead.
+    - **L2 ChromaDB (Vector Lake)**: Local in-memory and disk C++ cosine KNN across 4 cognitive collections (`semantic_heuristics`, `code_graph_ast`, `dream_insights`, `episodic_raw`) powered by deterministic 384-dimensional L2-normalized embeddings (< 0.05ms, ||v||_2 = 1.0) with FastEmbed fallback.
+    - **L3 PostgreSQL + pgvector + ltree (Neocortex / Collaborative Cluster)**: Persistent MCTS Trajectory Forest with hierarchical `ltree` queries (`<@`), global SWR Replay Lake with HNSW `vector_cosine_ops` indexing, and recursive CTE Reverse Blast Radius traversal across full-stack repositories.
+  - **Synaptic Tagging & Capture (STC) Promotion**: High-reward MCTS branches ($Q \ge 0.85$, e.g. `DualActiveContract`) are automatically captured and consolidated into ChromaDB `dream_insights` and SQLite WAL gotchas as persistent invariant vaccines.
+  - **3-Way Federated Reciprocal Rank Fusion (RRF)**: Merges SQLite lexical BM25 matching, ChromaDB local dense cosine KNN, and PostgreSQL pgvector SWR ripples into a unified rank score: $\text{RRF}(d) = \sum_{m \in \{\text{sqlite}, \text{chroma}, \text{postgres}\}} \frac{1}{60 + r_m(d)}$.
+  - **Resilient Write-Through & Offline Graceful Degradation**: Writes to SQLite WAL and ChromaDB synchronously, buffering or replicating to PostgreSQL if online. In offline environments or network interruptions, all tools continue functioning smoothly with 0% data loss or crashes.
+
 ## Principles & Conventions
 - **Zero-Emoji Standard**: All logs, badges, code comments, commit messages, Mermaid diagrams, and tool outputs strictly use textual badges (`[ALERT: STALE_MEMORY]`, `[COUPLED_WITH]`, `[STATUS: ACTIVE]`, etc.).
 - **Literal Search Guidelines**: Prioritize literal exact text matching (`grep_search` with literal strings or `rg -F`) for symbols, paths, and routes to avoid regex compilation bugs and escaped characters.

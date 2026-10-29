@@ -249,6 +249,35 @@ class DreamOrchestrator:
         if not top_insights:
             top_insights.append("[SYSTEM_HEALTHY] Workspace memory substrate is clean, balanced, and free of regressions.")
 
+        # 5d. Tri-Hybrid Memory Substrate Health & Consolidation
+        tri_hybrid_report: Dict[str, Any] = {}
+        try:
+            from ozy_brain.scanner.tri_hybrid_orchestrator import TriHybridMemoryOrchestrator
+            orch = TriHybridMemoryOrchestrator(
+                sqlite_path=self.db_path,
+                chroma_dir=self.chroma_dir,
+            )
+            tri_hybrid_report = orch.health_report()
+            # If high-reward plan branches were pre-computed, persist them with STC
+            for p_opt in plan_branch_optimizations:
+                b_act = p_opt.get("best_action", {})
+                b_score = p_opt.get("best_score", 0.0)
+                if b_act and b_score >= 0.85:
+                    orch.save_mcts_trajectory_node(
+                        node_id=f"dream_stc_{int(time.time()*1000)}",
+                        tree_id="dream_cycle_tree",
+                        parent_path=f"root.{b_act.get('phase', 'general')}",
+                        phase=b_act.get("phase", "general"),
+                        action_strategy=b_act.get("strategy", "DualActiveContract"),
+                        visits=p_opt.get("simulations_run", 10),
+                        q_value=b_score,
+                        state_payload={"edits": [f["file_path"] for f in top_fragile_files[:2]]},
+                        projected_churn=b_act.get("projected_churn", 0),
+                    )
+            orch.close()
+        except Exception as e:
+            tri_hybrid_report = {"status": "error", "reason": str(e)}
+
         consolidated: Dict[str, Any] = {
             "status": "complete",
             "cycle_type": "offline_dreaming",
@@ -272,6 +301,7 @@ class DreamOrchestrator:
             "vector_store": vector_stats,
             "generative_mcts": mcts_reports,
             "plan_branch_optimizations": plan_branch_optimizations,
+            "tri_hybrid_memory": tri_hybrid_report,
         }
 
         # Atomically write to dream_latest_insights.json

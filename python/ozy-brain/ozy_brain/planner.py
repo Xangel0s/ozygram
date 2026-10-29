@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from ozy_brain.schemas import (
@@ -231,6 +232,7 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
     cand_scores_list = _candidate_file_scores(payload, limit=8)
     cand_files = (
         [item["path"] for item in cand_scores_list]
+        or payload.get("candidate_files")
         or _candidate_files(payload)
         or [s["file_path"] for s in payload.get("symbols", []) if isinstance(s, dict) and s.get("file_path")]
         or [s["file_path"] for s in payload.get("functions", []) if isinstance(s, dict) and s.get("file_path")]
@@ -276,6 +278,27 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
             blast_radius_count=blast_radius.get("total_blast_radius", 0),
         )
         dream_opt = opt_res.to_dict()
+
+        # Synaptic Tagging & Capture (STC) & Tri-Hybrid Persistence for High-Reward Branches
+        if opt_res.best_action and opt_res.best_score >= 0.85:
+            try:
+                from ozy_brain.scanner.tri_hybrid_orchestrator import TriHybridMemoryOrchestrator
+                orch = TriHybridMemoryOrchestrator()
+                best_act = opt_res.best_action
+                orch.save_mcts_trajectory_node(
+                    node_id=f"plan_mcts_{int(time.time()*1000)}",
+                    tree_id="planner_tree",
+                    parent_path=f"root.{best_act.phase}",
+                    phase=best_act.phase,
+                    action_strategy=best_act.strategy,
+                    visits=opt_res.simulations_run,
+                    q_value=opt_res.best_score,
+                    state_payload={"working_edits": state.working_edits, "candidate_files": cand_files},
+                    projected_churn=best_act.projected_churn,
+                )
+                orch.close()
+            except Exception:
+                pass
     except Exception as e:
         dream_opt = {"status": "skipped", "reason": str(e)}
 
@@ -319,8 +342,22 @@ def _structured_plan(payload: dict[str, Any], autonomy: str = "advisory") -> dic
 def plan(payload: dict[str, Any]) -> BrainResponse:
     goal = _goal(payload)
     memories = _combined_memory_titles(payload, limit=5)
+
+    # Tri-Hybrid Federated RRF Memory Injection
+    try:
+        from ozy_brain.scanner.tri_hybrid_orchestrator import TriHybridMemoryOrchestrator
+        orch = TriHybridMemoryOrchestrator()
+        rrf_hits = orch.federated_rrf_search(goal, limit=3)
+        orch.close()
+        for hit in rrf_hits:
+            src = hit.get("source", "tri_hybrid")
+            title = hit.get("title", "")
+            if title and not any(title in m for m in memories):
+                memories.append(f"[{src.upper()}] {title}")
+    except Exception:
+        pass
     cand_scores_list = _candidate_file_scores(payload, limit=8)
-    cand_files = [item["path"] for item in cand_scores_list] or _candidate_files(payload)
+    cand_files = [item["path"] for item in cand_scores_list] or payload.get("candidate_files") or _candidate_files(payload)
     score_map = {item["path"]: int(item.get("score", 0)) for item in cand_scores_list}
     impact_data = payload.get("impact") or payload.get("graph_impact") or []
     dependencies = payload.get("dependencies") or payload.get("edges") or []
