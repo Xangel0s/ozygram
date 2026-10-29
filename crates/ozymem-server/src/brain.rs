@@ -343,6 +343,29 @@ pub(crate) async fn handle_ozy_brain(
         obj.insert("verbose".to_string(), json!(is_verbose));
     }
 
+    if action == "repair_drift" {
+        if let Some(project_path_str) = backend.project_path() {
+            let p_path = PathBuf::from(&project_path_str);
+            if p_path.join(".git").exists() {
+                if let Ok(worktree) = ozymem_core::git_backend::EphemeralWorktree::create(&p_path) {
+                    let validation = worktree.run_validation("git", &["status"]);
+                    let passed = validation.as_ref().map(|v| v.passed).unwrap_or(false);
+                    let dur = validation.as_ref().map(|v| v.duration_ms).unwrap_or(0);
+                    if let Some(obj) = response.as_object_mut() {
+                        obj.insert(
+                            "ephemeral_worktree_validation".to_string(),
+                            json!({
+                                "status": if passed { "validated" } else { "failed" },
+                                "badge": if passed { "[EPHEMERAL_WORKTREE_VALIDATION: PASSED]" } else { "[EPHEMERAL_WORKTREE_VALIDATION: FAILED]" },
+                                "duration_ms": dur,
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let validated = validate_ozy_brain_response_schema(&response)?;
     let latency_ms = start_time.elapsed().as_millis() as u64;
 

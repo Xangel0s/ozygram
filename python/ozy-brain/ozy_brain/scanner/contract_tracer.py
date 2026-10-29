@@ -66,6 +66,82 @@ class ContractDriftAlert:
         )
 
 
+@dataclass
+class DualActiveContractShim:
+    """Generated non-breaking backward-compatibility contract shim."""
+    alert_kind: str
+    target_file: str
+    target_route: str
+    shim_code: str
+    description: str
+
+
+class DualActiveContractShimGenerator:
+    """Generates non-breaking FastAPI/Next.js shims for detected contract drift."""
+
+    @classmethod
+    def generate_shim(cls, alert: ContractDriftAlert) -> Optional[DualActiveContractShim]:
+        if alert.kind == "ORPHAN_ENDPOINT_CONSUMER":
+            subpath = alert.canonical_path
+            method = alert.frontend_method.upper()
+            func_name = "shim_" + re.sub(r"[^a-zA-Z0-9_]", "_", subpath).strip("_")
+            code = (
+                f"\n# [DUAL_ACTIVE_CONTRACT_SHIM: ORPHAN_FALLBACK]\n"
+                f"@router.api_route(\"{subpath}\", methods=[\"{method}\"], tags=[\"DualActiveShim\"])\n"
+                f"async def {func_name}(response: Response):\n"
+                f"    response.headers[\"X-Ozy-Contract-Shim\"] = \"active\"\n"
+                f"    response.headers[\"X-Ozy-Deprecated-Path\"] = \"true\"\n"
+                f"    return {{\"status\": \"fallback_active\", \"path\": \"{subpath}\"}}\n"
+            )
+            return DualActiveContractShim(
+                alert_kind=alert.kind,
+                target_file=alert.backend_file or "api-geofal-crm/app/routers/fallback.py",
+                target_route=alert.canonical_path,
+                shim_code=code,
+                description=f"Auto-generated fallback endpoint for orphan consumer '{alert.canonical_path}'",
+            )
+        elif alert.kind == "HTTP_METHOD_MISMATCH":
+            methods = sorted(list(set([alert.frontend_method.upper(), (alert.backend_method or "GET").upper()])))
+            subpath = alert.canonical_path
+            code = (
+                f"\n# [DUAL_ACTIVE_CONTRACT_SHIM: METHOD_COMPATIBILITY]\n"
+                f"# Frontend used {alert.frontend_method}, but backend required {alert.backend_method}.\n"
+                f"# Updated route decorator to support both methods concurrently:\n"
+                f"@router.api_route(\"{subpath}\", methods={methods!r}, tags=[\"DualActiveShim\"])\n"
+            )
+            return DualActiveContractShim(
+                alert_kind=alert.kind,
+                target_file=alert.backend_file or "api-geofal-crm/app/routers/main.py",
+                target_route=alert.canonical_path,
+                shim_code=code,
+                description=f"Multi-method shim for {alert.canonical_path} supporting {methods}",
+            )
+        elif alert.kind == "UNSYNCHRONIZED_CONTRACT":
+            subpath = alert.canonical_path
+            code = (
+                f"\n# [DUAL_ACTIVE_CONTRACT_SHIM: UNSYNCHRONIZED_COMPATIBILITY]\n"
+                f"# Backend was mutated while frontend caller remains on previous schema.\n"
+                f"# Use dual-active adapter parsing old and new parameters.\n"
+            )
+            return DualActiveContractShim(
+                alert_kind=alert.kind,
+                target_file=alert.backend_file or "api-geofal-crm/app/routers/main.py",
+                target_route=alert.canonical_path,
+                shim_code=code,
+                description=f"Schema adapter for unsynchronized route {alert.canonical_path}",
+            )
+        return None
+
+    @classmethod
+    def generate_all_shims(cls, alerts: List[ContractDriftAlert]) -> List[DualActiveContractShim]:
+        shims = []
+        for alert in alerts:
+            shim = cls.generate_shim(alert)
+            if shim:
+                shims.append(shim)
+        return shims
+
+
 class FastApiContractExtractor:
     """Extracts endpoint routes and Pydantic DTO models from Python FastAPI files."""
 

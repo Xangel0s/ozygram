@@ -152,7 +152,7 @@ pub fn handle_tools_list(
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review", "deep_semantic_search", "audit_changes_with_critic", "get_repository_hotspots", "consolidate_memory", "sync_outbox", "simulate_action", "critique_hypothesis"],
+                                "enum": ["plan", "reflect", "recall_deep", "summarize_project", "detect_patterns", "suggest_next_steps", "analyze_failure", "compress_session", "rank_memories", "build_mental_model", "risk_review", "deep_semantic_search", "audit_changes_with_critic", "get_repository_hotspots", "consolidate_memory", "sync_outbox", "simulate_action", "critique_hypothesis", "repair_drift", "tri_hybrid_status"],
                                 "default": "plan",
                                 "description": "Acción a ejecutar. Parámetros requeridos según acción:\n- 'plan': goal (req)\n- 'recall_deep' / 'deep_semantic_search': query (req)\n- 'simulate_action' / 'audit_changes_with_critic': file_path (req), proposed_action (req)\n- 'analyze_failure': failures (req)\n- 'consolidate_memory' / 'sync_outbox': sincronización offline"
                             },
