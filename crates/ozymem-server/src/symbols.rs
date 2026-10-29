@@ -157,6 +157,78 @@ pub fn handle_parse(
     })
 }
 
+
+pub fn handle_ast_patch(
+    backend: &GraphBackend,
+    tool_call: &ToolCallParams,
+) -> Result<ToolCallResult> {
+    let file_path = tool_call
+        .arguments
+        .get("file_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing 'file_path'"))?;
+
+    let dry_run = tool_call
+        .arguments
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let target_code_opt = tool_call
+        .arguments
+        .get("target_code")
+        .or_else(|| tool_call.arguments.get("target"))
+        .and_then(Value::as_str);
+
+    let replacement_opt = tool_call
+        .arguments
+        .get("replacement")
+        .or_else(|| tool_call.arguments.get("new_code"))
+        .and_then(Value::as_str);
+
+    if let (Some(target_code), Some(replacement)) = (target_code_opt, replacement_opt) {
+        let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let path_obj = std::path::Path::new(&resolved);
+        let effective = if path_obj.exists() {
+            path_obj.to_path_buf()
+        } else if let Some(root) = backend.project_path() {
+            std::path::Path::new(&root).join(&resolved)
+        } else {
+            std::path::PathBuf::from(&resolved)
+        };
+
+        if !effective.exists() {
+            return Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: format!("[ALERT: FILE_NOT_FOUND] File '{}' not found", file_path),
+                }],
+                is_error: Some(true),
+            });
+        }
+
+        let source = std::fs::read_to_string(&effective)?;
+        let patch_res = ozymem_parser::apply_fuzzy_ast_patch(file_path, &source, target_code, replacement, dry_run)?;
+
+        if patch_res.success && !dry_run {
+            if let Some(ref patched_str) = patch_res.patched_content {
+                std::fs::write(&effective, patched_str)?;
+            }
+        }
+
+        let is_err = if patch_res.success { None } else { Some(true) };
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock {
+                kind: "text",
+                text: serde_json::to_string_pretty(&patch_res)?,
+            }],
+            is_error: is_err,
+        });
+    }
+
+    handle_replace_symbol(backend, tool_call)
+}
+
 pub fn handle_replace_symbol(
     backend: &GraphBackend,
     tool_call: &ToolCallParams,

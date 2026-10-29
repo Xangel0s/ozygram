@@ -2934,6 +2934,62 @@ export function handleReorderCard(a: number, b: number) {
     }
 
     #[tokio::test]
+    async fn test_tools_ast_patch_fuzzy_block_tolerance_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_fuzzy_patch_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let py_code = "def process(items):\n    result = []\n    for item in items:\n        val = item * 2\n        result.append(val)\n    return result\n";
+        let py_path = tmp_root.join("process.py");
+        std::fs::write(&py_path, py_code).unwrap();
+
+        // Agent passes target_code with altered spacing and indentation
+        let messy_target = "val  =   item * 2\nresult.append( val )";
+        let clean_replacement = "val = item * 10\nif val > 0:\n    result.append(val)";
+
+        let patch_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_ast_patch",
+                "arguments": {
+                    "file_path": "process.py",
+                    "target_code": messy_target,
+                    "replacement": clean_replacement,
+                    "dry_run": false
+                }
+            })),
+        };
+        let resp = handle_request(&backend_ref, patch_req, None, None).await.unwrap().unwrap();
+        let patch_json: Value = serde_json::from_str(resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(patch_json["success"], true);
+        assert_eq!(patch_json["matched_by"], "fuzzy_whitespace");
+        assert_eq!(patch_json["ast_verified"], true);
+
+        let disk_content = std::fs::read_to_string(&py_path).unwrap();
+        assert!(disk_content.contains("val = item * 10"));
+        assert!(disk_content.contains("        if val > 0:"));
+        assert!(disk_content.contains("            result.append(val)"));
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
     async fn test_ozy_graph_incoming_dependencies_mcp() {
         let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_incoming_{}", std::process::id()));

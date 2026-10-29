@@ -5,7 +5,11 @@ pub mod sql_ddl;
 pub mod ghost_signature;
 pub mod incremental;
 pub mod poincare;
+pub mod patching;
 
+pub use patching::{
+    apply_fuzzy_ast_patch, find_target_block, normalize_fuzzy_line, AstPatchResult,
+};
 pub use poincare::{
     embed_ast_node_poincare, embed_path_hierarchy, PoincarePoint, EPSILON_BOUNDARY, POINCARE_DIM,
 };
