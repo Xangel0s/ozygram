@@ -92,3 +92,4 @@ En el archivo de configuración de plugins de `dsh` (ej. `dsh.config.json` o equ
 - **Cordis Framework**:
   > Shigma et al. (2024-2026). *Cordis: The Modular Meta-Framework for TypeScript*.
   > Documentación y especificación: [https://cordis.moe](https://cordis.moe)
+

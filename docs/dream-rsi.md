@@ -220,3 +220,27 @@ ozymem dream diagnose traj_5bbd6b4e5c6f --json
   }
 }
 ```
+
+---
+
+## Citations & Scientific Attribution
+
+The offline dreaming replay engine and recursive self-improvement mechanisms in Ozygram are directly based on the theoretical and algorithmic framework established by:
+
+* **Paper**: *"Dream-RSI: Recursive Self-Improvement through Evolving Worlds"*
+* **Authors**: Zheng et al. (Google Research, Google DeepMind, University of Maryland, University of Virginia)
+* **ArXiv**: [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)
+* **Project Website**: [https://www.dream-rsi.com/](https://www.dream-rsi.com/)
+* **Official Repository**: [https://github.com/zhengkid/Dream-RSI](https://github.com/zhengkid/Dream-RSI)
+
+### BibTeX
+```bibtex
+@article{zheng2026dreamrsi,
+  title={Dream-RSI: Recursive Self-Improvement through Evolving Worlds},
+  author={Zheng, et al.},
+  journal={arXiv preprint arXiv:2609.14858},
+  year={2026},
+  url={https://arxiv.org/abs/2609.14858}
+}
+```
+

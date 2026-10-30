@@ -369,7 +369,8 @@ For deep architectural dives and specialized workflows, refer to the official gu
 * [**Hybrid Semantic Search & RRF**](docs/semantic-search.md): FastEmbed ONNX local inference, FTS5 lexical ranking, and Reciprocal Rank Fusion.
 * [**Supervision & Blast Radius**](docs/supervision-and-validation.md): DuckDB git churn analysis, reverse dependency graphs, and DDL guards.
 * [**$O(1)$ Engram Contract System**](docs/engram_system.md): Zero-copy binary contracts, prompt cache hit optimization, and Git Notes sync.
-* [**Dream-RSI & MCTS Exploration**](docs/dream-rsi.md): Continuous self-improvement, auto-parenting, and offline counterfactual replay.
+* [**Dream-RSI & MCTS Exploration**](docs/dream-rsi.md): Continuous self-improvement, auto-parenting, and offline counterfactual replay (Zheng et al. / Google DeepMind, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
+* [**Cordis Composability & DeepSeek Harness**](docs/cordis-composability-and-deepseek-harness.md): Reactive service injection, LIFO lifecycle teardown, and frictionless `dsh` integration.
 * [**Cognitive Evolution Architecture (v2.0.0 Roadmap)**](docs/ROADMAP_COGNITIVE_EVOLUTION.md): Token hyper-optimization, ghost patching, and dialectic committee.
 * [**The Dream Team (`tgrep` & `rtk`)**](docs/dream-team-tools.md): Trigram regex searching and terminal token compression.
 * [**MCP Integration Reference**](docs/mcp-integration.md): Setup walkthroughs, JSON schemas, and client guidelines.

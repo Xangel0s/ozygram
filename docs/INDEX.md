@@ -44,7 +44,7 @@ Welcome to the official, modular documentation for **Ozygram**, the persistent c
 - Decentralized P2P synchronization with Git Notes (`refs/notes/ozymem`).
 
 ### 6. [Dream-RSI & Monte Carlo Tree Search (`docs/dream-rsi.md`)](dream-rsi.md)
-- Continuous Recursive Self-Improvement (MCTS) exploration engine.
+- Continuous Recursive Self-Improvement (MCTS) exploration engine based on Zheng et al. / Google DeepMind (*Dream-RSI*, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
 - Smart auto-parenting in Rust Core: automatic leaf chaining without manual node hash propagation.
 - Atomic milestone batch recording (`record_batch`).
 - Objective reward auditing (anti-hallucination) and automatic failure-guided self-pruning.
