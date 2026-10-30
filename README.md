@@ -4,7 +4,7 @@
 
 ### *Persistent Cognitive Memory, Code Graph & Autonomous Self-Improvement for AI Coding Agents*
 
-[![Release](https://img.shields.io/badge/Release-v0.2.1-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
+[![Release](https://img.shields.io/badge/Release-v0.2.2-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
 [![Fast Lane](https://img.shields.io/badge/Fast_Lane-Rust_Native-orange?style=for-the-badge&logo=rust)](crates/ozymem-server)
 [![Standalone Brain](https://img.shields.io/badge/Brain-Standalone_Zero--Python-blue?style=for-the-badge)](python/ozy-brain)
 [![Storage L1](https://img.shields.io/badge/L1_Edge-SQLite_WAL-003B57?style=for-the-badge&logo=sqlite)](docs/architecture.md)
