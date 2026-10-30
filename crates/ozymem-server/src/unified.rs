@@ -254,7 +254,7 @@ pub async fn handle_unified_tool(
                                 _ => {
                                     let source = std::fs::read_to_string(&effective).unwrap_or_default();
                                     let lang = ozymem_parser::SupportedLanguage::from_path(&effective);
-                                    let report = ozymem_parser::generate_skeleton(&resolved, lang, &source);
+                                    let report = ozymem_parser::generate_skeleton_cached(&resolved, lang, &source);
                                     format!(
                                         "[LOD 1: CONTRACTS / SKELETON (Saved {:.1}% lines)]\n{}\n\n=== CONTRACTS SKELETON ===\n{}",
                                         report.reduction_percentage, base_text, report.skeleton_code

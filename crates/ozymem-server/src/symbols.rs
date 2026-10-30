@@ -478,12 +478,12 @@ pub fn handle_view_skeleton(
 
     let source = std::fs::read_to_string(&effective)?;
     let lang = ozymem_parser::SupportedLanguage::from_path(&effective);
-    let report = ozymem_parser::generate_skeleton(&resolved, lang, &source);
+    let report = ozymem_parser::generate_skeleton_cached(&resolved, lang, &source);
 
     Ok(ToolCallResult {
         content: vec![ContentBlock {
             kind: "text",
-            text: serde_json::to_string_pretty(&report)?,
+            text: serde_json::to_string_pretty(report.as_ref())?,
         }],
         is_error: None,
     })

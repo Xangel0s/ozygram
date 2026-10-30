@@ -6,7 +6,11 @@ pub mod ghost_signature;
 pub mod incremental;
 pub mod poincare;
 pub mod patching;
+pub mod prefill;
 
+pub use prefill::{
+    generate_skeleton_cached, AstPrefillCache, GLOBAL_AST_PREFILL_CACHE,
+};
 pub use patching::{
     apply_fuzzy_ast_patch, find_target_block, normalize_fuzzy_line, AstPatchResult,
 };
