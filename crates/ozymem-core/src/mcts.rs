@@ -54,6 +54,7 @@ pub struct MctsAction {
 pub struct EfeResult {
     pub pragmatic_value: f64,
     pub epistemic_value: f64,
+    pub compiler_reward: f64,
     pub efe_score: f64,
 }
 
@@ -69,6 +70,7 @@ pub struct MctsNode {
     pub depth: usize,
     pub pragmatic_value: f64,
     pub epistemic_value: f64,
+    pub compiler_reward: f64,
     pub efe_score: f64,
     pub is_terminal: bool,
     pub is_solution: bool,
@@ -112,6 +114,17 @@ impl MctsTree {
     /// Pragmatic Value: alignment with code invariants (AST validity, backward compatibility, build guard)
     /// Epistemic Value: information gain scaled by visit count and Poincaré hyperbolic distance
     pub fn compute_expected_free_energy(&self, state: &MctsState, visits: usize) -> EfeResult {
+        // DeepSeek-R1 Verifiable Ground-Truth Reward from AST syntax and contract validity
+        let compiler_reward = if !state.syntax_valid {
+            -1.0
+        } else if !state.backward_compatible && !state.guard_applied {
+            -0.8
+        } else if state.backward_compatible && (state.guard_applied || state.isolated) {
+            1.0
+        } else {
+            0.5
+        };
+
         let s_ast = if state.syntax_valid { 1.0 } else { 0.0 };
         let s_contract = if state.backward_compatible { 1.0 } else { 0.0 };
         let s_build = if state.guard_applied || state.isolated { 1.0 } else { 0.5 };
@@ -128,11 +141,13 @@ impl MctsTree {
         let mut v_epist = visits_decay * (0.60 * base_gain + 0.40 * poincare_norm);
         v_epist = v_epist.clamp(0.0, 1.0);
 
-        let efe_score = (v_prag + (self.lambda_epist * v_epist)).clamp(-1.0, 1.0);
+        // Tri-term fusion: 40% verifiable compiler reward, 35% pragmatic invariant alignment, 25% epistemic gain
+        let efe_score = (0.40 * compiler_reward + 0.35 * v_prag + (self.lambda_epist * v_epist)).clamp(-1.0, 1.0);
 
         EfeResult {
             pragmatic_value: (v_prag * 10000.0).round() / 10000.0,
             epistemic_value: (v_epist * 10000.0).round() / 10000.0,
+            compiler_reward: (compiler_reward * 10000.0).round() / 10000.0,
             efe_score: (efe_score * 10000.0).round() / 10000.0,
         }
     }
@@ -282,6 +297,7 @@ impl MctsTree {
                 depth: leaf_depth + 1,
                 pragmatic_value: efe.pragmatic_value,
                 epistemic_value: efe.epistemic_value,
+                compiler_reward: efe.compiler_reward,
                 efe_score: efe.efe_score,
                 is_terminal: false,
                 is_solution: efe.efe_score >= 0.85,
@@ -324,6 +340,7 @@ impl MctsTree {
             depth: 0,
             pragmatic_value: root_efe.pragmatic_value,
             epistemic_value: root_efe.epistemic_value,
+            compiler_reward: root_efe.compiler_reward,
             efe_score: root_efe.efe_score,
             is_terminal: false,
             is_solution: false,
@@ -343,6 +360,13 @@ impl MctsTree {
             let visits = self.nodes[eval_node_idx].visits;
             let efe = self.compute_expected_free_energy(&eval_state, visits);
             let reward = efe.efe_score;
+
+            // Deliberate Backtracking (OpenAI o1/o3 style):
+            // If verifiable reward fails (-0.8 or -1.0), prune node as terminal failure
+            if efe.compiler_reward <= -0.8 {
+                self.nodes[eval_node_idx].is_terminal = true;
+                self.pruned_by_world_model += 1;
+            }
 
             self.backpropagate(eval_node_idx, reward);
         }
@@ -381,6 +405,67 @@ impl MctsTree {
         }
 
         self.nodes[best_idx].action.clone()
+    }
+
+    /// OpenAI o1/o3-style Dynamic Test-Time Compute Budget Scaling:
+    /// Dynamically scales simulations based on blast radius and Amygdala threat scars.
+    pub fn compute_dynamic_budget(base_simulations: usize, blast_ratio: f64, threat_scar: f64) -> usize {
+        let factor = (1.0 + (1.0 + blast_ratio.clamp(0.0, 1.0) * 10.0).ln()) * (1.0 + threat_scar.clamp(0.0, 1.0));
+        let scaled = ((base_simulations as f64) * factor).round() as usize;
+        scaled.clamp(5, 80)
+    }
+
+    /// Executes adaptive search with test-time compute scaling and deliberate backtracking.
+    pub fn run_adaptive_search(&mut self, root_state: MctsState, threat_scar: f64) -> Option<&MctsNode> {
+        let dynamic_sims = Self::compute_dynamic_budget(self.simulations, root_state.blast_ratio, threat_scar);
+        self.simulations = dynamic_sims;
+        self.run_search(root_state, threat_scar)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dynamic_compute_budget_scaling() {
+        // Low risk: near base
+        let low = MctsTree::compute_dynamic_budget(20, 0.0, 0.0);
+        assert_eq!(low, 20);
+
+        // High blast radius and threat scar: scales up to ~60-80
+        let high = MctsTree::compute_dynamic_budget(20, 0.8, 0.7);
+        assert!(high >= 60 && high <= 80, "Expected high compute between 60 and 80, got {high}");
+
+        // Clamping bounds
+        let clamped_min = MctsTree::compute_dynamic_budget(2, 0.0, 0.0);
+        assert_eq!(clamped_min, 5);
+
+        let clamped_max = MctsTree::compute_dynamic_budget(100, 1.0, 1.0);
+        assert_eq!(clamped_max, 80);
+    }
+
+    #[test]
+    fn test_verifiable_compiler_reward_and_adaptive_search() {
+        let mut tree = MctsTree::new(std::f64::consts::SQRT_2, 0.35, 4, 20);
+        let root = MctsState {
+            file_path: "src/core/router.rs".to_string(),
+            symbol: "handle_request".to_string(),
+            syntax_valid: true,
+            backward_compatible: true,
+            guard_applied: false,
+            isolated: false,
+            blast_ratio: 0.25,
+            poincare_distance: 0.40,
+        };
+
+        let best_node = tree.run_adaptive_search(root, 0.10);
+        assert!(best_node.is_some());
+        let best_act = tree.best_action();
+        assert!(best_act.is_some());
+        // Verify that the chosen action has a non-breaking compatibility shim
+        let act = best_act.unwrap();
+        assert!(act.has_shim, "Best MCTS action should enforce backward-compatible shim");
     }
 }
 

@@ -676,7 +676,7 @@ pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
             blast_ratio: 0.10,
             poincare_distance: 0.35,
         };
-        mcts.run_search(root_state, 0.0);
+        mcts.run_adaptive_search(root_state, 0.0);
         let best_action = mcts.best_action();
         let (phase_name, phase_idx) = ozymem_core::theta_gamma::ThetaGammaBuffer::classify_file_phase(target_file);
 
