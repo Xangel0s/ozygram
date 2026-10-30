@@ -177,6 +177,38 @@ pub async fn handle_resources_read(
                         text: insights_content,
                     }]
                 }
+                uri if uri.starts_with("blob://") || uri.starts_with("ozymem://blob/") => {
+                    let hash = if let Some(stripped) = uri.strip_prefix("blob://") {
+                        stripped.trim_start_matches(".ozymem/blobs/").trim_end_matches(".txt")
+                    } else if let Some(stripped) = uri.strip_prefix("ozymem://blob/") {
+                        stripped.trim_end_matches(".txt")
+                    } else {
+                        ""
+                    };
+
+                    let blob_dir = match gb.project_path() {
+                        Some(root) => std::path::Path::new(&root).join(".ozymem").join("blobs"),
+                        None => std::path::Path::new(".ozymem").join("blobs"),
+                    };
+                    let target_file = blob_dir.join(format!("{hash}.txt"));
+
+                    if target_file.exists() {
+                        let text = std::fs::read_to_string(&target_file).unwrap_or_else(|e| {
+                            format!("[ALERT: ERROR_READING_BLOB] Failed to read blob file: {e}")
+                        });
+                        vec![mcp_common::ResourceContents::Text {
+                            uri: params.uri,
+                            mime_type: "text/plain".to_string(),
+                            text,
+                        }]
+                    } else {
+                        return Ok(Some(error_response(
+                            id,
+                            -32602,
+                            &format!("Blob not found: {uri} (expected at {})", target_file.display()),
+                        )));
+                    }
+                }
                 _ if uri.starts_with("ozymem://file/") => {
                     let file_path = &uri["ozymem://file/".len()..];
                     gb.reload_if_stale();
@@ -227,6 +259,12 @@ pub fn handle_resource_templates(
                     name: "File Graph Neighbors".to_string(),
                     description: "Dependency neighbors (incoming and outgoing) for a specific indexed file.".to_string(),
                     mime_type: Some("application/json".to_string()),
+                },
+                mcp_common::ResourceTemplate {
+                    uri_template: "ozymem://blob/{hash}".to_string(),
+                    name: "Compacted Spillover Blob".to_string(),
+                    description: "Full uncompressed output for tools that exceeded context budget.".to_string(),
+                    mime_type: Some("text/plain".to_string()),
                 },
             ];
             let result = mcp_common::ListResourceTemplatesResult {

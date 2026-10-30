@@ -730,6 +730,70 @@ use std::sync::{Arc, Mutex};
     }
 
     #[tokio::test]
+    async fn test_resources_read_blob_spillover() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root =
+            std::env::temp_dir().join(format!("ozymem_test_blob_read_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1" },
+                "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
+            })),
+        };
+        handle_request(&backend, init_req, None, None)
+            .await
+            .unwrap();
+
+        // Write synthetic blob
+        let blobs_dir = tmp_root.join(".ozymem").join("blobs");
+        std::fs::create_dir_all(&blobs_dir).unwrap();
+        let blob_file = blobs_dir.join("test_hash_123.txt");
+        std::fs::write(&blob_file, "Full uncompressed output dump exceeding token limit.").unwrap();
+
+        // Read using ozymem://blob/test_hash_123
+        let read_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(2)),
+            method: "resources/read".to_string(),
+            params: Some(serde_json::json!({ "uri": "ozymem://blob/test_hash_123" })),
+        };
+        let resp = handle_request(&backend, read_req, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(resp.error.is_none());
+        let contents = resp.result.unwrap()["contents"].as_array().unwrap().clone();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["text"].as_str().unwrap(), "Full uncompressed output dump exceeding token limit.");
+
+        // Read using blob://.ozymem/blobs/test_hash_123.txt
+        let read_req2 = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(3)),
+            method: "resources/read".to_string(),
+            params: Some(serde_json::json!({ "uri": "blob://.ozymem/blobs/test_hash_123.txt" })),
+        };
+        let resp2 = handle_request(&backend, read_req2, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(resp2.error.is_none());
+        let contents2 = resp2.result.unwrap()["contents"].as_array().unwrap().clone();
+        assert_eq!(contents2[0]["text"].as_str().unwrap(), "Full uncompressed output dump exceeding token limit.");
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
     async fn test_resources_read_file_context() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
         let tmp_root =
@@ -1523,6 +1587,30 @@ use std::sync::{Arc, Mutex};
         let validated = validate_ozy_brain_response_schema(&fallback).unwrap();
         assert_eq!(validated.action, "simulate_action");
         assert_eq!(validated.confidence, 0.88);
+    }
+
+    #[test]
+    fn test_deterministic_fallback_with_critique_role() {
+        let payload = json!({
+            "goal": "Refactor auth middleware to reduce blast radius",
+            "file_path": "crates/ozymem-server/src/dispatch.rs",
+            "critique_role": "security_critic",
+            "relevant_lessons": []
+        });
+        let fallback = build_deterministic_fallback("plan", &payload);
+        assert_eq!(fallback["action"], "plan");
+        assert!(fallback["critique"].is_object());
+        assert_eq!(fallback["critique"]["role"], "security_critic");
+        assert_eq!(fallback["critique"]["verdict"], "[APPROVED_WITH_CONDITIONS]");
+
+        let validated = validate_ozy_brain_response_schema(&fallback).unwrap();
+        assert_eq!(validated.action, "plan");
+        assert!(validated.critique.is_some());
+
+        let formatted = format_ozy_brain_response(&fallback);
+        assert!(formatted.contains("### Multi-Agent Critique [ROLE: SECURITY_CRITIC]"));
+        assert!(formatted.contains("- Verdict: [APPROVED_WITH_CONDITIONS]"));
+        assert!(formatted.contains("Default-Deny"));
     }
 
     #[test]

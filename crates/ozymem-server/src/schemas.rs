@@ -44,7 +44,12 @@ pub fn handle_tools_list(
                             "goal": { "type": "string", "description": "Objetivo específico de la tarea de ingeniería o refactorización" },
                             "file_path": { "type": "string", "description": "Archivo semilla o punto de partida opcional" },
                             "project": { "type": "string", "description": "Proyecto activo" },
-                            "max_tokens": { "type": "integer", "default": 4000 }
+                            "max_tokens": { "type": "integer", "default": 4000 },
+                            "critique_role": {
+                                "type": "string",
+                                "enum": ["architect", "security_critic", "code_reviewer", "test_engineer"],
+                                "description": "Rol dialéctico opcional para evaluar la tarea con una perspectiva especializada"
+                            }
                         },
                         "required": ["goal"],
                         "additionalProperties": false

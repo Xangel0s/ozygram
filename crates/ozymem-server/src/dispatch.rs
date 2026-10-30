@@ -256,7 +256,7 @@ pub async fn handle_request(
             };
             let backend = backend_guard;
 
-            let result: ToolCallResult = match tool_call.name.as_str() {
+            let mut result: ToolCallResult = match tool_call.name.as_str() {
                 "lookup_engram" | "ozy_lookup_engram" | "ozymem_lookup_engram" => {
                     handle_lookup_engram(backend, &tool_call)?
                 }
@@ -567,6 +567,9 @@ pub async fn handle_request(
                     }
                 }
             };
+
+            let project_path = backend.project_path();
+            crate::formatters::compact_tool_output(&mut result.content, project_path.as_deref());
 
             Some(ok_response(id, serde_json::to_value(result)?))
         }

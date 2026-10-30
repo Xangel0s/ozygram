@@ -90,6 +90,7 @@ fn test_mcts_prunes_direct_breaking_cutover() {
         efe_score: root_efe.efe_score,
         is_terminal: false,
         is_solution: false,
+        compiler_reward: 0.0,
     });
 
     let breaking_action = MctsAction {

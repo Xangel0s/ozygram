@@ -1,7 +1,9 @@
 use ozymem_core::graph_backend::ImpactEntry;
 use ozymem_core::registry::ProjectRegistry;
 use ozymem_core::graph_backend::GraphBackend;
+use ozymem_core::mcp_common::ContentBlock;
 use ozymem_core::McpBackend;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub(crate) fn format_archived_engram_contract(contract: &ozymem_parser::ArchivedEngramContract) -> String {
@@ -779,6 +781,123 @@ pub(crate) fn format_simulation_result(sim: &ozymem_core::graph_backend::types::
     }
 
     out
+}
+
+/// Compact tool outputs exceeding token budget (~3,500 tokens / 14,000 characters).
+/// Persists the raw payload to `.ozymem/blobs/<short_hash>.txt` and replaces the text
+/// with a summarized preview (head 40 lines, tail 10 lines) and an `ozymem://blob/<hash>` pointer.
+pub fn compact_tool_output(content: &mut Vec<ContentBlock>, project_path: Option<&str>) {
+    const COMPACT_THRESHOLD_CHARS: usize = 14_000;
+
+    for block in content.iter_mut() {
+        if block.text.len() > COMPACT_THRESHOLD_CHARS {
+            let mut hasher = Sha256::new();
+            hasher.update(block.text.as_bytes());
+            let full_hash = format!("{:x}", hasher.finalize());
+            let short_hash = &full_hash[..12];
+
+            let blob_dir = match project_path {
+                Some(p) => Path::new(p).join(".ozymem").join("blobs"),
+                None => Path::new(".ozymem").join("blobs"),
+            };
+
+            if let Err(e) = std::fs::create_dir_all(&blob_dir) {
+                eprintln!("[WARN: COMPACTOR] Failed to create blob directory {}: {e}", blob_dir.display());
+            }
+
+            let blob_file = blob_dir.join(format!("{short_hash}.txt"));
+            if let Err(e) = std::fs::write(&blob_file, &block.text) {
+                eprintln!("[WARN: COMPACTOR] Failed to persist blob {}: {e}", blob_file.display());
+            }
+
+            let lines: Vec<&str> = block.text.lines().collect();
+            let total_lines = lines.len();
+            let orig_len = block.text.len();
+            let approx_tokens = orig_len / 4;
+
+            let head_count = 40.min(total_lines);
+            let head_lines = lines[..head_count].join("\n");
+
+            let tail_lines = if total_lines > 50 {
+                let tail_start = total_lines.saturating_sub(10);
+                format!("\n\n--- Tail Preview (Last 10 lines) ---\n{}", lines[tail_start..].join("\n"))
+            } else {
+                String::new()
+            };
+
+            let compacted_msg = format!(
+                "[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]\n\
+                 Output exceeded context budget (original: {orig_len} chars, {total_lines} lines, ~{approx_tokens} tokens).\n\
+                 Full uncompressed output persisted to:\n\
+                 URI: ozymem://blob/{short_hash} (Path: .ozymem/blobs/{short_hash}.txt)\n\n\
+                 --- Head Preview (Lines 1-{head_count}) ---\n\
+                 {head_lines}{tail_lines}\n\n\
+                 [NOTE: Read full output with resource ozymem://blob/{short_hash} or read_file on .ozymem/blobs/{short_hash}.txt]"
+            );
+
+            block.text = compacted_msg;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compact_tool_output_spillover() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ozymem_test_compactor_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let project_path = temp_dir.to_str().unwrap();
+
+        // Create a large payload > 14,000 chars
+        let mut large_text = String::with_capacity(20_000);
+        for i in 1..=600 {
+            large_text.push_str(&format!("Line {}: sample data content exceeding token limits\n", i));
+        }
+        assert!(large_text.len() > 14_000);
+
+        let mut content = vec![ContentBlock {
+            kind: "text",
+            text: large_text.clone(),
+        }];
+
+        compact_tool_output(&mut content, Some(project_path));
+
+        assert_eq!(content.len(), 1);
+        assert!(content[0].text.contains("[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]"));
+        assert!(content[0].text.contains("URI: ozymem://blob/"));
+        assert!(content[0].text.contains("--- Head Preview (Lines 1-40) ---"));
+        assert!(content[0].text.contains("--- Tail Preview (Last 10 lines) ---"));
+
+        // Verify blob file was written
+        let blobs_dir = temp_dir.join(".ozymem").join("blobs");
+        assert!(blobs_dir.exists());
+        let entries: Vec<_> = std::fs::read_dir(&blobs_dir).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+        let blob_content = std::fs::read_to_string(entries[0].as_ref().unwrap().path()).unwrap();
+        assert_eq!(blob_content, large_text);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_compact_tool_output_under_threshold_untouched() {
+        let small_text = "Short output under budget".to_string();
+        let mut content = vec![ContentBlock {
+            kind: "text",
+            text: small_text.clone(),
+        }];
+
+        compact_tool_output(&mut content, None);
+        assert_eq!(content[0].text, small_text);
+    }
 }
 
 

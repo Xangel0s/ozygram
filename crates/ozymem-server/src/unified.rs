@@ -670,5 +670,7 @@ pub async fn handle_unified_tool(
                 }
         _ => return Ok(None),
     };
+    let mut res = res;
+    crate::formatters::compact_tool_output(&mut res.content, backend.project_path().as_deref());
     Ok(Some(ok_response(id, serde_json::to_value(res)?)))
 }

@@ -23,6 +23,7 @@ pub struct OzyBrainResponse {
     pub engine: Option<String>,
     pub procedural_rules: Option<Vec<Value>>,
     pub reflection_report: Option<Value>,
+    pub critique: Option<Value>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -78,6 +79,11 @@ pub(crate) async fn handle_ozy_brain(
     }
 
     let goal = goal_opt.unwrap_or("");
+    let critique_role_opt = tool_call
+        .arguments
+        .get("critique_role")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let limit = tool_call
         .arguments
         .get("limit")
@@ -325,6 +331,7 @@ pub(crate) async fn handle_ozy_brain(
         }),
         "failures": tool_call.arguments.get("failures").cloned().unwrap_or_else(|| json!([])),
         "changes": tool_call.arguments.get("changes").cloned().unwrap_or_else(|| json!([])),
+        "critique_role": critique_role_opt.clone(),
     });
     let req_json = serde_json::to_string(&payload).unwrap_or_default();
     let mut hasher = Sha256::new();
@@ -337,6 +344,15 @@ pub(crate) async fn handle_ozy_brain(
     let mut response =
         tokio::task::spawn_blocking(move || call_ozy_brain_worker_smart(&action_owned, &payload_for_worker, 30_000))
             .await??;
+
+    if let Some(ref role) = critique_role_opt {
+        if let Some(obj) = response.as_object_mut() {
+            if !obj.contains_key("critique") || obj.get("critique").map(|v| v.is_null()).unwrap_or(false) {
+                let target = target_file_opt.as_deref().unwrap_or("workspace");
+                obj.insert("critique".to_string(), build_role_critique(role, target, goal));
+            }
+        }
+    }
 
     let is_verbose = tool_call.arguments.get("verbose").and_then(Value::as_bool).unwrap_or(false);
     if let Some(obj) = response.as_object_mut() {
@@ -568,6 +584,71 @@ pub fn ensure_ozy_brain_running() {
     }
 }
 
+pub fn build_role_critique(role: &str, target_file: &str, _goal: &str) -> Value {
+    let (verdict, findings, invariants) = match role {
+        "architect" => (
+            "[APPROVED_WITH_CONDITIONS]",
+            vec![
+                format!("Coupling analysis: target '{}' must preserve interface boundaries.", target_file),
+                "Dependency direction must adhere to Dependency Inversion (abstractions over concretions).".to_string(),
+                "Blast radius contained within local domain module; avoid cross-domain leaks.".to_string(),
+            ],
+            vec![
+                "No direct import of private domain internals across workspace boundaries.".to_string(),
+                "Backward-compatible dual active contract required for exported endpoints.".to_string(),
+            ],
+        ),
+        "security_critic" => (
+            "[APPROVED_WITH_CONDITIONS]",
+            vec![
+                "Input validation and boundary sanitization required at all entrypoints.".to_string(),
+                "Zero credentials, API keys, or raw tokens in environment variables or code.".to_string(),
+                "Command mediation: all process executions must obey Default-Deny policy.".to_string(),
+            ],
+            vec![
+                "No unsanitized shell interpolations (OWASP A03:2021-Injection).".to_string(),
+                "Least privilege file and network permissions in sandboxed runs.".to_string(),
+            ],
+        ),
+        "code_reviewer" => (
+            "[APPROVED_WITH_CONDITIONS]",
+            vec![
+                "Strict zero-emoji textual badges ([ALERT: ...], [STATUS: ...]).".to_string(),
+                "DRY / SOLID compliance: extract common logic into reusable functions.".to_string(),
+                "Error handling: low-cardinality, structured error reporting.".to_string(),
+            ],
+            vec![
+                "Public symbols must maintain signature backwards compatibility.".to_string(),
+                "Clickable file:// links for all referenced file paths and symbols.".to_string(),
+            ],
+        ),
+        "test_engineer" => (
+            "[APPROVED_WITH_CONDITIONS]",
+            vec![
+                "Minimum 80% test coverage target with idempotent assertions.".to_string(),
+                "Include boundary and edge case verification (empty inputs, timeouts, errors).".to_string(),
+                "Test isolation: clean up test fixtures and avoid cross-test state leakage.".to_string(),
+            ],
+            vec![
+                "Unit test per newly exported function/method.".to_string(),
+                "Fast-lane test execution (< 100ms per unit test).".to_string(),
+            ],
+        ),
+        _ => (
+            "[APPROVED]",
+            vec!["General critique: plan adheres to basic engineering constraints.".to_string()],
+            vec!["Maintain non-destructive incremental modifications.".to_string()],
+        ),
+    };
+
+    json!({
+        "role": role,
+        "verdict": verdict,
+        "findings": findings,
+        "invariants": invariants,
+    })
+}
+
 pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
     if action == "simulate_action" || action == "critique_hypothesis" {
         let target_file = payload
@@ -695,6 +776,11 @@ pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
             }
         }
 
+        let critique_val = payload
+            .get("critique_role")
+            .and_then(Value::as_str)
+            .map(|role| build_role_critique(role, target_file, goal));
+
         return json!({
             "action": action,
             "summary": format!("[OPTIMIZED_BY_DREAM_RSI] Plan generado con MCTS nativo de Rust (Fase {} {}).", phase_idx, phase_name),
@@ -706,7 +792,8 @@ pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
             "engine": "ozymem-native-rust-mcts",
             "brain_version": "0.4.0",
             "brain_schema_version": "v1",
-            "safe_mode": true
+            "safe_mode": true,
+            "critique": critique_val,
         });
     }
 
@@ -1004,6 +1091,12 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
         if let Some(cmds) = structured.and_then(|s| s.get("suggested_commands").and_then(Value::as_array)) {
             if let Some(first_cmd) = cmds.iter().filter_map(Value::as_str).next() {
                 body.push_str(&format!("\n### Validation\n- `{first_cmd}`\n"));
+            }
+        }
+
+        if let Some(critique) = value.get("critique") {
+            if !critique.is_null() {
+                format_critique_block(critique, &mut body);
             }
         }
 
@@ -1319,8 +1412,37 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
             }
         }
     }
+    if let Some(critique) = value.get("critique") {
+        if !critique.is_null() {
+            format_critique_block(critique, &mut body);
+        }
+    }
     body.push_str("\nSafe mode: advisory only; no files or commands were modified by Python.\n");
     body
 }
+
+fn format_critique_block(critique: &Value, body: &mut String) {
+    let role = critique.get("role").and_then(Value::as_str).unwrap_or("specialist");
+    let verdict = critique.get("verdict").and_then(Value::as_str).unwrap_or("[APPROVED]");
+    body.push_str(&format!("\n### Multi-Agent Critique [ROLE: {}]\n- Verdict: {}\n", role.to_uppercase(), verdict));
+
+    if let Some(findings) = critique.get("findings").and_then(Value::as_array) {
+        if !findings.is_empty() {
+            body.push_str("- Key Findings:\n");
+            for f in findings.iter().filter_map(Value::as_str) {
+                body.push_str(&format!("  * {f}\n"));
+            }
+        }
+    }
+    if let Some(invariants) = critique.get("invariants").and_then(Value::as_array) {
+        if !invariants.is_empty() {
+            body.push_str("- Non-Negotiable Invariants:\n");
+            for inv in invariants.iter().filter_map(Value::as_str) {
+                body.push_str(&format!("  * {inv}\n"));
+            }
+        }
+    }
+}
+
 
 
