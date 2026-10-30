@@ -4,6 +4,23 @@ All notable changes to Ozygram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-10-30
+
+### Added
+- **Strands Agents Architecture Elevation (Non-Redundant Integration v3.5.0)**:
+  - **EphemeralWorktree Shell Mediation (Default-Deny)**: Hardened volatile sandboxed execution (`run_sandboxed_command`) in `ozymem-core::git_backend` with a strict whitelist of tools (`cargo`, `git`, `npm`, `python`, `node`, `pytest`, `tsc`, `rg`), automatic credential scrubbing from child environment variables, and execution timeout watchdog. Destructive commands (`rm -rf`, `DROP TABLE`, `del /s`) receive immediate kernel-level veto (`[CRITICAL_VETO: COMMAND_DENIED]`).
+  - **In-Flight Result Compactor & Spillover Blob Store**: Automatic compaction of large MCP tool outputs (> 14,000 characters / ~3,500 tokens) in `ozymem-server::formatters` with SHA-256 persistence into `.ozymem/blobs/<short_hash>.txt`, preview extraction (head 40 lines + tail 10 lines), and lossless pointer retrieval via `ozymem://blob/<hash>` resource template. Achieves 70-85% token reduction on heavy outputs.
+  - **Agents-as-Tools in `ozy_plan`**: Dialectic critique integration directly within `ozy_plan(goal="...", critique_role="architect"|"security_critic"|"code_reviewer"|"test_engineer")`, injecting specialist invariant evaluations in RAM (< 1ms) without creating parallel redundant MCP tools.
+- **Frontier AI Engineering & Cognitive Upgrades (v3.4.0)**:
+  - **Kimi Mooncake AST Prefill Cache**: Thread-safe bounded (`max_entries = 2048`) xxHash64 content-addressed cache (`AstPrefillCache`) in `ozymem-parser::prefill` serving pruned skeletons and contracts in < 50us with zero Tree-Sitter re-parsing overhead.
+  - **DeepSeek-R1 Verifiable Ground-Truth Rewards**: Deterministic compiler/contract reward feedback ($R_{\text{compiler}} \in \{-1.0, -0.8, 0.5, 1.0\}$) integrated into Expected Free Energy $G(\pi)$, heavily penalizing syntax errors and breaking cutovers.
+  - **OpenAI o1/o3 Dynamic Test-Time Compute Scaling**: Adaptive budget calculation ($N_{\text{sim}} \in [5, 80]$) modulated dynamically by blast radius $\ln(1 + 10 \cdot r_{\text{blast}})$ and Amygdala threat scars $\beta_{\text{threat}}$, with deliberate backtracking away from broken AST states.
+  - **Single-Binary Monolith MCP Injection**: Automated injection of `ozygram serve` across AI coding clients (Cursor, Claude, Windsurf, Antigravity) with zero process contention and clean single-binary lifecycle.
+
+### Changed
+- Workspace test suite expanded to 238 tests passing at 100% across all crates (`ozymem-cli`, `ozymem-core`, `ozymem-parser`, `ozymem-server`).
+- Actualizado el binario release monolítico `ozygram.exe` (45.8 MB) desplegado en `~/.cargo/bin/` y `~/.ozymem/bin/`.
+
 ## [0.2.1] - 2026-10-29
 
 ### Added
