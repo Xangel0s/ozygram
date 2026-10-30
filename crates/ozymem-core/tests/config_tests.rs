@@ -15,6 +15,7 @@ fn test_default_config_values() {
     assert_eq!(config.compute.mcts_simulations, 25);
     assert_eq!(config.compute.lightweight_mode, false);
     assert_eq!(config.compute.max_compute, false);
+    assert_eq!(config.compute.acceleration, "auto");
 }
 
 #[test]
@@ -28,6 +29,7 @@ fn test_preset_laptop_cooperative() {
     assert_eq!(config.compute.lightweight_mode, true);
     assert_eq!(config.compute.mcts_simulations, 10);
     assert_eq!(config.core.disable_watcher, true);
+    assert_eq!(config.compute.acceleration, "cpu");
     assert_eq!(origins.get("compute.lightweight_mode"), Some(&ConfigOrigin::Preset("laptop".to_string())));
 }
 
@@ -42,6 +44,7 @@ fn test_preset_power_workstation() {
     assert_eq!(config.compute.max_compute, true);
     assert_eq!(config.compute.mcts_simulations, 50);
     assert_eq!(config.storage.neural_reranker, true);
+    assert_eq!(config.compute.acceleration, "cuda");
 }
 
 #[test]
@@ -66,6 +69,8 @@ fn test_dynamic_get_and_set_field() {
     assert_eq!(config.compute.mcts_simulations, 40);
     assert_eq!(config.get_field("compute.mcts_simulations"), Some("40".to_string()));
 
+    config.set_field("compute.acceleration", "cuda").unwrap();
+    assert_eq!(config.compute.acceleration, "cuda");
     config.set_field("core.idle_timeout_secs", "900").unwrap();
     assert_eq!(config.core.idle_timeout_secs, 900);
 

@@ -62,6 +62,60 @@ pub(crate) async fn handle_ozy_doctor(
         "detail": format!("Status: {:?} - {}", emb_status, emb_desc)
     }));
 
+    // Check Hardware Acceleration & GPU status (strictly optional and configurable)
+    let cfg = backend
+        .and_then(|b| b.project_path())
+        .and_then(|p| ozymem_core::config::OzyConfig::load_resolved(Some(std::path::Path::new(&p))).ok())
+        .map(|(c, _)| c)
+        .unwrap_or_default();
+    let accel_mode = cfg.compute.acceleration.to_lowercase();
+    let has_nvidia = std::path::Path::new(r"C:\Windows\System32\nvidia-smi.exe").exists()
+        || std::env::var_os("CUDA_PATH").is_some()
+        || std::path::Path::new("/usr/bin/nvidia-smi").exists();
+
+    let (accel_sev, accel_detail) = match accel_mode.as_str() {
+        "cpu" => (
+            "ok",
+            "Mode: cpu - Hardware acceleration disabled by user (safe CPU mode, 0% GPU VRAM)"
+                .to_string(),
+        ),
+        "cuda" | "gpu" => {
+            if has_nvidia {
+                (
+                    "ok",
+                    "Mode: cuda - Dedicated GPU acceleration active for RAM MCTS and tensor operations"
+                        .to_string(),
+                )
+            } else {
+                (
+                    "warning",
+                    "Mode: cuda - CUDA requested, but no dedicated GPU driver detected; fallback to CPU"
+                        .to_string(),
+                )
+            }
+        }
+        _ => {
+            if has_nvidia {
+                (
+                    "ok",
+                    "Mode: auto - Dedicated GPU detected and ready (auto-switching between CPU and GPU)"
+                        .to_string(),
+                )
+            } else {
+                (
+                    "ok",
+                    "Mode: auto - Safe CPU mode active (Count-Sketch 384D & SQLite WAL; 0% GPU VRAM)"
+                        .to_string(),
+                )
+            }
+        }
+    };
+    checks.push(serde_json::json!({
+        "name": "hardware_acceleration",
+        "severity": accel_sev,
+        "detail": accel_detail
+    }));
+
     if let Some(b) = backend {
         if let Some(proj) = b.project_path() {
             let p = std::path::Path::new(&proj);

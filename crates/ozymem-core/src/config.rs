@@ -112,6 +112,8 @@ pub struct ComputeConfig {
     pub lightweight_mode: bool,
     #[serde(default)]
     pub max_compute: bool,
+    #[serde(default = "default_acceleration")]
+    pub acceleration: String,
     #[serde(default = "default_mcts_simulations")]
     pub mcts_simulations: usize,
     #[serde(default = "default_mcts_max_depth")]
@@ -122,6 +124,10 @@ pub struct ComputeConfig {
     pub beta_threat: f64,
     #[serde(default = "default_lambda_epist")]
     pub lambda_epist: f64,
+}
+
+fn default_acceleration() -> String {
+    "auto".to_string()
 }
 
 fn default_mcts_simulations() -> usize {
@@ -149,6 +155,7 @@ impl Default for ComputeConfig {
         Self {
             lightweight_mode: false,
             max_compute: false,
+            acceleration: default_acceleration(),
             mcts_simulations: default_mcts_simulations(),
             mcts_max_depth: default_mcts_max_depth(),
             c_puct: default_c_puct(),
@@ -293,7 +300,9 @@ impl OzyConfig {
                 self.compute.max_compute = false;
                 self.compute.mcts_simulations = 10;
                 self.core.disable_watcher = true;
+                self.compute.acceleration = "cpu".to_string();
                 origins.insert("core.preset".to_string(), ConfigOrigin::Preset("laptop".to_string()));
+                origins.insert("compute.acceleration".to_string(), ConfigOrigin::Preset("laptop".to_string()));
                 origins.insert("compute.lightweight_mode".to_string(), ConfigOrigin::Preset("laptop".to_string()));
                 origins.insert("compute.mcts_simulations".to_string(), ConfigOrigin::Preset("laptop".to_string()));
                 origins.insert("core.disable_watcher".to_string(), ConfigOrigin::Preset("laptop".to_string()));
@@ -304,7 +313,9 @@ impl OzyConfig {
                 self.compute.lightweight_mode = false;
                 self.compute.mcts_simulations = 50;
                 self.storage.neural_reranker = true;
+                self.compute.acceleration = "cuda".to_string();
                 origins.insert("core.preset".to_string(), ConfigOrigin::Preset("power".to_string()));
+                origins.insert("compute.acceleration".to_string(), ConfigOrigin::Preset("power".to_string()));
                 origins.insert("compute.max_compute".to_string(), ConfigOrigin::Preset("power".to_string()));
                 origins.insert("compute.mcts_simulations".to_string(), ConfigOrigin::Preset("power".to_string()));
                 origins.insert("storage.neural_reranker".to_string(), ConfigOrigin::Preset("power".to_string()));
@@ -381,6 +392,10 @@ impl OzyConfig {
             self.compute.max_compute = true;
             origins.insert("compute.max_compute".to_string(), f_origin.clone());
         }
+        if other.compute.acceleration != default_acceleration() {
+            self.compute.acceleration = other.compute.acceleration.clone();
+            origins.insert("compute.acceleration".to_string(), f_origin.clone());
+        }
         if other.compute.mcts_simulations != default_mcts_simulations() {
             self.compute.mcts_simulations = other.compute.mcts_simulations;
             origins.insert("compute.mcts_simulations".to_string(), f_origin.clone());
@@ -428,6 +443,10 @@ impl OzyConfig {
             self.compute.max_compute = matches!(v.as_str(), "1" | "true" | "TRUE");
             origins.insert("compute.max_compute".to_string(), ConfigOrigin::Env("OZY_MAX_COMPUTE".to_string()));
         }
+        if let Ok(v) = std::env::var("OZY_ACCELERATION") {
+            self.compute.acceleration = v;
+            origins.insert("compute.acceleration".to_string(), ConfigOrigin::Env("OZY_ACCELERATION".to_string()));
+        }
 
         if let Ok(v) = std::env::var("OZYMEM_DISABLE_WATCHER") {
             self.core.disable_watcher = matches!(v.as_str(), "1" | "true" | "TRUE");
@@ -470,6 +489,7 @@ impl OzyConfig {
             "brain.model" => Some(self.brain.model.clone()),
             "compute.lightweight_mode" => Some(self.compute.lightweight_mode.to_string()),
             "compute.max_compute" => Some(self.compute.max_compute.to_string()),
+            "compute.acceleration" => Some(self.compute.acceleration.clone()),
             "compute.mcts_simulations" => Some(self.compute.mcts_simulations.to_string()),
             "compute.mcts_max_depth" => Some(self.compute.mcts_max_depth.to_string()),
             "compute.c_puct" => Some(self.compute.c_puct.to_string()),
@@ -497,6 +517,13 @@ impl OzyConfig {
             "brain.model" => self.brain.model = value.to_string(),
             "compute.lightweight_mode" => self.compute.lightweight_mode = value.parse()?,
             "compute.max_compute" => self.compute.max_compute = value.parse()?,
+            "compute.acceleration" => {
+                let val = value.to_lowercase();
+                match val.as_str() {
+                    "auto" | "cpu" | "cuda" | "gpu" | "directml" => self.compute.acceleration = val,
+                    _ => return Err(anyhow!("Modo de aceleración no válido: '{}'. Opciones: 'auto', 'cpu', 'cuda', 'gpu', 'directml'", value)),
+                }
+            }
             "compute.mcts_simulations" => self.compute.mcts_simulations = value.parse()?,
             "compute.mcts_max_depth" => self.compute.mcts_max_depth = value.parse()?,
             "compute.c_puct" => self.compute.c_puct = value.parse()?,
@@ -581,6 +608,7 @@ neural_reranker = false
             "brain.model",
             "compute.lightweight_mode",
             "compute.max_compute",
+            "compute.acceleration",
             "compute.mcts_simulations",
             "compute.mcts_max_depth",
             "compute.c_puct",
