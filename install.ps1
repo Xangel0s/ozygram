@@ -100,8 +100,9 @@ if (-not $InstalledFromRelease) {
     $OzygramRelease = Join-Path $Root "target\release\ozygram.exe"
     $BrainRelease   = Join-Path $Root "target\release\ozy-brain.exe"
 
-    if (-not (Test-Path $ServerRelease) -or -not (Test-Path $CliRelease)) {
-        Write-Host "[!] Release binaries not found in target\release." -ForegroundColor Red
+    $PrimaryRelease = if (Test-Path $OzygramRelease) { $OzygramRelease } elseif (Test-Path $CliRelease) { $CliRelease } else { $null }
+    if (-not $PrimaryRelease) {
+        Write-Host "[!] Release binary not found in target\release." -ForegroundColor Red
         exit 1
     }
 
@@ -116,12 +117,12 @@ if (-not $InstalledFromRelease) {
     if (Test-Path $DestOzygram) { Move-Item -Force $DestOzygram "$DestOzygram.old" -ErrorAction SilentlyContinue }
     if (Test-Path $DestBrain) { Move-Item -Force $DestBrain "$DestBrain.old" -ErrorAction SilentlyContinue }
 
-    Copy-Item -Path $ServerRelease -Destination $DestServer -Force
-    Copy-Item -Path $CliRelease    -Destination $DestCli -Force
-    if (Test-Path $OzygramRelease) {
-        Copy-Item -Path $OzygramRelease -Destination $DestOzygram -Force
+    Copy-Item -Path $PrimaryRelease -Destination $DestOzygram -Force
+    Copy-Item -Path $PrimaryRelease -Destination $DestCli -Force
+    if (Test-Path $ServerRelease) {
+        Copy-Item -Path $ServerRelease -Destination $DestServer -Force
     } else {
-        Copy-Item -Path $CliRelease     -Destination $DestOzygram -Force
+        Copy-Item -Path $PrimaryRelease -Destination $DestServer -Force
     }
     if (Test-Path $BrainRelease) {
         Copy-Item -Path $BrainRelease -Destination $DestBrain -Force

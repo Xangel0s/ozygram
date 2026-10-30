@@ -98,14 +98,18 @@ pub async fn run_init(
         println!(" [STATUS: READY] Python runtime / fast-lane deterministic fallback active.");
     }
 
-    // 5. Auto-detect & configure AI services
+    // 5. Auto-detect & configure AI services (Single-Binary ozygram preferred)
     println!("[5/5] Scanning and auto-configuring AI coding clients...");
+    let ozygram_bin_name = if cfg!(windows) { "ozygram.exe" } else { "ozygram" };
     let server_bin_name = if cfg!(windows) { "ozymem-server.exe" } else { "ozymem-server" };
+    let target_ozygram = bin_dir.join(ozygram_bin_name);
     let target_server = bin_dir.join(server_bin_name);
-    let server_path_str = if target_server.exists() {
+    let server_path_str = if target_ozygram.exists() {
+        target_ozygram.to_string_lossy().to_string()
+    } else if target_server.exists() {
         target_server.to_string_lossy().to_string()
     } else {
-        "ozymem-server".to_string()
+        "ozygram".to_string()
     };
 
     let configured_clients = auto_configure_mcp_clients(&server_path_str, &home_dir, &workspace, client_filter.as_deref(), dry_run);
@@ -160,24 +164,22 @@ fn deploy_binaries(bin_dir: &Path) {
 
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(parent) = current_exe.parent() {
-            // Copy server if alongside
-            let src_server = parent.join(server_bin_name);
-            if src_server.exists() && src_server != target_server {
-                let _ = fs::copy(&src_server, &target_server);
-                println!(" -> Deployed {} to {}", server_bin_name, bin_dir.display());
+            // Deploy unified binary as ozygram.exe
+            if current_exe != target_ozygram {
+                let _ = fs::copy(&current_exe, &target_ozygram);
+                println!(" -> Deployed {} (unified) to {}", ozygram_bin_name, bin_dir.display());
             }
 
-            // Copy cli if alongside
-            let src_cli = parent.join(cli_bin_name);
-            if src_cli.exists() && src_cli != target_cli {
-                let _ = fs::copy(&src_cli, &target_cli);
+            // Deploy alias as ozymem.exe
+            if current_exe != target_cli {
+                let _ = fs::copy(&current_exe, &target_cli);
                 println!(" -> Deployed {} to {}", cli_bin_name, bin_dir.display());
             }
 
-            // Copy self as ozygram.exe
-            if current_exe != target_ozygram {
-                let _ = fs::copy(&current_exe, &target_ozygram);
-                println!(" -> Deployed {} to {}", ozygram_bin_name, bin_dir.display());
+            // 100% Backward compatibility: deploy copy as ozymem-server.exe for legacy configs
+            if current_exe != target_server {
+                let _ = fs::copy(&current_exe, &target_server);
+                println!(" -> Deployed {} (unified MCP) to {}", server_bin_name, bin_dir.display());
             }
 
             // Copy standalone brain if alongside

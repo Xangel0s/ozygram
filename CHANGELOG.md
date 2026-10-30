@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Centinela Pre-Commit Contract Drift Gatekeeper (ozymem hook install)**:
   - Intercepts staged files pre-commit (git diff --cached --name-status) and inspects API route changes in < 15 ms via ozymem_parser::api_routes.
   - Vetoes commits modifying backend endpoints when dependent frontend components are unsynced ([CRITICAL_VETO: CROSS_REPO_CONTRACT_DRIFT]).
+- **Single-Binary All-In-One Architecture (`ozygram.exe`)**:
+  - Embedded `ozymem-server` directly into `ozymem-cli` (`ozygram.exe` / `ozymem.exe`), enabling a single portable binary to serve both interactive CLI commands (`ozygram doctor`, `ozygram init`) and MCP stdio protocol (`ozygram serve`, `ozygram mcp`).
+  - Implemented automatic pipe stream detection: running `ozygram.exe` from an IDE via stdio automatically launches the high-performance MCP server without manual flags.
+  - Retained 100% backward compatibility for legacy client configurations expecting `ozymem-server.exe`.
 - **Zero-Download Offline-First Embeddings Substrate (ozymem-core)**:
   - Deterministic 384D Count-Sketch / SimHash embedding engine with unit Euclidean norm (||v||_2 = 1.0) and < 50 ns latency.
   - Guarantees 100% vector capabilities in SQLite WAL, ChromaDB, and pgvector without requiring any internet connection or initial 130 MB ONNX download.

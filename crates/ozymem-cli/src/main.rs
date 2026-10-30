@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use ozymem_cli::commands::vector::VectorSubcommand;
 use ozymem_cli::commands::*;
 use ozymem_cli::client::*;
-use ozymem_cli::mcp;
 use ozymem_core::graph_backend::{auto_manage_gitignore, legacy_global_db_path};
 use ozymem_core::mcp_common::McpBackend;
 use ozymem_parser::{extract_dependency_hints, parse_source, SupportedLanguage};
@@ -179,6 +178,9 @@ enum Commands {
         #[arg(default_value = "run")]
         action: String,
     },
+    /// Run Ozygram as a high-performance MCP stdio server for AI coding agents
+    #[command(alias = "mcp-server", alias = "server")]
+    Serve,
     Parse {
         file_path: String,
     },
@@ -212,6 +214,10 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    // Auto-detection: If invoked without a subcommand and stdin is not a terminal (pipe from IDE/agent), run MCP server
+    if args.command.is_none() && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return ozymem_server::run_mcp_server().await;
+    }
     let command = args.command.unwrap_or(Commands::Init { auto: false, dry_run: false, rollback: false, path: None, client: None });
 
     match &command {
@@ -299,12 +305,15 @@ async fn main() -> anyhow::Result<()> {
             println!("[OzyMem] Vinculado exitosamente: {} --[{}]--> {}", current_proj, relation, target_name);
             return Ok(());
         }
+        Commands::Serve => {
+            return ozymem_server::run_mcp_server().await;
+        }
         Commands::Mcp { action } => {
             if action == "config" || action == "snippet" || action == "json" {
                 print_mcp_config();
                 return Ok(());
             }
-            return mcp::run_mcp_server().await;
+            return ozymem_server::run_mcp_server().await;
         }
         Commands::Query { input, json, limit, tokens } => {
             let connection = build_backend_client().await?;
@@ -412,6 +421,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Export { .. } => unreachable!(),
         Commands::Import { .. } => unreachable!(),
         Commands::Link { .. } => unreachable!(),
+        Commands::Serve => unreachable!(),
         Commands::Mcp { .. } => unreachable!(),
         Commands::Doctor { .. } => unreachable!(),
         Commands::Query { .. } => unreachable!(),

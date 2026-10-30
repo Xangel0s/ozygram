@@ -28,6 +28,7 @@ reqwest = { version = "0.11", features = ["json"] }
 lazy_static = "1.4.0"
 ozymem-core = { path = "../ozymem-core" }
 ozymem-parser = { path = "../ozymem-parser" }
+ozymem-server = { path = "../ozymem-server" }
 tokio.workspace = true
 walkdir = "2.4"
 notify = "6.1.1"

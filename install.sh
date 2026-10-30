@@ -74,18 +74,25 @@ if [ "$INSTALLED_FROM_RELEASE" = false ]; then
     echo "[2/4] Building release binaries (cargo build --release)..."
     cargo build --release
 
+    PRIMARY_RELEASE="./target/release/ozygram"
+    if [ ! -f "$PRIMARY_RELEASE" ]; then
+        PRIMARY_RELEASE="./target/release/ozymem"
+    fi
     SERVER_RELEASE="./target/release/ozymem-server"
-    CLI_RELEASE="./target/release/ozymem"
 
-    if [ ! -f "$SERVER_RELEASE" ] || [ ! -f "$CLI_RELEASE" ]; then
-        echo "[!] Release binaries not found in ./target/release."
+    if [ ! -f "$PRIMARY_RELEASE" ]; then
+        echo "[!] Release binary not found in ./target/release."
         exit 1
     fi
 
     echo "[3/4] Installing executables and Ozy Brain worker..."
-    cp -f "$SERVER_RELEASE" "$BIN_DIR/ozymem-server"
-    cp -f "$CLI_RELEASE" "$BIN_DIR/ozymem"
-    cp -f "$CLI_RELEASE" "$BIN_DIR/ozygram"
+    cp -f "$PRIMARY_RELEASE" "$BIN_DIR/ozygram"
+    cp -f "$PRIMARY_RELEASE" "$BIN_DIR/ozymem"
+    if [ -f "$SERVER_RELEASE" ]; then
+        cp -f "$SERVER_RELEASE" "$BIN_DIR/ozymem-server"
+    else
+        cp -f "$PRIMARY_RELEASE" "$BIN_DIR/ozymem-server"
+    fi
     chmod +x "$BIN_DIR/ozymem-server" "$BIN_DIR/ozymem" "$BIN_DIR/ozygram"
 
     if [ -f "./target/release/ozy-brain" ]; then
