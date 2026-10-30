@@ -366,11 +366,17 @@ pub fn try_inject_mcp_server(config_path: &Path, server_command: &str, dry_run: 
 
     let mcp_obj = mcp_servers_entry.as_object_mut().unwrap();
 
+    let args = if server_command.ends_with("ozygram.exe") || server_command.ends_with("ozygram") {
+        vec!["serve".to_string()]
+    } else {
+        vec![]
+    };
+
     mcp_obj.insert(
         "ozygram".to_string(),
         serde_json::json!({
             "command": server_command,
-            "args": []
+            "args": args
         }),
     );
 

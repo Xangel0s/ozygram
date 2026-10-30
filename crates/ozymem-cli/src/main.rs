@@ -507,7 +507,7 @@ fn print_mcp_config() {
     let (cmd, args) = if let Some(server) = server_candidate {
         (server, vec![])
     } else {
-        (current_exe, vec!["mcp".to_string()])
+        (current_exe, vec!["serve".to_string()])
     };
 
     let config = serde_json::json!({
