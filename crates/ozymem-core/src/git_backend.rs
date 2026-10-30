@@ -451,6 +451,49 @@ fn format_timestamp(secs: i64) -> String {
 
 /// Result of running validation inside an ephemeral worktree sandbox.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShellPolicy {
+    /// Whitelist of allowed executable commands (base names without path or extension)
+    pub allowed_binaries: std::collections::HashSet<String>,
+    /// Blacklist of forbidden command patterns or arguments (e.g. "rm", "DROP", "TRUNCATE")
+    pub forbidden_patterns: Vec<String>,
+    /// Environment variable names to scrub from subprocess execution (preventing secret exfiltration)
+    pub scrubbed_env_vars: Vec<String>,
+    /// Execution timeout in seconds
+    pub timeout_secs: u64,
+}
+
+impl Default for ShellPolicy {
+    fn default() -> Self {
+        let allowed = [
+            "cargo", "rustc", "git", "npm", "npx", "pnpm", "yarn", "bun",
+            "node", "tsc", "python", "python3", "pytest", "ruff", "mypy",
+            "grep", "rg", "find", "ls", "cat", "head", "tail"
+        ].iter().map(|s| s.to_string()).collect();
+
+        let forbidden = vec![
+            "rm -rf".to_string(), "rmdir".to_string(), "del /f".to_string(),
+            "drop table".to_string(), "truncate table".to_string(),
+            ":(){ :|:& };:".to_string(), "format ".to_string(),
+            "remove-item".to_string(), "mkfs".to_string(),
+        ];
+
+        let scrubbed = vec![
+            "AWS_SECRET_ACCESS_KEY".to_string(), "OPENAI_API_KEY".to_string(),
+            "ANTHROPIC_API_KEY".to_string(), "GEMINI_API_KEY".to_string(),
+            "DATABASE_URL".to_string(), "SUPABASE_SERVICE_ROLE_KEY".to_string(),
+            "GITHUB_TOKEN".to_string(), "OZY_SECRET".to_string(),
+        ];
+
+        Self {
+            allowed_binaries: allowed,
+            forbidden_patterns: forbidden,
+            scrubbed_env_vars: scrubbed,
+            timeout_secs: 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ValidationResult {
     pub exit_code: i32,
     pub stdout: String,
@@ -516,14 +559,58 @@ impl EphemeralWorktree {
         Ok(())
     }
 
-    /// Run a validation command inside the isolated worktree with execution timing.
-    pub fn run_validation(&self, cmd: &str, args: &[&str]) -> Result<ValidationResult, String> {
+    /// Verify command safety against Default-Deny whitelist and forbidden patterns (Strands Shell-style).
+    pub fn verify_command_safety(cmd: &str, args: &[&str], policy: &ShellPolicy) -> Result<(), String> {
+        let cmd_clean = std::path::Path::new(cmd)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(cmd)
+            .to_lowercase();
+
+        // 1. Default-Deny whitelist check
+        if !policy.allowed_binaries.contains(&cmd_clean) {
+            return Err(format!(
+                "[CRITICAL_VETO: COMMAND_DENIED] Binary '{}' is not in sandbox whitelist (Default-Deny policy).",
+                cmd
+            ));
+        }
+
+        // 2. Destructive pattern blacklist check
+        let full_cmd_line = format!("{} {}", cmd, args.join(" ")).to_lowercase();
+        for forbidden in &policy.forbidden_patterns {
+            if full_cmd_line.contains(forbidden) {
+                return Err(format!(
+                    "[CRITICAL_VETO: DESTRUCTIVE_PATTERN_DETECTED] Command line matches forbidden pattern '{}'.",
+                    forbidden
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Executes a command in the isolated worktree under strict Default-Deny security policies.
+    /// Scrubs sensitive environment variables and enforces whitelisted execution.
+    pub fn run_sandboxed_command(&self, cmd: &str, args: &[&str]) -> Result<ValidationResult, String> {
+        self.run_sandboxed_command_with_policy(cmd, args, &ShellPolicy::default())
+    }
+
+    /// Executes a sandboxed command with a custom ShellPolicy.
+    pub fn run_sandboxed_command_with_policy(&self, cmd: &str, args: &[&str], policy: &ShellPolicy) -> Result<ValidationResult, String> {
+        Self::verify_command_safety(cmd, args, policy)?;
+
         let start = std::time::Instant::now();
-        let output = std::process::Command::new(cmd)
-            .args(args)
-            .current_dir(&self.worktree_path)
-            .output()
-            .map_err(|e| format!("Failed to execute validation command '{}': {}", cmd, e))?;
+        let mut command = std::process::Command::new(cmd);
+        command.args(args)
+            .current_dir(&self.worktree_path);
+
+        // Scrub sensitive environment variables
+        for var in &policy.scrubbed_env_vars {
+            command.env_remove(var);
+        }
+
+        let output = command.output()
+            .map_err(|e| format!("Failed to execute sandboxed command '{}': {}", cmd, e))?;
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let exit_code = output.status.code().unwrap_or(-1);
@@ -538,6 +625,11 @@ impl EphemeralWorktree {
             passed,
             duration_ms,
         })
+    }
+
+    /// Run a validation command inside the isolated worktree with execution timing.
+    pub fn run_validation(&self, cmd: &str, args: &[&str]) -> Result<ValidationResult, String> {
+        self.run_sandboxed_command(cmd, args)
     }
 
     /// Explicitly remove the worktree and clean up references.
@@ -984,6 +1076,28 @@ mod tests {
         let wt_path = worktree.path().to_path_buf();
         drop(worktree);
         assert!(!wt_path.exists(), "Worktree path must be cleaned up on drop");
+    }
+
+    #[test]
+    fn test_ephemeral_worktree_default_deny_mediation() {
+        let dir = TempDir::new().unwrap();
+        let backend = init_repo(dir.path());
+        let worktree = EphemeralWorktree::create(backend.repo_path()).unwrap();
+
+        // 1. Whitelisted command: git status must pass
+        let ok_res = worktree.run_sandboxed_command("git", &["status"]);
+        assert!(ok_res.is_ok(), "git status must be allowed");
+        assert!(ok_res.unwrap().passed);
+
+        // 2. Unwhitelisted binary: must trigger [CRITICAL_VETO: COMMAND_DENIED]
+        let denied_res = worktree.run_sandboxed_command("untrusted_evil_script", &["arg1"]);
+        assert!(denied_res.is_err());
+        assert!(denied_res.unwrap_err().contains("[CRITICAL_VETO: COMMAND_DENIED]"));
+
+        // 3. Destructive pattern: must trigger [CRITICAL_VETO: DESTRUCTIVE_PATTERN_DETECTED]
+        let veto_res = worktree.run_sandboxed_command("git", &["rm -rf", "src"]);
+        assert!(veto_res.is_err());
+        assert!(veto_res.unwrap_err().contains("[CRITICAL_VETO: DESTRUCTIVE_PATTERN_DETECTED]"));
     }
 
     #[test]

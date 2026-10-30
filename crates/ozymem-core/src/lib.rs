@@ -12,7 +12,7 @@ pub mod theta_gamma;
 pub mod config;
 
 pub use git_backend::{
-    DiscoveredRepo, EphemeralWorktree, GitBackend, MultiRepoScanner, RepoLiveDiff, RepoRole,
+    DiscoveredRepo, EphemeralWorktree, GitBackend, ShellPolicy, MultiRepoScanner, RepoLiveDiff, RepoRole,
     SynapticTag, SynapticTagger, ValidationResult,
 };
 pub use bundle::{export_bundle, import_bundle, BundleExportSummary, BundleImportSummary, KnowledgeBundle};
