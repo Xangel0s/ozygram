@@ -106,3 +106,9 @@ To avoid context bloat, syntax breaks, and latency, agents must adhere to the fo
 4. `ozy_memory(action="search"|"save"|"sync_markdown"|"export_git_notes")`: Git-First markdown sync, Amygdala reflexes, and TGVR vector retrieval.
 5. `ozy_doctor(action="status"|"code"|"audit_migrations")`: SQLite WAL integrity, outbox health, consolidated duplicate detection, and SQL migration idempotency linter.
 
+
+- Frontier AI Engineering & Cognitive Upgrades (v3.4.0):
+  - Kimi Mooncake AST Prefill Cache: Thread-safe, bounded (max_entries = 2048) xxHash64 content-addressed cache (AstPrefillCache) serving pruned skeletons and contracts in < 50us with zero Tree-Sitter re-parsing overhead.
+  - DeepSeek-R1 Verifiable Ground-Truth Rewards: Deterministic compiler/contract reward feedback (R_compiler in {-1.0, -0.8, 0.5, 1.0}) integrated into Expected Free Energy G(pi), heavily penalizing syntax errors and breaking cutovers.
+  - OpenAI o1/o3 Dynamic Test-Time Compute Scaling: Adaptive budget calculation (N_sim in [5, 80]) modulated dynamically by blast radius ln(1 + 10 * r_blast) and Amygdala threat scars beta_threat, with deliberate backtracking away from broken AST states.
+  - Single-Binary Monolith MCP Injection: Automated injection of ozygram serve across AI coding clients (Cursor, Claude, Windsurf, Antigravity) with zero process contention and clean single-binary lifecycle.
