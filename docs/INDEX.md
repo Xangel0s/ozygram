@@ -62,7 +62,12 @@ Welcome to the official, modular documentation for **Ozygram**, the persistent c
 - `rtk` integration (Rust Token Killer): Payload compression, ANSI stripping, and token budget preservation.
 - `fastembed` integration: Local dense vector inference with zero API quota consumption.
 
-### 9. [Version History & Changelog (`docs/changelog.md`)](changelog.md)
+### 9. [Cordis Composability & DeepSeek Harness Integration (`docs/cordis-composability-and-deepseek-harness.md`)](cordis-composability-and-deepseek-harness.md)
+- Architectural pattern of reactive service injection and revertible LIFO effects.
+- Sovereign microkernel architecture in Rust Core with zero heavy external dependencies.
+- Frictionless integration with DeepSeek Harness (`dsh`) via universal Model Context Protocol (MCP).
+
+### 10. [Version History & Changelog (`docs/changelog.md`)](changelog.md)
 - Comprehensive chronological record of all architectural milestones, features, and releases.
 
 ---
@@ -84,8 +89,8 @@ chmod +x ./install.sh && ./install.sh
 {
   "mcpServers": {
     "ozygram": {
-      "command": "ozymem-server",
-      "args": []
+      "command": "ozygram",
+      "args": ["serve"]
     }
   }
 }
