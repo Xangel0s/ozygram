@@ -115,3 +115,17 @@ def test_agentless_hierarchical_localization():
     assert "hierarchical_localization" in plan_res.structured_plan
     assert len(plan_res.structured_plan["hierarchical_localization"]) >= 1
 
+def test_raw_traceback_ingestion_in_reflect():
+    py_tb = """Traceback (most recent call last):
+  File "app/modules/sucs_aashto/router.py", line 529, in descargar_excel_post
+    payload_obj = resolve_export_payload(
+TypeError: resolve_export_payload() got an unexpected keyword argument 'model_cls'
+"""
+    resp = reflect({
+        "goal": "corregir exportacion excel",
+        "raw_traceback": py_tb,
+    })
+    assert len(resp.procedural_rules) >= 1
+    assert any("TypeError" in r["trigger"] for r in resp.procedural_rules)
+    assert any("router.py" in str(rc) for rc in resp.reflection_report.get("root_causes", []))
+

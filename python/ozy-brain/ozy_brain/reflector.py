@@ -341,8 +341,52 @@ def _build_reflection_report(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def extract_traceback_failures(raw_text: str) -> list[str]:
+    """Extracts structured failure summaries from raw stacktraces (Python, Node/TS, Rust)."""
+    extracted: list[str] = []
+    if not raw_text or not isinstance(raw_text, str):
+        return extracted
+
+    # Python Traceback: File "...", line X, in Y followed by Exception: message
+    py_matches = re.findall(
+        r'File\s+["\']([^"\']+)["\'],\s+line\s+(\d+)(?:,\s+in\s+([^\n\r]+))?[\r\n]+(?:\s+[^\n\r]+[\r\n]+)*?([a-zA-Z0-9_.]*(?:Error|Exception|Failure|Fault|Warning)[^\n\r]*)',
+        raw_text,
+    )
+    for file_path, line_no, func_name, exc_msg in py_matches:
+        fn_part = f" in {func_name.strip()}" if func_name else ""
+        extracted.append(f"{exc_msg.strip()} at {file_path.strip()}:{line_no}{fn_part}")
+
+    if not extracted:
+        exc_lines = re.findall(r"^([a-zA-Z0-9_.]*(?:Error|Exception|Failure|Fault):\s+[^\n\r]+)", raw_text, re.MULTILINE)
+        file_lines = re.findall(r'File\s+["\']([^"\']+)["\'],\s+line\s+(\d+)', raw_text)
+        if exc_lines and file_lines:
+            last_file, last_line = file_lines[-1]
+            extracted.append(f"{exc_lines[-1].strip()} at {last_file}:{last_line}")
+        elif exc_lines:
+            extracted.extend(exc_lines[:3])
+
+    # Node/TypeScript: at [func] ([file]:[line]:[col])
+    ts_matches = re.findall(
+        r'at\s+(?:async\s+)?([^\s(]+)?\s*\(?([^:)\s]+):(\d+):(\d+)\)?',
+        raw_text,
+    )
+    if ts_matches and not extracted:
+        func_name, file_path, line_no, _ = ts_matches[0]
+        fn_part = f" in {func_name}" if func_name else ""
+        extracted.append(f"Execution failure at {file_path}:{line_no}{fn_part}")
+
+    return extracted
+
+
 def reflect(payload: dict[str, Any]) -> BrainResponse:
-    failures = _items(payload, "failures")
+    failures = list(_items(payload, "failures"))
+    raw_tb = payload.get("raw_traceback") or payload.get("traceback") or payload.get("log_snippet")
+    if raw_tb and isinstance(raw_tb, str):
+        tb_fails = extract_traceback_failures(raw_tb)
+        for tf in tb_fails:
+            if tf not in failures:
+                failures.append(tf)
+        payload["failures"] = failures
     changes = _items(payload, "changes")
     goal = _goal(payload)
     ws_root = payload.get("workspace_root") or payload.get("project") or "."

@@ -54,6 +54,9 @@ class TestCerebellumEngine(unittest.TestCase):
         self.assertEqual(extract_subsystem("crmnew/api-geofal-crm/app/main.py"), "crmnew/api-geofal-crm")
         self.assertEqual(extract_subsystem("backend/auth.py"), "backend")
         self.assertEqual(extract_subsystem("root_file.txt"), "root")
+        self.assertEqual(extract_subsystem("C:/Users/Lenovo/Documents/crmnew/api-geofal-crm/app/modules/sucs_aashto/router.py"), "crmnew/api-geofal-crm")
+        self.assertEqual(extract_subsystem("C:\\Users\\Lenovo\\Documents\\crmnew\\crm-geofal\\src\\components\\form.tsx"), "crmnew/crm-geofal")
+        self.assertEqual(extract_subsystem("D:/work/ozygram/crates/ozymem-core/src/lib.rs"), "crates/ozymem-core")
 
     def test_kld_identical_and_divergent(self):
         p = {"crates/ozymem-server": 0.8, "crates/ozymem-core": 0.2}

@@ -11,6 +11,7 @@ Zero-emoji compliant.
 from __future__ import annotations
 
 import math
+import re
 import os
 from collections import Counter
 from pathlib import Path
@@ -26,15 +27,25 @@ except ImportError:
 def normalize_rel_path(path: str) -> str:
     """Normalizes relative file path across Windows and POSIX."""
     normalized = path.strip().replace("\\", "/")
-    while normalized.startswith("./"):
-        normalized = normalized[2:]
+    # Strip Windows drive letter (e.g. C:/, c:/, D:/)
+    normalized = re.sub(r"^[a-zA-Z]:/", "", normalized)
+    while normalized.startswith("./") or normalized.startswith("/"):
+        normalized = normalized.lstrip("./")
     return normalized
 
 
 def extract_subsystem(file_path: str) -> str:
     """Extracts top-level or secondary subsystem/module from file path."""
     norm = normalize_rel_path(file_path)
-    parts = norm.split("/")
+    if norm.startswith("ozygram/"):
+        norm = norm[8:]
+    elif "/ozygram/" in norm:
+        norm = norm[norm.index("/ozygram/") + 9:]
+    for root_marker in ("crmnew/", "packages/"):
+        if root_marker in norm:
+            norm = norm[norm.index(root_marker):]
+            break
+    parts = [p for p in norm.split("/") if p]
     if len(parts) <= 1:
         return "root"
     if parts[0] in ("crates", "python", "crmnew", "src", "packages") and len(parts) > 2:
