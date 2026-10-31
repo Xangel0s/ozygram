@@ -126,11 +126,16 @@ pub async fn run_init(
     println!("------------------------------------------------------------------------");
     println!("  MCP Configuration (for any MCP-compatible AI agent):                  ");
     println!("------------------------------------------------------------------------");
+    let snippet_args = if server_path_str.ends_with("ozygram.exe") || server_path_str.ends_with("ozygram") {
+        vec!["serve".to_string()]
+    } else {
+        vec![]
+    };
     let snippet = serde_json::json!({
         "mcpServers": {
             "ozygram": {
                 "command": server_path_str,
-                "args": []
+                "args": snippet_args
             }
         }
     });
@@ -257,7 +262,11 @@ fn auto_configure_mcp_clients(
 fn get_client_candidates(home: &Path, workspace: &Path) -> Vec<(String, PathBuf)> {
     let mut list = Vec::new();
 
-    // 1. Antigravity IDE
+    // 1. Antigravity (Standard & IDE)
+    list.push((
+        "Antigravity".to_string(),
+        home.join(".gemini").join("antigravity").join("mcp_config.json"),
+    ));
     list.push((
         "Antigravity IDE".to_string(),
         home.join(".gemini").join("antigravity-ide").join("mcp_config.json"),

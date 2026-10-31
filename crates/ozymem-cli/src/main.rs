@@ -488,7 +488,9 @@ fn print_mcp_config() {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "ozygram".to_string());
 
-    let server_candidate = if let Ok(mut exe) = std::env::current_exe() {
+    let (cmd, args) = if current_exe.ends_with("ozygram.exe") || current_exe.ends_with("ozygram") {
+        (current_exe, vec!["serve".to_string()])
+    } else if let Ok(mut exe) = std::env::current_exe() {
         exe.pop();
         let candidate = if cfg!(windows) {
             exe.join("ozymem-server.exe")
@@ -496,16 +498,10 @@ fn print_mcp_config() {
             exe.join("ozymem-server")
         };
         if candidate.exists() {
-            Some(candidate.to_string_lossy().to_string())
+            (candidate.to_string_lossy().to_string(), vec![])
         } else {
-            None
+            (current_exe, vec!["serve".to_string()])
         }
-    } else {
-        None
-    };
-
-    let (cmd, args) = if let Some(server) = server_candidate {
-        (server, vec![])
     } else {
         (current_exe, vec!["serve".to_string()])
     };
