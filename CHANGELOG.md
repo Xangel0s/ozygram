@@ -4,7 +4,7 @@ All notable changes to Ozygram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.2] - 2026-10-30
+## [0.2.3] - 2026-10-31
 
 ### Added
 - **Static AST Quadratic Loop Antipattern Detector (`ozymem-parser`)**:
@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resilient parameter hierarchy in `ozy_memory(action="save"|"prompt"|"passive")` accepting `data`, `body`, or `text` JSON payloads with auto-derived titles from topic keys or initial lines, preventing `missing content` errors when LLMs pass structured objects.
 - **Single-Binary Monolith MCP Auto-Injection (`ozymem-cli::setup`)**:
   - Zero-config auto-detection and safe injection with `.ozybak` backups for Google Antigravity, Antigravity IDE, Cursor, Claude Desktop, Windsurf, VS Code, and Zed using `ozygram serve`.
+- **Clickable File Links & Markdown Actionable Checklists**:
+  - Automatic formatting of topological refactoring sequences and candidate file scores into GitHub-flavored markdown checklists (`- [ ] Step N: [file](file:///path)`) with forward-slashed clickable `file:///` URLs.
+- **Windows Platform Hardening & Exception Safeguards**:
+  - Safeguarded `Path.home()` against Windows environments with wiped user profile variables, normalized drive letter casing (`C:` vs `c:`), and calibrated kinematic cerebellar model.
+
+### Changed
+- Release binaries compiled and verified under release profile: `ozygram.exe` (45.8 MB) and `ozymem-server.exe` (40.5 MB) deployed to `~/.cargo/bin/` and `~/.ozymem/bin/`.
+- Full workspace test suite passes with 100% coverage across 50 parser tests, 81 server tests, 19 CLI tests, and 265 Python tests.
+
+## [0.2.2] - 2026-10-30
+
+### Added
 - **Strands Agents Architecture Elevation (Non-Redundant Integration v3.5.0)**:
   - **EphemeralWorktree Shell Mediation (Default-Deny)**: Hardened volatile sandboxed execution (`run_sandboxed_command`) in `ozymem-core::git_backend` with a strict whitelist of tools (`cargo`, `git`, `npm`, `python`, `node`, `pytest`, `tsc`, `rg`), automatic credential scrubbing from child environment variables, and execution timeout watchdog. Destructive commands (`rm -rf`, `DROP TABLE`, `del /s`) receive immediate kernel-level veto (`[CRITICAL_VETO: COMMAND_DENIED]`).
   - **In-Flight Result Compactor & Spillover Blob Store**: Automatic compaction of large MCP tool outputs (> 14,000 characters / ~3,500 tokens) in `ozymem-server::formatters` with SHA-256 persistence into `.ozymem/blobs/<short_hash>.txt`, preview extraction (head 40 lines + tail 10 lines), and lossless pointer retrieval via `ozymem://blob/<hash>` resource template. Achieves 70-85% token reduction on heavy outputs.
