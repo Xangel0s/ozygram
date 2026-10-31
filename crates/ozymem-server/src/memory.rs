@@ -133,16 +133,46 @@ pub async fn handle_memory_tool(
                                 .get("session_id")
                                 .and_then(Value::as_str)
                                 .unwrap_or("manual");
-                            let title = tool_call
-                                .arguments
-                                .get("title")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| anyhow::anyhow!("missing title"))?;
-                            let content = tool_call
-                                .arguments
-                                .get("content")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| anyhow::anyhow!("missing content"))?;
+                            let content_owned: String;
+                            let content = match tool_call.arguments.get("content") {
+                                Some(Value::String(s)) => s.as_str(),
+                                Some(val) => {
+                                    content_owned = serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string());
+                                    &content_owned
+                                }
+                                None => {
+                                    if let Some(val) = tool_call.arguments.get("data")
+                                        .or_else(|| tool_call.arguments.get("body"))
+                                        .or_else(|| tool_call.arguments.get("text"))
+                                    {
+                                        if let Some(s) = val.as_str() {
+                                            s
+                                        } else {
+                                            content_owned = serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string());
+                                            &content_owned
+                                        }
+                                    } else {
+                                        return Err(anyhow::anyhow!("missing content"));
+                                    }
+                                }
+                            };
+                            let title_owned: String;
+                            let title = match tool_call.arguments.get("title").and_then(Value::as_str) {
+                                Some(t) if !t.trim().is_empty() => t,
+                                _ => {
+                                    if let Some(topic) = tool_call.arguments.get("topic_key").and_then(Value::as_str) {
+                                        topic
+                                    } else {
+                                        let first_line = content.lines().next().unwrap_or("Untitled Memory").trim();
+                                        title_owned = first_line.chars().take(60).collect();
+                                        if title_owned.is_empty() {
+                                            "Untitled Memory"
+                                        } else {
+                                            &title_owned
+                                        }
+                                    }
+                                }
+                            };
                             let project =
                                 tool_call.arguments.get("project").and_then(Value::as_str);
                             let scope = tool_call.arguments.get("scope").and_then(Value::as_str);
@@ -232,11 +262,29 @@ pub async fn handle_memory_tool(
                                 .get("session_id")
                                 .and_then(Value::as_str)
                                 .unwrap_or("manual");
-                            let content = tool_call
-                                .arguments
-                                .get("content")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| anyhow::anyhow!("missing content"))?;
+                            let content_owned: String;
+                            let content = match tool_call.arguments.get("content") {
+                                Some(Value::String(s)) => s.as_str(),
+                                Some(val) => {
+                                    content_owned = serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string());
+                                    &content_owned
+                                }
+                                None => {
+                                    if let Some(val) = tool_call.arguments.get("prompt")
+                                        .or_else(|| tool_call.arguments.get("text"))
+                                        .or_else(|| tool_call.arguments.get("data"))
+                                    {
+                                        if let Some(s) = val.as_str() {
+                                            s
+                                        } else {
+                                            content_owned = serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string());
+                                            &content_owned
+                                        }
+                                    } else {
+                                        return Err(anyhow::anyhow!("missing content"));
+                                    }
+                                }
+                            };
                             let project =
                                 tool_call.arguments.get("project").and_then(Value::as_str);
                             backend.memory_session_start(
@@ -259,11 +307,29 @@ pub async fn handle_memory_tool(
                                 .get("session_id")
                                 .and_then(Value::as_str)
                                 .unwrap_or("manual");
-                            let content = tool_call
-                                .arguments
-                                .get("content")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| anyhow::anyhow!("missing content"))?;
+                            let content_owned: String;
+                            let content = match tool_call.arguments.get("content") {
+                                Some(Value::String(s)) => s.as_str(),
+                                Some(val) => {
+                                    content_owned = serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string());
+                                    &content_owned
+                                }
+                                None => {
+                                    if let Some(val) = tool_call.arguments.get("data")
+                                        .or_else(|| tool_call.arguments.get("body"))
+                                        .or_else(|| tool_call.arguments.get("text"))
+                                    {
+                                        if let Some(s) = val.as_str() {
+                                            s
+                                        } else {
+                                            content_owned = serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string());
+                                            &content_owned
+                                        }
+                                    } else {
+                                        return Err(anyhow::anyhow!("missing content"));
+                                    }
+                                }
+                            };
                             let project =
                                 tool_call.arguments.get("project").and_then(Value::as_str);
                             backend.memory_session_start(

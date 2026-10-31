@@ -1063,7 +1063,9 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                     let step = item.get("step").and_then(Value::as_i64).unwrap_or(1);
                     let file = item.get("file").and_then(Value::as_str).unwrap_or("");
                     let action_desc = item.get("action").and_then(Value::as_str).unwrap_or("");
-                    body.push_str(&format!("{step}. `{file}` → {action_desc}\n"));
+                    let norm_file = file.replace('\\', "/");
+                    let display_name = norm_file.rsplit('/').next().unwrap_or(&norm_file);
+                    body.push_str(&format!("- [ ] Step {step}: [{display_name}](file:///{norm_file}) → {action_desc}\n"));
                 }
                 body.push('\n');
             }
@@ -1168,7 +1170,9 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                         let file = item.get("file").and_then(Value::as_str).unwrap_or("");
                         let phase = item.get("phase").and_then(Value::as_str).unwrap_or("");
                         let action = item.get("action").and_then(Value::as_str).unwrap_or("");
-                        body.push_str(&format!("{step}. [{phase}] {file} → {action}\n"));
+                        let norm_file = file.replace('\\', "/");
+                        let display_name = norm_file.rsplit('/').next().unwrap_or(&norm_file);
+                        body.push_str(&format!("- [ ] Step {step}. [{phase}] [{display_name}](file:///{norm_file}) → {action}\n"));
                     }
                 }
             }
@@ -1234,7 +1238,9 @@ pub fn format_ozy_brain_response(value: &Value) -> String {
                                     .join(", ")
                             })
                             .unwrap_or_default();
-                        body.push_str(&format!("- {path} (score {score}) {reasons}\n"));
+                        let norm_path = path.replace('\\', "/");
+                        let basename = norm_path.rsplit('/').next().unwrap_or(&norm_path);
+                        body.push_str(&format!("- [{basename}](file:///{norm_path}) (score {score}) {reasons}\n"));
                     }
                 }
             }

@@ -4700,3 +4700,52 @@ Always use context manager with SessionLocal() as db.
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
+
+    #[tokio::test]
+    async fn test_ozy_memory_save_with_data_fallback_and_auto_title() {
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mem_fallback_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let proj_uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1.0" },
+                "workspaceFolders": [{ "uri": proj_uri, "name": "test" }]
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // Call ozy_memory with 'data' object instead of 'content' string, and without 'title'
+        let save_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_memory",
+                "arguments": {
+                    "action": "save",
+                    "topic_key": "performance/loops",
+                    "data": {
+                        "issue": "DOM linear scan inside loop",
+                        "fix": "pre-index rows map before loop"
+                    }
+                }
+            })),
+        };
+
+        let resp = handle_request(&backend, save_req, None, None).await.unwrap().unwrap();
+        assert!(resp.error.is_none(), "ozy_memory save with data fallback should succeed without error");
+
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text.contains("DOM linear scan inside loop") || text.contains("performance/loops"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+

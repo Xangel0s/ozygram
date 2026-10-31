@@ -924,11 +924,9 @@ pub fn extract_ast_diagnostics(
         }];
     };
 
-    if !tree.root_node().has_error() {
-        return Vec::new();
-    }
-
     let mut diagnostics = Vec::new();
+
+    if tree.root_node().has_error() {
     let mut cursor = tree.walk();
     let mut reached_limit = false;
 
@@ -986,8 +984,89 @@ pub fn extract_ast_diagnostics(
             break;
         }
     }
+    }
+
+    // 2. Performance Antipatterns: Quadratic Loops with linear scan / DOM queries
+    scan_quadratic_loop_antipatterns(tree.root_node(), source_code.as_bytes(), file_path, 0, &mut diagnostics);
 
     diagnostics
+}
+
+
+fn scan_quadratic_loop_antipatterns<'a>(
+    node: tree_sitter::Node<'a>,
+    source_bytes: &[u8],
+    file_path: &str,
+    mut loop_depth: usize,
+    diagnostics: &mut Vec<AstDiagnostic>,
+) {
+    if diagnostics.len() >= 10 {
+        return;
+    }
+
+    let kind = node.kind();
+    let is_loop = matches!(
+        kind,
+        "for_statement"
+            | "while_statement"
+            | "for_in_statement"
+            | "for_of_statement"
+            | "do_statement"
+            | "for_expression"
+            | "while_expression"
+            | "loop_expression"
+    );
+
+    if is_loop {
+        loop_depth += 1;
+    }
+
+    if loop_depth > 0 {
+        let is_call = matches!(kind, "call" | "call_expression" | "method_call_expression");
+        if is_call {
+            if let Some(callee_node) = node
+                .child_by_field_name("function")
+                .or_else(|| node.child_by_field_name("name"))
+            {
+                if let Ok(callee_text) = callee_node.utf8_text(source_bytes) {
+                    let method_opt = if callee_text.ends_with(".findall") {
+                        Some("findall")
+                    } else if callee_text.ends_with(".xpath") {
+                        Some("xpath")
+                    } else if callee_text.ends_with(".querySelectorAll") {
+                        Some("querySelectorAll")
+                    } else if callee_text.ends_with(".querySelector") {
+                        Some("querySelector")
+                    } else {
+                        None
+                    };
+
+                    if let Some(m) = method_opt {
+                        let row = node.start_position().row + 1;
+                        diagnostics.push(AstDiagnostic {
+                            file_path: file_path.to_string(),
+                            line_number: row,
+                            severity: "warning".to_string(),
+                            message: format!(
+                                "[ALERT: ANTIPATTERN_QUADRATIC_LOOP] Potential O(N^2) scan in loop body: '{m}()' invoked inside loop; consider pre-indexing or hoisting lookup map"
+                            ),
+                        });
+                        if diagnostics.len() >= 10 {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        scan_quadratic_loop_antipatterns(child, source_bytes, file_path, loop_depth, diagnostics);
+        if diagnostics.len() >= 10 {
+            break;
+        }
+    }
 }
 
 /// Generates an AST-pruned skeleton of a source code file.
@@ -1172,6 +1251,21 @@ mod tests {
         let diags_clean = extract_ast_diagnostics("valid.py", SupportedLanguage::Python, valid_py);
         assert!(diags_clean.is_empty(), "Clean Python code should have no diagnostics");
     }
+
+    #[test]
+    fn test_extract_ast_antipattern_quadratic_loop() {
+        let py_loop_scan = r#"
+def process_rows(dom, items):
+    for item in items:
+        rows = dom.findall("row")
+        print(len(rows))
+"#;
+        let diags = extract_ast_diagnostics("loop_perf.py", SupportedLanguage::Python, py_loop_scan);
+        assert!(!diags.is_empty(), "Should detect quadratic loop antipattern");
+        assert!(diags[0].message.contains("ANTIPATTERN_QUADRATIC_LOOP"));
+        assert!(diags[0].message.contains("findall()"));
+    }
+
 
     #[test]
     fn parses_python_functions_and_classes() {

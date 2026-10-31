@@ -36,9 +36,12 @@ def load_workspace_toml_config(workspace_root: str | None = None) -> dict[str, A
     if not candidate.exists():
         candidate = root / ".ozymem" / "config.toml"
     if not candidate.exists():
-        user_ozy = Path.home() / ".ozy" / "config.toml"
-        if user_ozy.exists():
-            candidate = user_ozy
+        try:
+            user_ozy = Path.home() / ".ozy" / "config.toml"
+            if user_ozy.exists():
+                candidate = user_ozy
+        except Exception:
+            pass
 
     if not candidate.exists():
         return {}
