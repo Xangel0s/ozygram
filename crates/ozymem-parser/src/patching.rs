@@ -92,6 +92,13 @@ pub fn normalize_fuzzy_line(line: &str) -> String {
     normalized.trim().to_string()
 }
 
+/// Helper to detect if CRLF is dominant in a string.
+pub fn is_dominant_crlf(text: &str) -> bool {
+    let crlf_count = text.matches("\r\n").count();
+    let lf_only_count = text.matches('\n').count().saturating_sub(crlf_count);
+    crlf_count > 0 && crlf_count >= lf_only_count
+}
+
 /// Locates a target code block inside the source text.
 /// Returns (start_line, end_line, match_kind) with 1-based indexing.
 pub fn find_target_block(source: &str, target_code: &str) -> Option<(usize, usize, &'static str)> {
@@ -99,19 +106,12 @@ pub fn find_target_block(source: &str, target_code: &str) -> Option<(usize, usiz
         return None;
     }
 
-    let is_crlf = source.contains("\r\n");
-    let source_lines: Vec<&str> = if is_crlf {
-        source.split("\r\n").collect()
-    } else {
-        source.split('\n').collect()
-    };
+    // Transparent ingress normalization: treat all buffers as LF for consistent line matching
+    let norm_source = source.replace("\r\n", "\n");
+    let norm_target = target_code.replace("\r\n", "\n");
 
-    let target_is_crlf = target_code.contains("\r\n");
-    let target_lines: Vec<&str> = if target_is_crlf {
-        target_code.split("\r\n").collect()
-    } else {
-        target_code.split('\n').collect()
-    };
+    let source_lines: Vec<&str> = norm_source.split('\n').collect();
+    let target_lines: Vec<&str> = norm_target.split('\n').collect();
 
     let target_trimmed_lines: Vec<&str> = target_lines
         .iter()
@@ -173,14 +173,14 @@ pub fn apply_fuzzy_ast_patch(
     replacement: &str,
     dry_run: bool,
 ) -> Result<AstPatchResult> {
-    let is_crlf = source.contains("\r\n");
+    let is_crlf = is_dominant_crlf(source);
     let newline = if is_crlf { "\r\n" } else { "\n" };
 
-    let source_lines: Vec<&str> = if is_crlf {
-        source.split("\r\n").collect()
-    } else {
-        source.split('\n').collect()
-    };
+    // Transparent ingress normalization: clean LF buffers for AST operations
+    let norm_source = source.replace("\r\n", "\n");
+    let norm_repl = replacement.replace("\r\n", "\n");
+
+    let source_lines: Vec<&str> = norm_source.split('\n').collect();
 
     let Some((start_line, end_line, match_kind)) = find_target_block(source, target_code) else {
         return Ok(AstPatchResult {
@@ -216,11 +216,7 @@ pub fn apply_fuzzy_ast_patch(
         .unwrap_or("");
 
     // Detect replacement base indentation
-    let repl_lines: Vec<&str> = if replacement.contains("\r\n") {
-        replacement.split("\r\n").collect()
-    } else {
-        replacement.split('\n').collect()
-    };
+    let repl_lines: Vec<&str> = norm_repl.split('\n').collect();
 
     let repl_indent = repl_lines
         .iter()

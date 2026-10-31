@@ -2,7 +2,7 @@
 // Unit and integration tests for Fuzzy AST Block Patching Engine.
 // Zero-Emoji Standard compliant.
 
-use ozymem_parser::patching::{apply_fuzzy_ast_patch, find_target_block, normalize_fuzzy_line};
+use ozymem_parser::patching::{apply_fuzzy_ast_patch, find_target_block, is_dominant_crlf, normalize_fuzzy_line};
 
 #[test]
 fn test_normalize_fuzzy_line() {
@@ -66,6 +66,50 @@ fn test_crlf_preservation() {
     let patched = res.patched_content.expect("Patched content must exist");
     assert!(patched.contains("\r\n"), "Must preserve CRLF line endings");
     assert!(patched.contains("console.log('hello world');"));
+}
+
+#[test]
+fn test_multiline_crlf_source_with_lf_target_and_replacement() {
+    let source = "def process_data(items):\r\n    total = 0\r\n    for item in items:\r\n        total += item\r\n    return total\r\n";
+    let target = "    for item in items:\n        total += item";
+    let replacement = "    for item in items:\n        if item > 0:\n            total += item";
+
+    let res = apply_fuzzy_ast_patch("process.py", source, target, replacement, false)
+        .expect("Patch must apply across CRLF/LF boundary");
+
+    assert!(res.success);
+    assert_eq!(res.matched_by, "exact");
+    assert_eq!(res.start_line, 3);
+    assert_eq!(res.end_line, 4);
+
+    let patched = res.patched_content.expect("Patched content must exist");
+    assert!(patched.contains("\r\n"), "Output must preserve dominant CRLF");
+    assert!(!patched.contains("\r\r\n"), "Must never create double CR carriage returns");
+    assert!(patched.contains("        if item > 0:\r\n            total += item"));
+}
+
+#[test]
+fn test_mixed_line_endings_matching_and_normalization() {
+    let source = "header = True\r\nstep1 = 'done'\nstep2 = 'done'\r\nreturn step2\n";
+    let target = "step1 = 'done'\nstep2 = 'done'";
+    let replacement = "step1 = 'ready'\nstep2 = 'ready'";
+
+    let res = apply_fuzzy_ast_patch("pipeline.py", source, target, replacement, false)
+        .expect("Patch must handle mixed EOL cleanly");
+
+    assert!(res.success);
+    let patched = res.patched_content.expect("Patched content must exist");
+    assert!(patched.contains("step1 = 'ready'"));
+    assert!(patched.contains("step2 = 'ready'"));
+}
+
+#[test]
+fn test_is_dominant_crlf_detector() {
+    assert!(is_dominant_crlf("line1\r\nline2\r\nline3\r\n"));
+    assert!(is_dominant_crlf("line1\r\nline2\nline3\r\n"));
+    assert!(!is_dominant_crlf("line1\nline2\nline3\n"));
+    assert!(!is_dominant_crlf("line1\nline2\r\nline3\n"));
+    assert!(!is_dominant_crlf(""));
 }
 
 #[test]
