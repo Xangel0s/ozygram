@@ -272,7 +272,7 @@ pub(crate) async fn build_code_doctor_report(
         }
     }
 
-    let arch = build_architecture_report(backend).await?;
+    let arch = build_architecture_report(backend, scope).await?;
     let mut body = format!(
         "# Ozy Doctor Code\n\nMode: preview_safe (no files modified)\n\n## Duplicate findings (Refactor Candidates: {}, Structural Boilerplate: {})\n\n",
         refactor_candidates.len(),

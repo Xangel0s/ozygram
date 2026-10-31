@@ -89,6 +89,34 @@ use std::sync::{Arc, Mutex};
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
+    #[test]
+    fn test_simulation_timeout_verdict_formatting() {
+        use ozymem_core::graph_backend::types::{SimulationResult, SimulationStatus};
+        use ozymem_server::formatters::format_simulation_result;
+
+        let sim = SimulationResult {
+            target_symbol: "long_running_fn".to_string(),
+            target_file: "service.py".to_string(),
+            status: SimulationStatus::UnknownTimeout,
+            breaks_dependents: false,
+            arity_changed: false,
+            async_changed: false,
+            old_param_count: 2,
+            new_param_count: 2,
+            old_required_param_count: 2,
+            new_required_param_count: 2,
+            impacted_callers_count: 0,
+            breakages: Vec::new(),
+            execution_time_ms: 3001,
+            isolation_guarantee: "SANDBOX_INVARIANT_COW_RAM_ONLY".to_string(),
+        };
+
+        let formatted = format_simulation_result(&sim);
+        assert!(formatted.contains("Verdict: [STATUS: UNVERIFIED: TIMEOUT_EXCEEDED]"));
+        assert!(formatted.contains("Caller verification timed out before scanning all references"));
+        assert!(!formatted.contains("REJECTED: CONTRACT BREAKAGE"));
+    }
+
     #[tokio::test]
     async fn test_initialize_with_root_uri() {
         let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));

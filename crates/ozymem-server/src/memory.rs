@@ -501,18 +501,43 @@ pub async fn handle_memory_tool(
                                 } else {
                                     None
                                 };
+                                let obs = backend.search_observations(
+                                    query,
+                                    project,
+                                    scope,
+                                    observation_type,
+                                    limit,
+                                )?;
+                                let text = if obs.is_empty() && !query.is_empty() {
+                                    // Hybrid fallback: query similar lessons across SQLite & ChromaDB
+                                    if let Ok(sim_lessons) = backend.similar_lessons(query, limit, 0.40) {
+                                        if !sim_lessons.is_empty() {
+                                            let mut out = format!("[STATUS: ACTIVE] No direct observations, but found {} semantically related memories for '{query}':\n", sim_lessons.len());
+                                            for (i, sl) in sim_lessons.iter().enumerate() {
+                                                out.push_str(&format!(
+                                                    "{}. [score {:.3}] [{}] {} :: {}\n   {}\n",
+                                                    i + 1,
+                                                    sl.score,
+                                                    sl.lesson.kind,
+                                                    sl.lesson.file_path,
+                                                    sl.lesson.symbol_name,
+                                                    sl.lesson.solution
+                                                ));
+                                            }
+                                            out
+                                        } else {
+                                            format_observations_list(&obs)
+                                        }
+                                    } else {
+                                        format_observations_list(&obs)
+                                    }
+                                } else {
+                                    format_observations_list(&obs)
+                                };
                                 ToolCallResult {
                                     content: vec![ContentBlock {
                                         kind: "text",
-                                        text: format_observations_list(
-                                            &backend.search_observations(
-                                                query,
-                                                project,
-                                                scope,
-                                                observation_type,
-                                                limit,
-                                            )?,
-                                        ),
+                                        text,
                                     }],
                                     is_error: None,
                                 }

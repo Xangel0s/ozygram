@@ -408,7 +408,10 @@ pub async fn handle_unified_tool(
                                 ),
                             )?
                         }
-                        "architecture_report" => build_architecture_report(backend).await?,
+                        "architecture_report" => {
+                            let scope = tool_call.arguments.get("scope").and_then(Value::as_str);
+                            build_architecture_report(backend, scope).await?
+                        }
                         "memory_neighborhood" | "neighborhood" => {
                             let entity_type_str = tool_call
                                 .arguments

@@ -511,9 +511,21 @@ fn truncate_chars(mut text: String, max_chars: usize) -> String {
     text
 }
 
-pub(crate) async fn build_architecture_report(backend: &GraphBackend) -> anyhow::Result<String> {
+pub(crate) async fn build_architecture_report(
+    backend: &GraphBackend,
+    scope: Option<&str>,
+) -> anyhow::Result<String> {
     let summary = backend.get_graph_summary().await?;
-    let files = backend.list_all_files().unwrap_or_default();
+    let all_files = backend.list_all_files().unwrap_or_default();
+    let scope_norm = scope.unwrap_or("").replace('\\', "/");
+    let files: Vec<String> = if !scope_norm.is_empty() {
+        all_files
+            .into_iter()
+            .filter(|fp| fp.replace('\\', "/").contains(&scope_norm))
+            .collect()
+    } else {
+        all_files
+    };
     let mut hotspots = Vec::new();
     for fp in files.iter().take(500) {
         if let Ok(n) = backend.get_graph_neighbors(fp).await {
@@ -744,11 +756,20 @@ pub(crate) fn format_table_lineage(report: &ozymem_core::graph_backend::types::T
     out
 }
 
-pub(crate) fn format_simulation_result(sim: &ozymem_core::graph_backend::types::SimulationResult) -> String {
-    let verdict = if sim.breaks_dependents {
-        "[STATUS: REJECTED: CONTRACT BREAKAGE]"
-    } else {
-        "[STATUS: APPROVED: NO CONTRACT BREAKAGE]"
+pub fn format_simulation_result(sim: &ozymem_core::graph_backend::types::SimulationResult) -> String {
+    use ozymem_core::graph_backend::types::SimulationStatus;
+
+    let verdict = match &sim.status {
+        SimulationStatus::Success => {
+            if sim.breaks_dependents {
+                "[STATUS: REJECTED: CONTRACT BREAKAGE]"
+            } else {
+                "[STATUS: APPROVED: NO CONTRACT BREAKAGE]"
+            }
+        }
+        SimulationStatus::UnknownTimeout => "[STATUS: UNVERIFIED: TIMEOUT_EXCEEDED]",
+        SimulationStatus::SyntaxError(_) => "[STATUS: REJECTED: SYNTAX_ERROR]",
+        SimulationStatus::SymbolNotFound => "[STATUS: UNVERIFIED: SYMBOL_NOT_FOUND]",
     };
 
     let mut out = format!(
@@ -770,7 +791,11 @@ pub(crate) fn format_simulation_result(sim: &ozymem_core::graph_backend::types::
 
     out.push_str(&format!("[DETECTED BREAKAGES] ({})\n", sim.breakages.len()));
     if sim.breakages.is_empty() {
-        out.push_str("  No broken callers found. The proposed change is backward-compatible with all existing callers.\n");
+        if matches!(sim.status, SimulationStatus::UnknownTimeout) {
+            out.push_str("  Caller verification timed out before scanning all references. Run focused unit tests to confirm compatibility.\n");
+        } else {
+            out.push_str("  No broken callers found. The proposed change is backward-compatible with all existing callers.\n");
+        }
     } else {
         for b in &sim.breakages {
             out.push_str(&format!(

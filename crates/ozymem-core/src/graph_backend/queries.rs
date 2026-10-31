@@ -1387,7 +1387,7 @@ impl GraphBackend {
         candidate_code: &str,
     ) -> Result<SimulationResult> {
         let start_time = Instant::now();
-        let timeout_limit = std::time::Duration::from_millis(100);
+        let timeout_limit = std::time::Duration::from_millis(3000);
 
         // 1. Locate defining file and original function in RAM/SQLite (Read-Only)
         let (defining_file, old_source, lang) = {
@@ -1450,7 +1450,7 @@ impl GraphBackend {
                 target_symbol: target_symbol.to_string(),
                 target_file: defining_file,
                 status: SimulationStatus::UnknownTimeout,
-                breaks_dependents: true,
+                breaks_dependents: false,
                 arity_changed: false,
                 async_changed: false,
                 old_param_count: 0,
@@ -1514,7 +1514,7 @@ impl GraphBackend {
                     target_symbol: target_symbol.to_string(),
                     target_file: defining_file,
                     status: SimulationStatus::UnknownTimeout,
-                    breaks_dependents: true,
+                    breaks_dependents: false,
                     arity_changed,
                     async_changed,
                     old_param_count: old_total,
