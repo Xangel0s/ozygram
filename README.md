@@ -63,7 +63,7 @@ Stop restarting from zero.<br/>
 
 ---
 
-## [ARCH: TRI-HYBRID NEURO-COGNITIVE SUBSTRATE (v0.2.1)]
+## [ARCH: TRI-HYBRID NEURO-COGNITIVE SUBSTRATE (v0.2.2)]
 
 `	ext
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
@@ -118,6 +118,7 @@ Find the exact capability, technical mechanism, and documentation for your task:
 | **Audit SQL migrations for safety & idempotency** | AST DDL idempotency linter (`IF NOT EXISTS`, drop guards) | [Resilient Backend](docs/architecture.md) | `ozy_doctor(action="audit_migrations")` |
 | **End-to-end frontend to backend tracing** | Bidirectional Next.js/TSX endpoint resolution & SQL lineage | [Cross-Language](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_graph(action="endpoint_dependents")` |
 | **Deliberate high-risk code changes** | Rule-based risk review pipeline with optional LLM critic | [Dialectic Engine](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_brain(action="risk_review")` |
+| **Detect Quadratic $O(N^2)$ Loops** | Static Tree-Sitter loop body linear scan detector (`findall`, `xpath`, `querySelectorAll`) | [Resilient Backend](docs/architecture.md) | `ozy_doctor` / `extract_ast_diagnostics` |
 | **Autonomous offline self-improvement** | Offline trajectory replay dreaming ($0 API cost) & temporal memory decay | [Dream-RSI Guide](docs/dream-rsi.md) | `ozymem dream run` |
 | **3-Way Federated Memory Search** | Reciprocal Rank Fusion (SQLite Lexical + ChromaDB C++ KNN + pgvector) | [Architecture](docs/architecture.md) | `federated_rrf_search` / `ozy_memory` |
 | **Cross-Repo Contract Drift Auditing** | Bidirectional AST verification connecting FastAPI router with Next.js hooks | [Architecture](docs/architecture.md) | `CrossRepoContractTracer` / `audit_workspace` |
@@ -190,18 +191,19 @@ This automatically scans, detects, and configures:
 
 If you prefer to configure your client manually, add Ozygram to your agent's MCP settings configuration:
 
-### Antigravity IDE
-File: `~/.gemini/antigravity-ide/mcp_config.json`
+### Antigravity & Antigravity IDE
+File: `~/.gemini/antigravity/mcp_config.json` or `~/.gemini/antigravity-ide/mcp_config.json`
 ```json
 {
   "mcpServers": {
     "ozygram": {
-      "command": "ozymem-server",
-      "args": []
+      "command": "ozygram",
+      "args": ["serve"]
     }
   }
 }
 ```
+*(Legacy configurations with `"command": "ozymem-server"` and `"args": []` remain 100% active and supported).*
 
 ### Claude Code / Desktop
 File: `claude_desktop_config.json` (or `~/.claude/mcp_config.json`)

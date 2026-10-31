@@ -8,29 +8,31 @@ Ozygram exposes its complete feature set as a standard **Model Context Protocol 
 
 Add the following entry to your MCP client configuration file (`claude_desktop_config.json`, `.gemini/antigravity-ide/mcp_config.json`, etc.):
 
-### Windows
+### Windows (Single-Binary ozygram.exe)
 ```json
 {
   "mcpServers": {
     "ozygram": {
-      "command": "C:\\Users\\YOUR_USER\\.ozymem\\bin\\ozymem-server.exe",
-      "args": []
+      "command": "C:\\Users\\YOUR_USER\\.ozymem\\bin\\ozygram.exe",
+      "args": ["serve"]
     }
   }
 }
 ```
+*(Legacy configurations pointing to `ozymem-server.exe` with `args: []` remain 100% supported).*
 
-### Linux / macOS
+### Linux / macOS (Single-Binary ozygram)
 ```json
 {
   "mcpServers": {
     "ozygram": {
-      "command": "/home/YOUR_USER/.ozymem/bin/ozymem-server",
-      "args": []
+      "command": "/home/YOUR_USER/.ozymem/bin/ozygram",
+      "args": ["serve"]
     }
   }
 }
 ```
+*(Legacy configurations pointing to `ozymem-server` with `args: []` remain 100% supported).*
 
 ---
 
