@@ -519,7 +519,25 @@ def _candidate_file_scores(payload: dict[str, Any], limit: int = 10) -> list[dic
         lower = clean.lower()
         overlap = sorted(token for token in goal_tokens if token in lower)
         if overlap:
-            bump(text, 3 + min(len(overlap), 4), f"matches {', '.join(overlap[:3])}")
+            bump(text, 3 + min(len(overlap), 8), f"matches {', '.join(overlap[:4])}")
+
+        # Compound subdomain and multi-token co-occurrence analysis:
+        # Fast gate: only evaluate segment co-occurrence if the entire path contains at least 2 goal tokens
+        if len(overlap) >= 2:
+            raw_segments = [seg for seg in clean.replace("\\", "/").split("/") if seg]
+            for seg in raw_segments:
+                seg_tokens = {st.lower() for st in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)|[0-9]+", seg) if len(st) >= 3}
+                seg_stemmed = set()
+                for st in seg_tokens:
+                    seg_stemmed.update(_stems(st))
+
+                matched_raw_tokens = sorted(
+                    rt for rt in raw_tokens
+                    if rt in seg_tokens or any(stem in seg_tokens or stem in seg_stemmed for stem in _stems(rt))
+                )
+                if len(matched_raw_tokens) >= 2:
+                    compound_pts = 8 + (len(matched_raw_tokens) * 3)
+                    bump(text, compound_pts, f"compound subdomain in '{seg}' ({', '.join(matched_raw_tokens)})")
 
     # Topological graph impact neighbors
     for entry in _items(payload, "impact"):
