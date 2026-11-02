@@ -125,7 +125,7 @@ Configura de forma autonoma:
 
 ## [LAS 5 META-HERRAMIENTAS MCP (PARA AGENTES)]
 
-El servidor MCP unifica mas de 25 herramientas en **5 meta-herramientas directas**, reduciendo la sobrecarga de tokens en el prompt:
+El servidor MCP incluye **25 unified native MCP tools** (y **57 optional legacy aliases** retrocompatibles) consolidadas en **5 meta-herramientas directas**, reduciendo la sobrecarga de tokens en el prompt:
 
 ```text
 +-------------------+---------------------------------------------------------------------------------+
