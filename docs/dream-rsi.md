@@ -26,28 +26,28 @@ The Trajectory Replay Tuner operates across two complementary timescales: real-t
 
 ```mermaid
 flowchart TD
-    A[Agent Action Proposal] --> B[simulate_action / simulate_patch in RAM]
-    B -->|Calculate Blast Radius Depth 2| C{Blast Radius & Caller Check}
-    C -->|High Risk: Breaks Callers| D[[ALERT: HIGH_BLAST_RADIUS: VETO OR SNAPSHOT]]
-    C -->|Low Risk: Compatible| E[Proceed with Hypothesis]
+    A["Agent Action Proposal"] --> B["simulate_action / simulate_patch in RAM"]
+    B -->|Calculate Blast Radius Depth 2| C{"Blast Radius & Caller Check"}
+    C -->|High Risk: Breaks Callers| D["[ALERT: HIGH_BLAST_RADIUS: VETO OR SNAPSHOT]"]
+    C -->|Low Risk: Compatible| E["Proceed with Hypothesis"]
     
-    D --> F[Capture File Snapshot: rollback_snapshot]
+    D --> F["Capture File Snapshot: rollback_snapshot"]
     E --> F
     
-    F --> G[Execute Action in Codebase / Sandbox]
-    G --> H{Objective Execution Evaluator}
-    H -->|Test Passed exit 0| I[[OBJECTIVE: TEST_PASSED] +1.0 Reward]
-    H -->|Syntax or Compiler Error| J[[ALERT: SYNTAX_OR_LINT_ERROR] -0.8 Reward]
-    H -->|False Claim Without Receipts| K[[ALERT: FALSE_SOLUTION_REJECTED] -1.0 Reward]
+    F --> G["Execute Action in Codebase / Sandbox"]
+    G --> H{"Objective Execution Evaluator"}
+    H -->|Test Passed exit 0| I["[OBJECTIVE: TEST_PASSED] +1.0 Reward"]
+    H -->|Syntax or Compiler Error| J["[ALERT: SYNTAX_OR_LINT_ERROR] -0.8 Reward"]
+    H -->|False Claim Without Receipts| K["[ALERT: FALSE_SOLUTION_REJECTED] -1.0 Reward"]
     
-    J --> L[Prune Node: is_pruned=true]
+    J --> L["Prune Node: is_pruned=true"]
     K --> L
-    L --> M[Atomic Backtracking: rollback_to_parent / rollback_node]
-    M --> N[Disk State Cleaned & Files Restored]
+    L --> M["Atomic Backtracking: rollback_to_parent / rollback_node"]
+    M --> N["Disk State Cleaned & Files Restored"]
     
-    I --> O[Consolidate Solution Path]
+    I --> O["Consolidate Solution Path"]
     
-    O --> P[get_tree: Clean Mermaid Decision Tree]
+    O --> P["get_tree: Clean Mermaid Decision Tree"]
     N --> P
 ```
 
