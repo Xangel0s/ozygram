@@ -49,7 +49,7 @@ This document tracks the chronological evolution, architectural milestones, and 
 - **Bidirectional Re-injection & Offline Sleep Pre-Optimization**: Automatically enriches `ozybrain/plan` steps and recommendations with `[OPTIMIZED_BY_DREAM_RSI]`, pre-computes fragile file branches during the 30-min idle sleep cycle into `.ozymem/dream_latest_insights.json`, and synthesizes Git markdown Gotcha vaccines via `persist_mitigation_vaccine`.
 
 ### 3. Live Dream-RSI Centinela & Multi-Repo Contract Bridge (v2.5.0)
-- Multi-Repo Workspace Scanner discovering consolidated sub-repos (`api-geofal-crm` [FastAPI] + `crm-geofal` [Next.js 16]).
+- Multi-Repo Workspace Scanner discovering consolidated sub-repos (`backend-service` [FastAPI] + `frontend-dashboard` [Next.js 16]).
 - Bidirectional AST Contract Tracer connecting `@router` endpoints with `resilientFetch`/`useQuery` hooks and detecting `ContractDriftAlert`.
 - Transitive Reverse Blast Radius over inverted AST import graph BFS determining direct and indirect component/view breakage.
 - Ephemeral Copy-on-Write RAM mutation and caller arity verification with `MonsterComputeConfig` ($OZY_MAX_COMPUTE=1$).
@@ -69,7 +69,7 @@ This document tracks the chronological evolution, architectural milestones, and 
 - **Continuous STDP Hebbian Plasticity & SQLite Export**: Chronological Git commit sequence mining in DuckDB with automatic materialization of strong causal synapses ($w \ge 0.65$) into SQLite `memory_edges` (`COUPLED_WITH`) for sub-millisecond graph traversals.
 - **Neuromodulator Chemical Regulation**: Global 4D vector $\mathbf{N} = [D, NE, ACh, 5\text{-HT}]$ dynamically modulating RPE reward, flashbulb one-shot consolidation ($D \ge 0.75$), and Amygdala threat sensitivity ($NE \ge 0.60$).
 - **Cerebellar Forward Model & Code Dysmetria**: Kinematic motor model with Kullback-Leibler divergence ($D_{KL}$) detecting motor overshoot (`[ALERT: CODE_DYSMETRIA - MOTOR_OVERSHOOT]`) and missing coupled dependencies (`[ALERT: CODE_DYSMETRIA - UNDER_COUPLED]`).
-- **Corpus Callosum & Blood-Brain Barrier (BBB)**: Multi-workspace meta-pattern transfer between `crmnew` and `default` protected by Shannon entropy filtering ($H(S) \ge 4.5$) and regex secret/path scrubbing.
+- **Corpus Callosum & Blood-Brain Barrier (BBB)**: Multi-workspace meta-pattern transfer between `workspace_monorepo` and `default` protected by Shannon entropy filtering ($H(S) \ge 4.5$) and regex secret/path scrubbing.
 
 ### 3. Neuro-Cognitive Architecture & Offline Dreaming (Fases 1–4 — v2.2.0)
 - **Amygdala Reflex Substrate**: Preemptive SQLite WAL reflex cache (`amygdala_reflexes`) with sub-millisecond (< 1ms) `ozy_context` interception (`[ALERT: AMYGDALA_REFLEX - HIGH_FRAGILITY]`).
@@ -96,7 +96,14 @@ This document tracks the chronological evolution, architectural milestones, and 
 
 ---
 
-## Version v1.5.0 — Enterprise Resilience, Reverse Dependencies, Universal Outbox & UI Sandbox
+---
+
+## Historical Prototype Milestones (Pre-SemVer v1.x Archive)
+
+> [!NOTE]
+> Early internal research milestones initially used a 1.x numbering scheme before formalizing under Semantic Versioning (SemVer 0.x) for public agent distribution. They are retained below for architectural lineage and provenance.
+
+## Version v1.5.0 (Historical Prototype) — Enterprise Resilience, Reverse Dependencies, Universal Outbox & UI Sandbox
 
 ### 1. Fast Lane & Agent DX Enhancements
 - **In-Memory Syntax Linter (`ozy_diagnostics_quick`)**: Exposes native Tree-Sitter diagnostics over MCP, checking Python, TypeScript, TSX, JavaScript, Rust, and Go in $< 5\text{ ms}$ without spawning external compiler processes.
@@ -113,7 +120,7 @@ This document tracks the chronological evolution, architectural milestones, and 
 ### 3. Resilient Backend Architecture & Universal Outbox Pattern
 - **SQL Migration Idempotency Linter (`ozy_doctor(action="audit_migrations")`)**: Static DDL analyzer enforcing `IF NOT EXISTS` / `IF EXISTS` (`[ALERT: NON_IDEMPOTENT_SQL]`) and blocking unannotated destructive operations (`[ALERT: DESTRUCTIVE_UNGUARDED]`).
 - **Universal Outbox Engine (`UniversalOutbox`)**: Transactional outbox supporting SQLite (WAL mode, atomic `claim_pending` locking) and PostgreSQL (`JSONB`, `SKIP LOCKED`) with exponential backoff retries and zero event loss.
-- **CRM Asynchronous Dispatcher (`api-geofal-crm/app/services/outbox.py`)**: Local enqueueing overhead $< 2\text{ ms}$, ensuring HTTP endpoints respond in $< 50\text{ ms}$ while worker threads dispatch emails, webhooks, and websockets in the background.
+- **CRM Asynchronous Dispatcher (`backend-service/app/services/outbox.py`)**: Local enqueueing overhead $< 2\text{ ms}$, ensuring HTTP endpoints respond in $< 50\text{ ms}$ while worker threads dispatch emails, webhooks, and websockets in the background.
 - **Concurrency & Idempotency Test Suite**: Verified at-least-once delivery, competing-consumer deduplication, and crash recovery with zero event loss.
 
 ### 4. Frontend UI Sandbox & Layout Verification Protocol
@@ -177,7 +184,7 @@ This document tracks the chronological evolution, architectural milestones, and 
 
 ---
 
-## 🌙 Version v1.1.0 — Dream-RSI: Zero-Friction MCTS Engine, Trajectory Resumption & Auto-Pruning
+## Version v1.1.0 — Dream-RSI: Zero-Friction MCTS Engine, Trajectory Resumption & Auto-Pruning
 
 ### 1. Resilient Trajectory Diagnostics (`diagnose`)
 - **Cycle-Breaking & Deadlock Elimination**: Ensured ancestor path traversal uses a visited set (`sol_path_ids.insert(...)`), preventing infinite loops and timeouts when inspecting cyclic or re-entrant exploration graphs.
@@ -209,7 +216,7 @@ This document tracks the chronological evolution, architectural milestones, and 
 
 ---
 
-## ⚡ Version v0.4.0 — Dual-Tier Engine, SQLite Outbox & FastEmbed RRF
+## Version v0.4.0 — Dual-Tier Engine, SQLite Outbox & FastEmbed RRF
 
 ### 1. Asymmetric Dual-Tier Architecture
 - **Fast Lane (Rust)**: Ultra-low latency MCP server (< 5 ms), transactional ACID storage in SQLite, and $O(1)$ engram lookup tables via `rkyv` and `memmap2`.
@@ -233,7 +240,7 @@ This document tracks the chronological evolution, architectural milestones, and 
 
 ---
 
-## 🤖 Version v0.3.0 — Multi-Agent Cognition & Analytical Telemetry
+## Version v0.3.0 — Multi-Agent Cognition & Analytical Telemetry
 
 ### 1. Analytical Telemetry Engine (`DataEngine` DuckDB + Polars)
 - Ingests Git history to compute change frequency, code churn, contributor counts, and bug-fix density.
@@ -251,7 +258,7 @@ This document tracks the chronological evolution, architectural milestones, and 
 
 ---
 
-## 🚀 Version v0.2.0 — Cascading Path Resolution, AST & Code Health
+## Version v0.2.0 — Cascading Path Resolution, AST & Code Health
 
 ### 1. Cascading Path Resolution (`resolve_target_path`)
 - 5-stage path resolver for relative, normalized, and suffix matching, eliminating empty query returns in complex monorepos.

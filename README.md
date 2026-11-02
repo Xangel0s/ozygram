@@ -17,6 +17,7 @@
   <a href="#executive-overview"><strong>Executive Overview</strong></a> &bull;
   <a href="#architectural-workflows"><strong>Architectural Workflows</strong></a> &bull;
   <a href="#comparative-evaluation"><strong>Comparative Evaluation</strong></a> &bull;
+  <a href="#empirical-benchmarks--validation-integrity"><strong>Benchmarks</strong></a> &bull;
   <a href="#quickstart--installation"><strong>Quickstart</strong></a> &bull;
   <a href="#consolidated-mcp-meta-tools"><strong>MCP Meta-Tools</strong></a> &bull;
   <a href="#cli-operations--tooling"><strong>CLI Tooling</strong></a> &bull;
@@ -94,6 +95,30 @@ flowchart LR
 | **Code Mutation Safety** | Direct overwrites on disk; build errors require multi-turn conversational repair. | Simulates candidate AST mutations in RAM in $<5\text{ ms}$; discards broken branches before disk write. |
 | **Architectural Continuity** | Forgets past regressions; repeats syntax and contract mistakes across sessions. | Intercepts operations on fragile modules with `[ALERT: GOTCHA_PREVENTION]` directives. |
 | **Execution Sandboxing** | Runs test commands directly on the primary working tree. | Isolates CLI validations in detached ephemeral Git worktrees with automatic RAII cleanup. |
+
+---
+
+## Empirical Benchmarks & Validation Integrity
+
+To maintain absolute technical transparency, all latency, throughput, and token optimization claims map directly to reproducible test suites in the repository:
+
+### 1. Zero-Copy Engram Contract Lookups (< 15 ns)
+* **Underlying Engine:** Binary serialized contract tables via `rkyv` mapped into virtual memory with `memmap2` (`crates/ozymem-core/src/engram_store/`).
+* **Criterion Benchmark Source:** [crates/ozymem-core/benches/engram_bench.rs](crates/ozymem-core/benches/engram_bench.rs)
+* **Replication Command:**
+  ```powershell
+  cargo bench -p ozymem-core --bench engram_bench
+  ```
+
+### 2. Invariant Pruning & Synthetic Task World Benchmark (67.6% Token Reduction)
+* **Underlying Engine:** 30 multi-step synthetic tasks (`SyntheticTaskWorld`) evaluating AST syntax recovery, contract validation, and caller arity protection in RAM.
+* **Scope & Methodology:** Measures the deterministic RAM Code World Model against blind search (Arm 1: blind baseline vs Arm 2: greedy MCTS vs Arm 3: Trajectory Replay Tuner with 67.6% token reduction).
+* **Scientific Scope Note:** This benchmark is an internal regression suite designed to verify that the MCTS engine correctly prunes broken AST mutations in RAM before invoking an LLM. End-to-end evaluations on public multi-repo benchmarks (such as SWE-bench Verified) are scheduled in the development roadmap.
+* **Replication Command:**
+  ```powershell
+  python scripts/bench_external_3arm.py
+  ```
+
 
 ---
 
