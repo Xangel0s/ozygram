@@ -66,7 +66,7 @@ def verify_policy_code_safety(code: str) -> tuple[bool, List[str]]:
 
 class DreamRsiOptimizer:
     """
-    Optimizador recursivo de políticas de exploración.
+    Optimizador recursivo de políticas de exploración (Etapa 4: Puerta de Promoción).
     Evalúa políticas contrafactualmente y promueve mejoras sin riesgo de regresión.
     """
 
@@ -84,32 +84,49 @@ class DreamRsiOptimizer:
         candidate_policy: Optional[BaseExplorationPolicy] = None,
         epsilon: float = 1.0,
         validation_split: float = 0.30,
+        min_trees: int = 3,
     ) -> Dict[str, Any]:
         """
         Evalúa la política activa vs la candidata a través de un lote de trayectorias.
-        Utiliza partición Train/Validation (Hold-Out Set) para evitar sobreajuste.
-        Aplica promoción segura si J_val(candidate) > J_val(active) + epsilon sin errores de poda.
+        Aplica la Puerta de Promoción con Holdout y Comparación Pareada (Etapa 4).
+        Exige un mínimo de árboles (min_trees >= 3) para evitar sobreajuste.
         """
         if not trajectories:
             return {
                 "promoted": False,
+                "verdict": "INSUFICIENTE_EVIDENCIA",
                 "reason": "No hay trayectorias históricas para evaluar.",
                 "active_score": 0.0,
                 "candidate_score": 0.0,
+                "active_version": self.active_policy.version,
+                "reports_evaluated": 0,
             }
 
-        # Partición Train / Validation para evitar sobreajuste
+        # [PUERTA DE PROMOCIÓN - REQUISITO MÍNIMO DE ÁRBOLES]
+        if len(trajectories) < min_trees:
+            return {
+                "promoted": False,
+                "verdict": "INSUFICIENTE_EVIDENCIA",
+                "reason": (
+                    f"Se requieren al menos {min_trees} trayectorias con ramificación para "
+                    f"evaluación confiable (actuales: {len(trajectories)})."
+                ),
+                "active_score": 0.0,
+                "candidate_score": 0.0,
+                "active_version": self.active_policy.version,
+                "reports_evaluated": len(trajectories),
+            }
+
+        # [PARTICIÓN HOLDOUT PARA COMPARACIÓN PAREADA FUERA DE MUESTRA]
         if len(trajectories) >= 4 and 0.0 < validation_split < 1.0:
             split_idx = max(1, int(len(trajectories) * (1.0 - validation_split)))
-            train_trajs = trajectories[:split_idx]
-            val_trajs = trajectories[split_idx:]
+            holdout_trajs = trajectories[split_idx:]
         else:
-            train_trajs = trajectories
-            val_trajs = trajectories
+            holdout_trajs = trajectories
 
-        # 1. Evaluar política activa sobre conjunto de validación
+        # 1. Evaluar política activa sobre el conjunto de holdout
         active_reports: List[SimulationReport] = []
-        for traj in val_trajs:
+        for traj in holdout_trajs:
             rep = self.simulator.simulate(
                 self.active_policy,
                 trajectory_id=traj.get("id", "traj_0"),
@@ -117,55 +134,86 @@ class DreamRsiOptimizer:
             )
             active_reports.append(rep)
 
-        avg_active_score = sum(r.fitness_score for r in active_reports) / len(
-            active_reports
+        avg_active_score = (
+            sum(r.fitness_score for r in active_reports) / len(active_reports)
+            if active_reports
+            else 0.0
         )
 
         if candidate_policy is None:
-            # Si no hay candidata, generar diagnósticos sobre la activa
+            # Si no hay candidata, generar diagnóstico sobre la titular
             all_bottlenecks = [b for r in active_reports for b in r.bottlenecks]
             return {
                 "promoted": False,
+                "verdict": "EVALUACION_BASE",
                 "active_score": round(avg_active_score, 2),
-                "active_policy_version": self.active_policy.version,
+                "candidate_score": 0.0,
+                "active_version": self.active_policy.version,
                 "reports_evaluated": len(active_reports),
                 "bottlenecks": list(set(all_bottlenecks)),
                 "message": "Evaluación de línea base completada.",
             }
 
-        # 2. Evaluar política candidata en conjunto de validación retenido
+        # 2. Evaluar política candidata sobre el conjunto de holdout pareado
         candidate_reports: List[SimulationReport] = []
-        for traj in val_trajs:
-            rep = self.simulator.simulate(
+        paired_improvements: List[float] = []
+
+        for idx, traj in enumerate(holdout_trajs):
+            rep_cand = self.simulator.simulate(
                 candidate_policy,
-                trajectory_id=traj.get("id", "traj_0"),
+                trajectory_id=traj.get("id", f"traj_{idx}"),
                 nodes=traj.get("nodes"),
             )
-            candidate_reports.append(rep)
+            candidate_reports.append(rep_cand)
+            rep_act = active_reports[idx]
+            paired_improvements.append(rep_cand.fitness_score - rep_act.fitness_score)
 
-        avg_candidate_score = sum(r.fitness_score for r in candidate_reports) / len(
-            candidate_reports
+        avg_candidate_score = (
+            sum(r.fitness_score for r in candidate_reports) / len(candidate_reports)
+            if candidate_reports
+            else 0.0
         )
         total_pruning_errors = sum(r.pruning_errors for r in candidate_reports)
+        mean_improvement = (
+            sum(paired_improvements) / len(paired_improvements)
+            if paired_improvements
+            else 0.0
+        )
 
-        # 3. Regla Estricta de Promoción (No-Regresión)
-        improvement = avg_candidate_score - avg_active_score
-        is_strictly_better = improvement >= epsilon and total_pruning_errors == 0
+        active_solved_count = sum(1 for r in active_reports if r.solved)
+        candidate_solved_count = sum(1 for r in candidate_reports if r.solved)
 
-        if is_strictly_better:
+        # 3. Puerta de Promoción Estricta (No-Regresión en Holdout)
+        if candidate_solved_count < active_solved_count:
+            verdict = "REGRESION_DETECTADA"
+            promoted = False
+            msg = f"Rechazada: resolución cayó de {active_solved_count} a {candidate_solved_count} tareas."
+        elif total_pruning_errors > 0:
+            verdict = "ERRORES_DE_PODA"
+            promoted = False
+            msg = f"Rechazada: podó falsamente {total_pruning_errors} rama(s) de solución."
+        elif mean_improvement < epsilon:
+            verdict = "INSUFICIENTE_MEJORA"
+            promoted = False
+            msg = f"Rechazada: mejora media ({mean_improvement:.2f}) inferior al umbral epsilon ({epsilon:.2f})."
+        else:
+            verdict = "PROMOVIDO"
+            promoted = True
+            msg = (
+                f"Promovida exitosamente a {candidate_policy.version} "
+                f"(+{mean_improvement:.2f} pts holdout pareado, 0 podas falsas)."
+            )
             self.active_policy = candidate_policy
 
         return {
-            "promoted": is_strictly_better,
+            "promoted": promoted,
+            "verdict": verdict,
             "active_score": round(avg_active_score, 2),
             "candidate_score": round(avg_candidate_score, 2),
-            "improvement": round(improvement, 2),
+            "improvement": round(mean_improvement, 2),
             "total_pruning_errors": total_pruning_errors,
             "active_version": self.active_policy.version,
+            "reports_evaluated": len(candidate_reports),
             "reports": [r.to_dict() for r in candidate_reports],
-            "message": (
-                f"Política promovida exitosamente a {candidate_policy.version} (+{improvement:.2f} pts)"
-                if is_strictly_better
-                else f"Política candidata rechazada: mejora insuficiente ({improvement:.2f} pts) o errores de podado ({total_pruning_errors})."
-            ),
+            "message": msg,
         }

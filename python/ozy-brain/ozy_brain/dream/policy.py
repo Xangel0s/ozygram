@@ -4,6 +4,7 @@ Defines the Code-as-Policy contract for offline trajectory evaluation and auto-r
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import math
 from typing import Any, Dict, List, Optional
 
@@ -113,3 +114,109 @@ class MctsExplorationPolicy(BaseExplorationPolicy):
             )
 
         return best_child
+
+
+@dataclass
+class PolicyParameters:
+    """Parámetros cuantitativos de la política de exploración en frontera."""
+    c_exploration: float = 1.4142
+    w_tokens: float = 0.001          # Penalización por token gastado (escala /100)
+    w_depth: float = 0.1             # Penalización por profundidad en árbol
+    w_blast: float = 0.5             # Penalización por radio de impacto/blast radius
+    w_failure_class: float = 2.0     # Penalización por clases de fallo o recompensas negativas
+    prune_threshold: float = -3.0
+    max_depth_without_progress: int = 8
+
+
+class ParametricExplorationPolicy(BaseExplorationPolicy):
+    """
+    Política de exploración paramétrica evaluable sobre la frontera de árboles (Etapa 3).
+    Fórmula de scoring sobre la frontera del árbol:
+    Score(u) = Q(u) + c * sqrt(ln(N_p) / N_u) - w_tokens * (cost / 100) - w_depth * depth - w_blast * blast - w_fail * is_fail + bonus_sol
+    """
+
+    def __init__(
+        self,
+        name: str = "parametric_mcts",
+        version: str = "v1.0.0",
+        params: Optional[PolicyParameters] = None,
+        c_exploration: float = 1.4142,
+        w_tokens: float = 0.001,
+        w_depth: float = 0.1,
+        w_blast: float = 0.5,
+        w_failure_class: float = 2.0,
+        prune_threshold: float = -3.0,
+        max_depth_without_progress: int = 8,
+    ):
+        super().__init__(name=name, version=version)
+        if params is not None:
+            self.params = params
+        else:
+            self.params = PolicyParameters(
+                c_exploration=c_exploration,
+                w_tokens=w_tokens,
+                w_depth=w_depth,
+                w_blast=w_blast,
+                w_failure_class=w_failure_class,
+                prune_threshold=prune_threshold,
+                max_depth_without_progress=max_depth_without_progress,
+            )
+
+    @property
+    def exploration_constant(self) -> float:
+        return self.params.c_exploration
+
+    def compute_frontier_score(
+        self,
+        node: Dict[str, Any],
+        parent: Optional[Dict[str, Any]] = None,
+        tree_visits: int = 1,
+    ) -> float:
+        """
+        Calcula el score de prioridad sobre cualquier nodo candidato de la frontera.
+        Evalúa: Q-value, exploración UCT, consumo de tokens, profundidad, radio de blast y señales de fallo.
+        """
+        val = float(node.get("value_estimate", node.get("reward_score", 0.0)))
+        n_node = max(1, int(node.get("visit_count", 1)))
+        n_parent = max(1, int(parent.get("visit_count", 1))) if parent else max(1, tree_visits)
+        exploration = self.params.c_exploration * math.sqrt(math.log(n_parent) / n_node)
+
+        tokens = float(node.get("cost_tokens", 0))
+        token_penalty = self.params.w_tokens * (tokens / 100.0)
+
+        depth = float(node.get("depth", 0))
+        depth_penalty = self.params.w_depth * depth
+
+        blast = float(node.get("blast_ratio", 0.1))
+        blast_penalty = self.params.w_blast * blast
+
+        is_fail = 1.0 if (node.get("failure_class") or float(node.get("reward_score", 0.0)) < 0.0) else 0.0
+        fail_penalty = self.params.w_failure_class * is_fail
+
+        sol_bonus = 50.0 if node.get("is_solution") else 0.0
+
+        return val + exploration + sol_bonus - token_penalty - depth_penalty - blast_penalty - fail_penalty
+
+    def compute_uct_score(self, node: Dict[str, Any], parent_visits: int) -> float:
+        return self.compute_frontier_score(node, parent={"visit_count": parent_visits}, tree_visits=parent_visits)
+
+    def should_prune(self, node: Dict[str, Any]) -> bool:
+        if node.get("is_pruned", False):
+            return True
+        val = float(node.get("value_estimate", node.get("reward_score", 0.0)))
+        if val <= self.params.prune_threshold:
+            return True
+        depth = int(node.get("depth", 0))
+        if depth >= self.params.max_depth_without_progress and not node.get("is_solution", False):
+            return True
+        return False
+
+    def select_best_child(
+        self, parent_node: Dict[str, Any], children: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not children:
+            return None
+        valid = [c for c in children if not self.should_prune(c)]
+        if not valid:
+            valid = children
+        return max(valid, key=lambda c: self.compute_frontier_score(c, parent=parent_node))

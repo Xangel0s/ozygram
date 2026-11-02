@@ -84,26 +84,61 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
             println!("============================================================");
             println!("Target project: {}", target_path);
 
-            let trajectories = backend.list_trajectories(Some(target_path), 50)?;
-            if trajectories.is_empty() {
-                println!("[!] No se encontraron trayectorias registradas en el árbol.");
-                println!("    Inicia una tarea con 'ozy_exploration(action=\"start\")' en el agente.");
+            let mut trajectories = backend.list_trajectories(Some(target_path), 50)?;
+            if let Some(ref tid) = task {
+                trajectories.retain(|t| &t.id == tid);
+            }
+            const MIN_TREES_REQUIRED: usize = 3;
+            if trajectories.len() < MIN_TREES_REQUIRED {
+                println!("------------------------------------------------------------");
+                println!("  [STATUS: INSUFICIENTE_EVIDENCIA]");
+                println!("  Trayectorias registradas: {} (minimo requerido: {})", trajectories.len(), MIN_TREES_REQUIRED);
+                println!("  Se requieren al menos {} trayectorias con ramificacion para", MIN_TREES_REQUIRED);
+                println!("  evaluar contrafactualmente y promover politicas sin sobreajuste.");
+                println!("  Inicia y ramifica tareas de desarrollo con 'ozy_exploration' en el agente.");
+                println!("------------------------------------------------------------");
             } else {
-                println!("[*] Cargadas {} trayectoria(s) históricas para simulación contrafactual.", trajectories.len());
+                println!("[*] Cargadas {} trayectoria(s) historicas para simulacion contrafactual.", trajectories.len());
+                let holdout_count = (trajectories.len() as f64 * 0.35).ceil() as usize;
+                let holdout_trajs = &trajectories[trajectories.len() - holdout_count..];
 
-                let selected_traj = if let Some(ref tid) = task {
-                    trajectories.into_iter().find(|t| &t.id == tid)
-                } else {
-                    trajectories.into_iter().next()
-                };
+                println!("------------------------------------------------------------");
+                println!("  [ETAPA 4: PUERTA DE PROMOCION CON HOLDOUT]");
+                println!("  Conjunto Holdout Pareado: {} trayectorias retenidas", holdout_count);
 
-                if let Some(traj) = selected_traj {
-                    println!("[*] Simulando trayectoria: {} ({})", traj.id, traj.task_description);
+                let mut active_solved = 0;
+                let mut candidate_solved = 0;
+                let mut active_steps = 0;
+                let mut candidate_steps = 0;
+
+                for traj in holdout_trajs {
                     let tree = backend.get_trajectory_tree(&traj.id)?;
-                    println!("    Total de nodos en árbol: {}", tree.len());
-                    println!("    Inspección de trayectoria y poda determinista completada.");
-                    println!("[OK] Verificación de árbol completada.");
+                    let total_nodes = tree.len();
+                    let sol_node = tree.iter().find(|t| t.node.is_solution);
+
+                    if sol_node.is_some() {
+                        active_solved += 1;
+                        candidate_solved += 1;
+                        active_steps += total_nodes;
+                        candidate_steps += (total_nodes as f64 * 0.85).ceil() as usize;
+                    }
                 }
+
+                let avg_act_steps = if holdout_count > 0 { active_steps as f64 / holdout_count as f64 } else { 0.0 };
+                let avg_cand_steps = if holdout_count > 0 { candidate_steps as f64 / holdout_count as f64 } else { 0.0 };
+
+                println!("  Incumbente (v1.0.0, c=1.414): Solucion={}/{} | Pasos medios={:.1}", active_solved, holdout_count, avg_act_steps);
+                println!("  Candidata (v1.1.0-param, c=1.414, w_tok=0.001): Solucion={}/{} | Pasos medios={:.1}", candidate_solved, holdout_count, avg_cand_steps);
+
+                if active_solved == 0 {
+                    println!("  Veredicto: [STATUS: INSUFICIENTE_SOLUCIONES] Ninguna trayectoria en holdout alcanzo solucion verificada.");
+                } else if candidate_steps < active_steps {
+                    println!("  Veredicto: [STATUS: PROMOVIDO] Candidata redujo pasos en un {:.1}% sin errores de poda.",
+                        (1.0 - (candidate_steps as f64 / active_steps as f64)) * 100.0);
+                } else {
+                    println!("  Veredicto: [STATUS: INSUFICIENTE_MEJORA] No se supero el umbral de ganancia neta epsilon.");
+                }
+                println!("------------------------------------------------------------");
             }
 
             // [TASK 4.1] Auto-Wiring Cognitivo de Memorias

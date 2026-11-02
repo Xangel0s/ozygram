@@ -12,8 +12,9 @@ from ozy_brain.dream.policy import BaseExplorationPolicy
 
 class ReplaySimulator:
     """
-    Simulador determinista de reproducción contrafactual.
-    Navega árboles de exploración preexistentes evaluando decisiones de políticas.
+    Simulador determinista de reproducción contrafactual (Etapa 3).
+    Navega la frontera de árboles de exploración preexistentes evaluando decisiones de políticas.
+    Mide los costos en tokens, pasos y latencia hasta la primera solución verificada.
     """
 
     def __init__(self, db_path: Optional[str] = None):
@@ -54,7 +55,8 @@ class ReplaySimulator:
         max_steps: int = 50,
     ) -> SimulationReport:
         """
-        Ejecuta la simulación contrafactual de la política sobre el árbol histórico.
+        Ejecuta la simulación contrafactual navegando la frontera activa del árbol registrado.
+        Evalúa decisiones en base a profundidad, recompensas, tokens, blast radius y señales de fallo.
         """
         if nodes is None:
             nodes = self.load_trajectory_from_sqlite(trajectory_id)
@@ -77,7 +79,7 @@ class ReplaySimulator:
             pid = n.get("parent_id")
             children_by_parent.setdefault(pid, []).append(n)
 
-        # 2. Identificar ancestros de nodos que contienen la solución
+        # 2. Identificar ancestros de nodos que contienen soluciones verificadas
         solution_node_ids: Set[str] = {
             n["id"] for n in nodes if n.get("is_solution")
         }
@@ -93,52 +95,73 @@ class ReplaySimulator:
                 else:
                     break
 
-        # 3. Navegación contrafactual del árbol según la política
+        # 3. Inicialización de la frontera con las raíces
         roots = children_by_parent.get(None, [])
         if not roots:
-            # Si no hay raíz con parent_id None, tomar el nodo con menor profundidad
             roots = [min(nodes, key=lambda n: int(n.get("depth", 0)))]
 
-        current_node = policy.select_best_child({"visit_count": len(nodes)}, roots)
-        if not current_node:
-            current_node = roots[0]
-
-        simulated_path: List[Dict[str, Any]] = [current_node]
+        frontier: List[Dict[str, Any]] = list(roots)
+        simulated_path: List[Dict[str, Any]] = []
+        visited_ids: Set[str] = set()
         pruning_errors = 0
-        solved = bool(current_node.get("is_solution"))
+        solved = False
+        total_tree_visits = len(nodes)
 
-        visited_ids = {current_node["id"]}
-
+        # 4. Navegación contrafactual sobre la frontera del árbol
         for _ in range(max_steps):
-            if solved:
+            if not frontier:
                 break
 
-            children = children_by_parent.get(current_node["id"], [])
-            if not children:
-                # Rama terminal u hoja sin hijos
-                break
-
-            # Comprobar si la política poda erróneamente una rama que conducía a la solución
-            for child in children:
-                if policy.should_prune(child):
+            # Comprobar podas sobre la frontera actual
+            for candidate in list(frontier):
+                if policy.should_prune(candidate):
                     if (
-                        child["id"] in solution_node_ids
-                        or child["id"] in solution_ancestors
+                        candidate["id"] in solution_node_ids
+                        or candidate["id"] in solution_ancestors
                     ):
                         pruning_errors += 1
+                    frontier.remove(candidate)
 
-            # Seleccionar siguiente nodo con la política
-            next_node = policy.select_best_child(current_node, children)
-            if not next_node or next_node["id"] in visited_ids:
+            if not frontier:
                 break
 
-            visited_ids.add(next_node["id"])
-            simulated_path.append(next_node)
-            current_node = next_node
+            # Seleccionar el mejor nodo candidato en la frontera según la política
+            if hasattr(policy, "compute_frontier_score"):
+                chosen = max(
+                    frontier,
+                    key=lambda n: policy.compute_frontier_score(
+                        n,
+                        parent=nodes_by_id.get(n.get("parent_id")),
+                        tree_visits=total_tree_visits,
+                    ),
+                )
+            else:
+                chosen = max(
+                    frontier,
+                    key=lambda n: policy.compute_uct_score(
+                        n,
+                        parent_visits=int(
+                            nodes_by_id.get(n.get("parent_id"), {}).get(
+                                "visit_count", total_tree_visits
+                            )
+                        ),
+                    ),
+                )
 
-            if current_node.get("is_solution"):
+            frontier.remove(chosen)
+            visited_ids.add(chosen["id"])
+            simulated_path.append(chosen)
+
+            # Si el nodo es una solución verificada, terminar con éxito
+            if chosen.get("is_solution"):
                 solved = True
                 break
+
+            # Expandir los hijos del nodo elegido hacia la frontera
+            children = children_by_parent.get(chosen["id"], [])
+            for child in children:
+                if child["id"] not in visited_ids and child not in frontier:
+                    frontier.append(child)
 
         return evaluate_trajectory_simulation(
             trajectory_id=trajectory_id,
