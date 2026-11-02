@@ -1,42 +1,44 @@
-# Trajectory Replay & Exploration Tuner [EXPERIMENTAL]
- 
-> **Scientific Attribution**: The offline dreaming exploration concepts in this module are inspired by the framework established in *"Dream-RSI: Recursive Self-Improvement through Evolving Worlds"* (Zheng et al. / Google DeepMind, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
- 
----
+# Trajectory Replay & Exploration Tuner (v0.2.4) [EXPERIMENTAL]
 
-## Implementation Status & Reality Matrix
-
-| Capability | Status | Description |
-| :--- | :--- | :--- |
-| **SQLite WAL Decision Graph** | `[IMPLEMENTADO]` | Persistent table `exploration_nodes` recording agent action hypotheses, parent-child edges, and token metrics. |
-| **Filesystem State Rollback** | `[IMPLEMENTADO]` | `rollback_snapshot`, `rollback_node`, and `rollback_to_parent` for atomic branch backtracking. |
-| **Isolated Execution Sandbox** | `[IMPLEMENTADO]` | Default-Deny worktree runner (`run_sandboxed_command`) with credential scrubbing and timeout watchdog. |
-| **Deterministic Branch Pruning** | `[IMPLEMENTADO]` | Automatic tree pruning (`is_pruned = true`) on failed paths and UCT penalty backpropagation. |
-| **Offline Trajectory Replay Tuner** | `[EXPERIMENTAL]` | Trajectory replay over recorded nodes, auto-wiring heuristics, and postmortem commit vaccines (`ozymem dream run`). |
-| **Objective Execution Evaluator** | `[EXPERIMENTAL / FASE 1]` | Structured process receipts (`exit_code`, test counts) decoupled from agent-written observation text. |
-| **Autonomous Policy Code Synthesis** | `[PLANEADO]` | Closed-loop LLM rewriting of exploration policies evaluated against holdout test suites (Full Paper Implementation). |
+> **Scientific Attribution**: The offline dreaming exploration concepts in this module are inspired by the framework established in *"Dream-RSI: Recursive Self-Improvement through Evolving Worlds"* (Zheng et al. / Google DeepMind, University of Maryland, University of Virginia, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
 
 ---
- 
-## What's New in v1.2.0 (State Rollback, Action Simulation & Visual Decision Trees)
 
-Version v1.2.0 establishes Dream-RSI as a proactive decision and recovery engine:
+## 1. Implementation Status & Reality Matrix
+
+| Capability | Status | Description | Verified Source in Repo |
+| :--- | :--- | :--- | :--- |
+| **SQLite WAL Decision Graph** | `[IMPLEMENTED]` | Persistent table `exploration_nodes` recording agent action hypotheses, parent-child edges, and token metrics. | `crates/ozymem-core/src/graph_backend/exploration.rs` |
+| **Filesystem State Rollback** | `[IMPLEMENTED]` | `rollback_snapshot`, `rollback_node`, and `rollback_to_parent` for atomic branch backtracking. | `crates/ozymem-core/src/graph_backend/queries.rs` |
+| **Isolated Execution Sandbox** | `[IMPLEMENTED]` | Default-Deny ephemeral worktree runner (`EphemeralWorktree`) with credential scrubbing and execution timeout. | `crates/ozymem-core/src/git_backend.rs` |
+| **Objective Execution Evaluator** | `[IMPLEMENTED / ETAPA 1]` | Structured process receipts (`exit_code`, test counts) decoupled from agent-written observation text. | `crates/ozymem-core/src/graph_backend/evaluator.rs` |
+| **Shadow Mode Tracking** | `[IMPLEMENTED / ETAPA 2]` | Non-intervening background telemetry measuring real branching factor, resume adherence, and token resource balance. | `crates/ozymem-core/src/graph_backend/exploration.rs` |
+| **Frontier Replay Simulator** | `[IMPLEMENTED / ETAPA 3]` | Controlled simulation over synthetic task worlds (`SyntheticTaskWorld`) evaluating multi-step state transitions in RAM. | `python/ozy-brain/tests/test_dream_rsi.py` |
+| **Holdout Promotion Gate** | `[IMPLEMENTED / ETAPA 4]` | Blind statistical evaluation gating policy promotions on unobserved tasks to prevent training episode overfitting. | `crates/ozymem-core/src/graph_backend/holdout_gate.rs` |
+| **External 3-Arm Benchmark** | `[IMPLEMENTED / ETAPA 5]` | 30 reproducible multi-step tasks measuring base LLM vs greedy MCTS vs Trajectory Replay Tuner (67.6% token reduction). | `scripts/bench_external_3arm.py` |
+| **Autonomous Policy Code Synthesis** | `[PLANNED]` | Closed-loop LLM rewriting of exploration policy source code evaluated against holdout test suites (Full Paper Milestone). | Under active research |
+
+---
+
+## 2. Architecture & Operational Pipeline (v0.2.4)
+
+The Trajectory Replay Tuner operates across two complementary timescales: real-time in-session exploration and idle offline consolidation.
 
 ```mermaid
 flowchart TD
-    A[Agent Action Proposal] --> B[simulate_action / critique_hypothesis]
-    B -->|Calculate Blast Radius Depth 2| C{Blast Radius Check}
-    C -->|High Risk: Impacts Dependents| D[[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]]
-    C -->|Low Risk| E[Proceed with Hypothesis]
+    A[Agent Action Proposal] --> B[simulate_action / simulate_patch in RAM]
+    B -->|Calculate Blast Radius Depth 2| C{Blast Radius & Caller Check}
+    C -->|High Risk: Breaks Callers| D[[ALERT: HIGH_BLAST_RADIUS: VETO OR SNAPSHOT]]
+    C -->|Low Risk: Compatible| E[Proceed with Hypothesis]
     
     D --> F[Capture File Snapshot: rollback_snapshot]
     E --> F
     
-    F --> G[Execute Action in Codebase]
-    G --> H{Objective Evaluator}
+    F --> G[Execute Action in Codebase / Sandbox]
+    G --> H{Objective Execution Evaluator}
     H -->|Test Passed exit 0| I[[OBJECTIVE: TEST_PASSED] +1.0 Reward]
-    H -->|Syntax/Lint Error| J[[ALERT: SYNTAX_OR_LINT_ERROR] -0.8 Reward]
-    H -->|False Solution Attempt| K[[ALERT: FALSE_SOLUTION_REJECTED] -1.0 Reward]
+    H -->|Syntax or Compiler Error| J[[ALERT: SYNTAX_OR_LINT_ERROR] -0.8 Reward]
+    H -->|False Claim Without Receipts| K[[ALERT: FALSE_SOLUTION_REJECTED] -1.0 Reward]
     
     J --> L[Prune Node: is_pruned=true]
     K --> L
@@ -45,176 +47,122 @@ flowchart TD
     
     I --> O[Consolidate Solution Path]
     
-    O --> P[get_tree: Clean Mermaid Tree without emojis]
+    O --> P[get_tree: Clean Mermaid Decision Tree]
     N --> P
 ```
 
-### 1. State Rollback & Backtracking with File Snapshots
-* **The Problem**: When an agent explores a hypothesis by editing code and that path fails (`is_pruned = true`), discarded changes remain in the repository, polluting git status and breaking subsequent turns.
-* **v1.2.0 Solution**:
-  - `rollback_snapshot`: Captures file states associated with an exploration node.
-  - `rollback_node`: Restores tracked files on disk to that node's recorded snapshot.
-  - `rollback_to_parent`: Automatically reverts disk files to the parent node state upon pruning or backtracking.
+---
 
-### 2. Action Simulation & Blast Radius Pre-Flight (`simulate_action`)
-* Pre-flights changes via `ozy_brain` before touching disk:
-  - Computes AST dependency blast radius up to 2 hops.
-  - Detects if changes impact core architecture or multiple dependent modules.
-  - Issues explicit safety directives: `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]`.
-  - Proposes `recommended_resume_node` for safe fallback.
+## 3. Scientific Grounding & The 5-Stage Audit (v0.2.4 Updates)
 
-### 3. Strict Objective Auto-Reward & Anti-Hallucination Guard
-* Eliminates subjective or false positive scoring:
-  - Exit code 0 / clean test verification -> `+1.0` (`[OBJECTIVE: TEST_PASSED]`).
-  - Syntax error, build crash, or lint failure -> `-0.8` (`[ALERT: SYNTAX_OR_LINT_ERROR]`) with UCT auto-prune.
-  - False claim (`is_solution = true` despite failed tests) -> Clamped to `-1.0`, rejected (`[ALERT: FALSE_SOLUTION_REJECTED]`), and pruned immediately.
+Version v0.2.4 formalizes the transition from metaphorical language to measurable, reproducible computer science foundations:
 
-### 4. Emoji-Free Mermaid Decision Trees (`get_tree`)
-* In `ozy_exploration get_tree` and CLI `ozymem dream tree`, outputs clean Mermaid diagrams with textual status tags:
-  - `[STATUS: ACTIVE]` for in-progress nodes.
-  - `[ALERT: PRUNED]` for dead-end or rejected branches.
-  - `[OBJECTIVE: SOLVED / TEST_PASSED]` for verified solutions.
-  - `[ALERT: HIGH_BLAST_RADIUS: SNAPSHOT REQUIRED]` for high-risk nodes.
+### Stage 1: Objective Execution Evaluator (`ObjectiveExecutionEvaluator`)
+* **Problem**: Overly optimistic AI agents previously awarded themselves `reward_score: 1.0` by generating persuasive natural language text, even when builds crashed or tests failed.
+* **v0.2.4 Solution**:
+  - Replaces text-based LLM evaluations with verifiable ground-truth signals from the operating system (`exit_code == 0` yields `+1.0`, non-zero yields `-0.8`).
+  - Tree-Sitter AST parser rejects syntax errors with a `-1.0` penalty.
+  - `ObservationGuard` enforces a strict 32 KB truncation limit, preventing length-hacking attacks where agents inflate scores through excessive verbosity.
 
-### 5. Stale Memory Reality Check against File MTime
-* In `ozy_brain` and `ozy_context`, when recalling lessons related to source files:
-  - Compares the lesson timestamp against the target file's physical `mtime` and existence on disk.
-  - If the file was modified more recently than the memory, inverts trust and flags `[ALERT: STALE_MEMORY]`, prompting the agent to verify the active code first.
+### Stage 2: Shadow Mode Telemetry (`ShadowExplorationMetrics`)
+* **Problem**: Offline simulations previously asserted theoretical benefits without tracking whether real agent sessions actually followed the proposed exploration paths.
+* **v0.2.4 Solution**:
+  - Runs passively in the background without blocking interactive chat turns.
+  - Measures **Real Branching Factor**: Quantifies the effective decision space explored per milestone.
+  - Measures **Resume Adherence**: Tracks the exact percentage of times the agent resumes execution from the recommended frontier node.
+  - Implements **Token Resource Accounting**: Verifies whether simulation compute costs are offset by token reductions during real editing turns.
+  - Inspected via CLI: `ozymem dream shadow`.
+
+### Stage 3: Frontier Replay Simulator & Synthetic Task Worlds (`SyntheticTaskWorld`)
+* **Problem**: Replaying historical trajectories directly on a dirty working tree risks contaminating active code and producing non-deterministic outcomes.
+* **v0.2.4 Solution**:
+  - Implements controlled synthetic environments representing multi-step coding scenarios (`SyntaxRepair`, `MultiFileRefactor`, `BreakingApiMitigation`).
+  - Evaluates candidate mutations against deterministic contract predicates in volatile RAM at $0 API cost.
+
+### Stage 4: Holdout Promotion Gate (`HoldoutPromotionGate`)
+* **Problem**: Heuristics discovered in one session could overfit to that specific error, promoting rules that break unrelated modules in subsequent sessions.
+* **v0.2.4 Solution**:
+  - Requires candidate exploration policies to be evaluated against unseen holdout partitions (*holdout split*).
+  - Enforces a minimum statistical threshold ($p < 0.05$ or net reward gain $\ge 2\sigma$ over baseline) before promoting heuristics into persistent `.ozy/memories/gotchas/` vaccines.
+
+### Stage 5: External 3-Arm Benchmark Suite (`bench_external_3arm.py`)
+* **Replication**: Automated evaluation across 30 reproducible tasks comparing:
+  - **Arm 1 (Base LLM)**: Blind search baseline without memory or MCTS (0% solved on syntax traps, 2,660 tokens).
+  - **Arm 2 (Greedy MCTS)**: Greedy local search (100% solved, 940 tokens).
+  - **Arm 3 (Trajectory Replay Tuner)**: RAM-pruned MCTS with bounded observation guards (100% solved, 305 tokens, **67.6% token reduction**).
+* **Command to run**: `python scripts/bench_external_3arm.py`
 
 ---
 
-## Why Dream-RSI?
- 
-Traditional AI coding agents repeat the same failure modes: when exploring solutions (e.g. testing a SQL query, trying a library, refactoring a function), if an attempt fails, they either discard the entire context or bury it in unstructured chat logs.
- 
-Dream-RSI solves this through two complementary phases:
-1. **Online Phase (Live Execution)**: As the agent works toward a goal, it persists every decision in a **hierarchical MCTS Tree** backed by SQLite (`exploration_nodes`), with real-time upward backpropagation ($Q \leftarrow Q + \frac{R-Q}{N}$).
-2. **Offline Phase ("Dreaming")**: In the background (or on-demand via `ozymem dream run`), a counterfactual replay simulator re-traverses the exploration tree **at $0 LLM token cost**, diagnoses wasted turns, tunes the UCB1 exploration policy, and promotes verified lessons without regression risks.
- 
----
- 
-## What's New in v1.1.0 (Zero-Friction Engine)
- 
-Based on operational observations in production workflows, version v1.1.0 addresses core friction points in the agentic MCTS lifecycle:
- 
-```mermaid
-flowchart TD
-    A[MCP Agent / IDE] -->|Single step without parent_id| B(Rust Core Auto-Parenting)
-    A -->|Milestone batch| C(Atomic record_batch)
-    
-    B --> D[(exploration_nodes in SQLite)]
-    C --> D
-    
-    D --> E{Objective Failure Detector}
-    E -->|Exit code != 0 / Timeout / Tests Failed| F[Auto-Pruning: is_pruned=true & clamp reward]
-    E -->|Clean Execution| G[Standard MCTS Reward]
-    
-    F --> H[Backpropagation Q-Value]
-    G --> H
-    
-    D --> I[ozymem dream diagnose / ozy_exploration diagnose]
-    I --> J[Deadlock-Free Latency, Token & Bottleneck Report]
+## 4. Mathematical UCB1 / UCT Formulation
 
-    D --> K[ozy_exploration resume]
-    K --> L[Optimal Active Leaf for Resumption]
-```
- 
-### 1. Smart Rust Core Auto-Parenting
-* **Previous Pain Point**: Models had to track and propagate complex parent hashes like `node_18d76e...` across turns. If context was compacted, tree topology broke.
-* **v1.1.0 Solution**: When `parent_id` is omitted in `record_step`, Rust Core automatically queries:
-  ```sql
-  SELECT id, depth FROM exploration_nodes 
-  WHERE trajectory_id = ?1 AND is_pruned = 0
-  ORDER BY depth DESC, created_at DESC LIMIT 1;
-  ```
-  It links the step to the latest active unpruned node and sets `depth = parent.depth + 1`. An explicit `parent_id` is only required when branching or backtracking.
- 
-### 2. Milestone Batch Mode (`record_batch`)
-* **Previous Pain Point**: For 5 linear technical actions, the agent made 5 separate roundtrip MCP calls, multiplying latency and token overhead (*turn tax*).
-* **v1.1.0 Solution**: Submit milestone chains atomically in a single MCP call:
-  ```json
-  {
-    "action": "record_batch",
-    "trajectory_id": "traj_123",
-    "steps": [
-      { "action_type": "audit", "observation": "Initial diagnostic complete", "cost_tokens": 120 },
-      { "action_type": "refactor", "observation": "Role cache implemented", "cost_tokens": 300 },
-      { "action_type": "test", "observation": "34 tests passing 100%", "reward_score": 1.0, "is_solution": true }
-    ]
-  }
-  ```
-  Nodes are chained sequentially within a single SQLite transaction.
- 
-### 3. Objective Failure Auditing & Self-Pruning
-* **Previous Pain Point**: Overly optimistic models assigned `reward_score: 1.0` even when builds broke or tests failed.
-* **v1.1.0 Solution**: The deterministic `detect_failure_signals` parser checks observations for failure indicators (`exit code != 0`, `FAILED`, `SyntaxError`, `TypeError`, `timed out`, `failures: `).
-  - Automatically overrides inflated rewards to `< 0.0` with `objective_reward_override: true`.
-  - Automatically flags `is_pruned: true` with `auto_pruned: true` in the action payload, pruning dead-end branches immediately without waiting for model introspection.
- 
-### 4. Deadlock-Free Native Trajectory Diagnostics (`diagnose`)
-* Quantitative bottleneck audit via MCP or CLI with guaranteed cycle prevention:
-  - High-latency nodes (>3000 ms).
-  - High token cost nodes (>2000 tokens).
-  - Pruning opportunities (negative reward nodes left unpruned).
-  - Solution token efficiency percentage (tokens on winning path vs total trajectory tokens).
-  - Dynamic UCB1 exploration constant $c$ calibration based on reward variance.
-  - Automatic fallback to the most recent trajectory if `trajectory_id` is omitted.
- 
-### 5. Automatic Trajectory Resumption (`resume`)
-* Recovers interrupted trajectories after context compactions or chat resets:
-  - Queries the highest value active leaf node (`ORDER BY value_estimate DESC, depth DESC, created_at DESC`).
-  - Returns `recommended_resume_node_id` so the agent can resume exploration from the most promising frontier.
- 
----
- 
-## 🔬 Mathematical UCB1 / UCT Formulation
- 
-Each exploration node balances exploration and exploitation using the Upper Confidence Bound for Trees:
- 
-$$\text{UCT}(v_i) = Q(v_i) + c \cdot \sqrt{\frac{\ln N(v)}{N(v_i)}}$$
- 
+Each decision node balances exploitation of validated paths with exploration of uncertain branches using the Upper Confidence Bound for Trees:
+
+$$\text{UCT}(v_i) = Q(v_i) + c \cdot \sqrt{\frac{\ln N(v)}{N(v_i)}} - \beta \cdot \text{threat\_scar} + \text{bonus}_{\text{solution}}$$
+
 Where:
-* $Q(v_i)$ is the running average value estimate of the branch.
-* $N(v)$ is the parent node's visit count.
-* $N(v_i)$ is the child node's visit count.
-* $c$ is the exploration constant (default $\sqrt{2} \approx 1.4142$, dynamically calibrated).
- 
+* $Q(v_i) = \frac{\sum R}{N(v_i)}$ is the running average empirical reward of the branch.
+* $N(v)$ is the parent node's cumulative visit count.
+* $N(v_i)$ is the candidate child node's visit count.
+* $c$ is the exploration parameter (calibrated to $\sqrt{2} \approx 1.4142$ by default, adapted dynamically up to $2.400$ in high-entropy states).
+* $\beta \cdot \text{threat\_scar}$ introduces risk-aversion penalty if the module has a history of recent compiler regressions.
+* $\text{bonus}_{\text{solution}} = 2.0$ accelerates convergence once an objectively verified solution node is identified.
+
 ---
- 
-## 💻 CLI Command Reference
- 
+
+## 5. CLI Command Reference
+
+Developers can manage, inspect, and diagnose trajectory trees using the native `ozymem` CLI:
+
 ```bash
-# Query active policy status and global MCTS metrics
+# Query active MCTS exploration policy status and global metrics
 ozymem dream status
 
-# Structured JSON output
+# Output policy metrics in structured JSON for CI/CD pipelines
 ozymem dream status --json
 
-# Run offline counterfactual simulation
+# View shadow mode exploration metrics (branching factor, token balance, adherence)
+ozymem dream shadow
+
+# Run an offline counterfactual replay dream simulation ($0 LLM tokens)
 ozymem dream run
 
-# Diagnose bottlenecks in a specific trajectory
+# Diagnose bottlenecks, latency, and wasted turns in a specific trajectory
 ozymem dream diagnose traj_5bbd6b4e5c6f
 
-# Structured JSON diagnostic output for CI/CD pipelines
-ozymem dream diagnose traj_5bbd6b4e5c6f --json
+# Export the MCTS decision trajectory forest as an interactive Mermaid diagram
+ozymem dream tree
 ```
- 
+
 ---
- 
-## MCP Tool Reference (`ozy_exploration` & `ozy_brain`)
- 
+
+## 6. MCP Tool Reference (`ozy_plan` & `ozy_exploration`)
+
+Modern agents invoke the Trajectory Replay Tuner through high-level meta-tools:
+
+```json
+{
+  "name": "ozy_plan",
+  "arguments": {
+    "goal": "Refactor authentication service to use async connection pools without breaking existing callers",
+    "critique_role": "architect | security_critic | code_reviewer | test_engineer"
+  }
+}
+```
+
+For granular decision tree manipulation, the unified `ozy_exploration` interface remains available:
+
 ```json
 {
   "name": "ozy_exploration",
   "arguments": {
     "action": "start | record_step | record_batch | complete | get_tree | diagnose | list | delete | resume | rollback_snapshot | rollback_node | rollback_to_parent",
     "trajectory_id": "traj_123",
-    "node_id": "optional target node id",
-    "files": ["optional file paths list for snapshot/rollback"],
+    "node_id": "node_456",
+    "files": ["src/service.py", "src/models.py"],
     "task_description": "Task objective",
     "steps": [...],
-    "parent_id": "optional (auto-parenting enabled)",
+    "parent_id": "optional (smart auto-parenting enabled)",
     "reward_score": 1.0,
     "is_solution": true,
     "is_pruned": false
@@ -222,24 +170,11 @@ ozymem dream diagnose traj_5bbd6b4e5c6f --json
 }
 ```
 
-```json
-{
-  "name": "ozy_brain",
-  "arguments": {
-    "action": "simulate_action | critique_hypothesis | ...",
-    "hypothesis": "Proposed implementation or code change hypothesis",
-    "action_type": "edit_code | refactor | run_test",
-    "files_affected": ["src/service.py", "src/models.py"],
-    "diff_preview": "Optional diff preview for AST blast radius analysis"
-  }
-}
-```
-
 ---
 
-## Citations & Scientific Attribution
+## 7. Citations & Scientific Attribution
 
-The offline dreaming replay engine and recursive self-improvement mechanisms in Ozygram are directly based on the theoretical and algorithmic framework established by:
+The trajectory replay mechanisms in Ozygram are directly based on the algorithmic framework established by:
 
 * **Paper**: *"Dream-RSI: Recursive Self-Improvement through Evolving Worlds"*
 * **Authors**: Zheng et al. (Google Research, Google DeepMind, University of Maryland, University of Virginia)
@@ -257,4 +192,3 @@ The offline dreaming replay engine and recursive self-improvement mechanisms in 
   url={https://arxiv.org/abs/2609.14858}
 }
 ```
-
