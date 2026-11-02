@@ -300,6 +300,25 @@ impl GraphBackend {
             CREATE INDEX IF NOT EXISTS idx_nodes_traj_depth ON exploration_nodes(trajectory_id, depth);
             CREATE INDEX IF NOT EXISTS idx_nodes_parent ON exploration_nodes(parent_id);
 
+            CREATE TABLE IF NOT EXISTS shadow_exploration_metrics (
+                trajectory_id TEXT PRIMARY KEY,
+                project_path TEXT NOT NULL,
+                total_nodes INTEGER NOT NULL DEFAULT 0,
+                max_depth INTEGER NOT NULL DEFAULT 0,
+                branching_factor REAL NOT NULL DEFAULT 0.0,
+                max_branching INTEGER NOT NULL DEFAULT 0,
+                total_cost_tokens INTEGER NOT NULL DEFAULT 0,
+                total_latency_ms INTEGER NOT NULL DEFAULT 0,
+                recommendations_given INTEGER NOT NULL DEFAULT 0,
+                recommendations_followed INTEGER NOT NULL DEFAULT 0,
+                recommendations_ignored INTEGER NOT NULL DEFAULT 0,
+                adherence_rate REAL NOT NULL DEFAULT 0.0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(trajectory_id) REFERENCES exploration_trajectories(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_shadow_proj ON shadow_exploration_metrics(project_path);
+
             CREATE TABLE IF NOT EXISTS amygdala_reflexes (
                 id TEXT PRIMARY KEY,
                 file_path TEXT NOT NULL,
@@ -336,6 +355,7 @@ impl GraphBackend {
         // Migrate exploration_nodes: add rollback_snapshot if table existed without it
         let _ = inner.sqlite.execute("ALTER TABLE exploration_nodes ADD COLUMN rollback_snapshot TEXT NULL", []);
         let _ = inner.sqlite.execute("ALTER TABLE exploration_nodes ADD COLUMN execution_receipt TEXT NULL", []);
+        let _ = inner.sqlite.execute("ALTER TABLE exploration_trajectories ADD COLUMN last_recommended_node_id TEXT NULL", []);
 
         // Migrate v2→v3: add workspace_root column to all data tables
         for table in &["files", "functions", "file_dependencies", "lessons"] {

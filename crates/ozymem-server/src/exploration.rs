@@ -295,6 +295,30 @@ pub fn handle_exploration(
             })
         }
 
+        "shadow_metrics" | "shadow" => {
+            let trajectory_id = resolve_trajectory_id(backend, args)?;
+            let metrics = backend.get_shadow_metrics(&trajectory_id)?;
+
+            let res = json!({
+                "status": "ok",
+                "trajectory_id": trajectory_id,
+                "shadow_metrics": metrics,
+                "message": if metrics.is_some() {
+                    "[STATUS: SHADOW_MODE_ACTIVE] Métricas cuantitativas de exploración registradas en modo sombra"
+                } else {
+                    "[STATUS: NOT_FOUND] No se registraron métricas de modo sombra para esta trayectoria"
+                }
+            });
+
+            Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: serde_json::to_string_pretty(&res)?,
+                }],
+                is_error: None,
+            })
+        }
+
         "finish" | "complete" => {
             let trajectory_id = resolve_trajectory_id(backend, args)?;
             let status = args

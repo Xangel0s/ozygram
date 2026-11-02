@@ -33,6 +33,24 @@ pub struct TrajectoryHeader {
     pub completed_at: Option<String>,
 }
 
+/// Métricas cuantitativas del Modo Sombra (Etapa 2)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ShadowExplorationMetrics {
+    pub trajectory_id: String,
+    pub project_path: String,
+    pub total_nodes: i64,
+    pub max_depth: i64,
+    pub branching_factor: f64,
+    pub max_branching: i64,
+    pub total_cost_tokens: i64,
+    pub total_latency_ms: i64,
+    pub recommendations_given: i64,
+    pub recommendations_followed: i64,
+    pub recommendations_ignored: i64,
+    pub adherence_rate: f64,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExplorationNode {
     pub id: String,
@@ -255,6 +273,11 @@ impl GraphBackend {
              VALUES (?1, ?2, ?3, ?4, 'in_progress', 0, 0.0)",
             params![id, project_path, task_description, policy_ver],
         ).context("Error al iniciar trayectoria de exploración")?;
+
+        let _ = inner.sqlite.execute(
+            "INSERT OR IGNORE INTO shadow_exploration_metrics (trajectory_id, project_path, updated_at) VALUES (?1, ?2, datetime('now'))",
+            params![id, project_path],
+        );
 
         Ok(id)
     }
@@ -500,6 +523,14 @@ impl GraphBackend {
                 }
             }
         }
+
+        // 7. Modo Sombra (Etapa 2): Actualizar telemetría cuantitativa de ramificación, recursos y adhesión
+        Self::update_shadow_metrics_internal(
+            &inner.sqlite,
+            &params.trajectory_id,
+            &effective_parent_id,
+            is_pruned,
+        );
 
         // Consultar el nodo insertado
         let created_at: String = inner.sqlite.query_row(
@@ -1350,4 +1381,200 @@ impl GraphBackend {
             stderr_snippet,
         })
     }
+    fn update_shadow_metrics_internal(
+        conn: &rusqlite::Connection,
+        trajectory_id: &str,
+        effective_parent_id: &Option<String>,
+        is_pruned: bool,
+    ) {
+        // 1. Obtener proyecto y última recomendación registrada
+        let (project_path, last_rec_opt): (String, Option<String>) = conn.query_row(
+            "SELECT project_path, last_recommended_node_id FROM exploration_trajectories WHERE id = ?1",
+            params![trajectory_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap_or_else(|_| (String::new(), None));
+
+        // 2. Obtener métricas de seguimiento previas
+        let (prev_given, prev_followed, prev_ignored): (i64, i64, i64) = conn.query_row(
+            "SELECT recommendations_given, recommendations_followed, recommendations_ignored 
+             FROM shadow_exploration_metrics WHERE trajectory_id = ?1",
+            params![trajectory_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap_or((0, 0, 0));
+
+        let mut recommendations_given = prev_given;
+        let mut recommendations_followed = prev_followed;
+        let mut recommendations_ignored = prev_ignored;
+
+        if let Some(ref rec_id) = last_rec_opt {
+            recommendations_given += 1;
+            if effective_parent_id.as_deref() == Some(rec_id.as_str()) {
+                recommendations_followed += 1;
+            } else {
+                recommendations_ignored += 1;
+            }
+        }
+
+        let adherence_rate = if recommendations_given > 0 {
+            (recommendations_followed as f64) / (recommendations_given as f64)
+        } else {
+            1.0
+        };
+
+        // 3. Contabilidad de nodos y recursos
+        let (total_nodes, max_depth, total_tokens, total_latency): (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(depth), 0), COALESCE(SUM(cost_tokens), 0), COALESCE(SUM(latency_ms), 0)
+             FROM exploration_nodes WHERE trajectory_id = ?1",
+            params![trajectory_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap_or((0, 0, 0, 0));
+
+        // 4. Factor de ramificación efectivo (B) y ramificación máxima
+        let mut child_counts: Vec<i64> = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT COUNT(*) FROM exploration_nodes WHERE trajectory_id = ?1 AND parent_id IS NOT NULL GROUP BY parent_id"
+        ) {
+            if let Ok(rows) = stmt.query_map(params![trajectory_id], |row| row.get(0)) {
+                child_counts = rows.filter_map(|r| r.ok()).collect();
+            }
+        }
+
+        let distinct_parents = child_counts.len() as i64;
+        let total_children: i64 = child_counts.iter().sum();
+        let max_branching = child_counts.into_iter().max().unwrap_or(0);
+        let branching_factor = if distinct_parents > 0 {
+            (total_children as f64) / (distinct_parents as f64)
+        } else {
+            0.0
+        };
+
+        // 5. Persistir en shadow_exploration_metrics
+        let _ = conn.execute(
+            "INSERT INTO shadow_exploration_metrics (
+                trajectory_id, project_path, total_nodes, max_depth, branching_factor,
+                max_branching, total_cost_tokens, total_latency_ms, recommendations_given,
+                recommendations_followed, recommendations_ignored, adherence_rate, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, datetime('now'))
+             ON CONFLICT(trajectory_id) DO UPDATE SET
+                total_nodes = excluded.total_nodes,
+                max_depth = excluded.max_depth,
+                branching_factor = excluded.branching_factor,
+                max_branching = excluded.max_branching,
+                total_cost_tokens = excluded.total_cost_tokens,
+                total_latency_ms = excluded.total_latency_ms,
+                recommendations_given = excluded.recommendations_given,
+                recommendations_followed = excluded.recommendations_followed,
+                recommendations_ignored = excluded.recommendations_ignored,
+                adherence_rate = excluded.adherence_rate,
+                updated_at = datetime('now')",
+            params![
+                trajectory_id,
+                project_path,
+                total_nodes,
+                max_depth,
+                branching_factor,
+                max_branching,
+                total_tokens,
+                total_latency,
+                recommendations_given,
+                recommendations_followed,
+                recommendations_ignored,
+                adherence_rate,
+            ],
+        );
+
+        // 6. Actualizar recomendación para el siguiente paso si hubo poda
+        let next_rec_node_id = if is_pruned {
+            conn.query_row(
+                "SELECT id FROM exploration_nodes
+                 WHERE trajectory_id = ?1 AND is_pruned = 0 AND is_solution = 0
+                 ORDER BY value_estimate DESC, depth DESC, created_at DESC
+                 LIMIT 1",
+                params![trajectory_id],
+                |row| row.get::<_, String>(0),
+            ).ok()
+        } else if effective_parent_id.as_deref() == last_rec_opt.as_deref() {
+            // Recomendación consumida con éxito
+            None
+        } else {
+            last_rec_opt
+        };
+
+        let _ = conn.execute(
+            "UPDATE exploration_trajectories SET last_recommended_node_id = ?1 WHERE id = ?2",
+            params![next_rec_node_id, trajectory_id],
+        );
+    }
+
+    /// Consulta las métricas de Modo Sombra para una trayectoria específica
+    pub fn get_shadow_metrics(&self, trajectory_id: &str) -> Result<Option<ShadowExplorationMetrics>> {
+        let inner = self.inner.lock().unwrap();
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT trajectory_id, project_path, total_nodes, max_depth, branching_factor,
+                    max_branching, total_cost_tokens, total_latency_ms, recommendations_given,
+                    recommendations_followed, recommendations_ignored, adherence_rate, updated_at
+             FROM shadow_exploration_metrics
+             WHERE trajectory_id = ?1"
+        )?;
+
+        let mut rows = stmt.query(params![trajectory_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(ShadowExplorationMetrics {
+                trajectory_id: row.get(0)?,
+                project_path: row.get(1)?,
+                total_nodes: row.get(2)?,
+                max_depth: row.get(3)?,
+                branching_factor: row.get(4)?,
+                max_branching: row.get(5)?,
+                total_cost_tokens: row.get(6)?,
+                total_latency_ms: row.get(7)?,
+                recommendations_given: row.get(8)?,
+                recommendations_followed: row.get(9)?,
+                recommendations_ignored: row.get(10)?,
+                adherence_rate: row.get(11)?,
+                updated_at: row.get(12)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Lista las métricas de Modo Sombra para un proyecto o globales
+    pub fn list_shadow_metrics(&self, project_path: Option<&str>, limit: usize) -> Result<Vec<ShadowExplorationMetrics>> {
+        let inner = self.inner.lock().unwrap();
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT trajectory_id, project_path, total_nodes, max_depth, branching_factor,
+                    max_branching, total_cost_tokens, total_latency_ms, recommendations_given,
+                    recommendations_followed, recommendations_ignored, adherence_rate, updated_at
+             FROM shadow_exploration_metrics
+             WHERE (?1 IS NULL OR project_path = ?1)
+             ORDER BY updated_at DESC
+             LIMIT ?2"
+        )?;
+
+        let rows = stmt.query_map(params![project_path, limit as i64], |row| {
+            Ok(ShadowExplorationMetrics {
+                trajectory_id: row.get(0)?,
+                project_path: row.get(1)?,
+                total_nodes: row.get(2)?,
+                max_depth: row.get(3)?,
+                branching_factor: row.get(4)?,
+                max_branching: row.get(5)?,
+                total_cost_tokens: row.get(6)?,
+                total_latency_ms: row.get(7)?,
+                recommendations_given: row.get(8)?,
+                recommendations_followed: row.get(9)?,
+                recommendations_ignored: row.get(10)?,
+                adherence_rate: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        })?;
+
+        let mut res = Vec::new();
+        for r in rows {
+            res.push(r?);
+        }
+        Ok(res)
+    }
+
 }

@@ -3153,3 +3153,131 @@ fn test_parse_structured_test_counts_cargo_and_pytest() {
     assert_eq!(p_pass, Some(25));
     assert_eq!(p_fail, Some(3));
 }
+
+#[test]
+fn test_shadow_mode_tracks_branching_and_resume_adherence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let backend = GraphBackend::open_for_project(tmp.path()).unwrap();
+    let traj_id = backend.start_trajectory("test_proj", "Test shadow mode metrics", None).unwrap();
+
+    // 1. Root node (depth 0, parent None)
+    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: None,
+        action_type: "read_file".to_string(),
+        action_payload: r#"{"path":"src/lib.rs"}"#.to_string(),
+        observation: "file content read".to_string(),
+        cost_tokens: Some(150),
+        latency_ms: Some(25),
+        reward_score: Some(1.0),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+        rollback_snapshot: None,
+        execution_receipt: None,
+    }).unwrap();
+
+    let m1 = backend.get_shadow_metrics(&traj_id).unwrap().expect("shadow metrics must exist");
+    assert_eq!(m1.total_nodes, 1);
+    assert_eq!(m1.max_depth, 0);
+    assert_eq!(m1.branching_factor, 0.0);
+    assert_eq!(m1.total_cost_tokens, 150);
+    assert_eq!(m1.total_latency_ms, 25);
+    assert_eq!(m1.recommendations_given, 0);
+    assert_eq!(m1.adherence_rate, 1.0);
+
+    // 2. Node 1 fails (pruned), triggering recommendation to root
+    let failed_receipt = ozymem_core::graph_backend::ObjectiveExecutionReceipt {
+        exit_code: 1,
+        passed: false,
+        duration_ms: 100,
+        runner: "cargo test".to_string(),
+        passed_count: Some(5),
+        failed_count: Some(1),
+        ignored_count: None,
+        stdout_snippet: Some("failed test".to_string()),
+        stderr_snippet: None,
+    };
+    let node1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "apply_patch".to_string(),
+        action_payload: r#"{"patch":"bad"}"#.to_string(),
+        observation: "tests failed".to_string(),
+        cost_tokens: Some(200),
+        latency_ms: Some(100),
+        reward_score: None,
+        is_solution: None,
+        is_pruned: None,
+        rollback_snapshot: None,
+        execution_receipt: Some(failed_receipt),
+    }).unwrap();
+    assert!(node1.is_pruned);
+
+    // 3. Node 2 follows recommendation (parent = root)
+    let node2 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "apply_patch".to_string(),
+        action_payload: r#"{"patch":"alternative"}"#.to_string(),
+        observation: "step 2 ok".to_string(),
+        cost_tokens: Some(180),
+        latency_ms: Some(40),
+        reward_score: Some(1.0),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+        rollback_snapshot: None,
+        execution_receipt: None,
+    }).unwrap();
+
+    let m2 = backend.get_shadow_metrics(&traj_id).unwrap().unwrap();
+    assert_eq!(m2.total_nodes, 3);
+    assert_eq!(m2.recommendations_given, 1);
+    assert_eq!(m2.recommendations_followed, 1);
+    assert_eq!(m2.recommendations_ignored, 0);
+    assert_eq!(m2.adherence_rate, 1.0);
+    assert_eq!(m2.total_cost_tokens, 150 + 200 + 180);
+    assert_eq!(m2.total_latency_ms, 25 + 100 + 40);
+
+    // 4. Branching: Add node 3 also under root -> root now has 3 children (node1, node2, node3)
+    let _node3 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(root.id.clone()),
+        action_type: "explore_alternative".to_string(),
+        action_payload: r#"{"alt":3}"#.to_string(),
+        observation: "branch 3".to_string(),
+        cost_tokens: Some(50),
+        latency_ms: Some(10),
+        reward_score: Some(0.5),
+        is_solution: Some(false),
+        is_pruned: Some(false),
+        rollback_snapshot: None,
+        execution_receipt: None,
+    }).unwrap();
+
+    // 5. Add node 4 under node2 (depth 2)
+    let _node4 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id.clone(),
+        parent_id: Some(node2.id.clone()),
+        action_type: "finalize".to_string(),
+        action_payload: r#"{"done":true}"#.to_string(),
+        observation: "solution candidate".to_string(),
+        cost_tokens: Some(100),
+        latency_ms: Some(20),
+        reward_score: Some(2.0),
+        is_solution: Some(true),
+        is_pruned: Some(false),
+        rollback_snapshot: None,
+        execution_receipt: None,
+    }).unwrap();
+
+    let m3 = backend.get_shadow_metrics(&traj_id).unwrap().unwrap();
+    assert_eq!(m3.total_nodes, 5);
+    assert_eq!(m3.max_depth, 2);
+    assert_eq!(m3.branching_factor, 2.0);
+    assert_eq!(m3.max_branching, 3);
+
+    // Verify list_shadow_metrics returns our record
+    let list = backend.list_shadow_metrics(Some("test_proj"), 10).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].trajectory_id, traj_id);
+}

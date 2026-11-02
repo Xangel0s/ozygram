@@ -58,6 +58,18 @@ pub enum DreamSubcommand {
         #[arg(long)]
         json: bool,
     },
+    /// Display shadow mode metrics: tree branching factor, token accounting, and resume adherence
+    Shadow {
+        /// Optional specific trajectory ID
+        #[arg(long)]
+        task: Option<String>,
+        /// Optional path to project or database
+        #[arg(long)]
+        path: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
@@ -153,8 +165,11 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                 0.0
             };
 
+            let shadow_metrics = backend.list_shadow_metrics(Some(target_path), 1).unwrap_or_default();
+            let shadow_opt = shadow_metrics.first();
+
             if *json {
-                let out = json!({
+                let mut out = json!({
                     "engine": "Trajectory Replay & Exploration Tuner [EXPERIMENTAL]",
                     "active_policy": "MctsExplorationPolicy",
                     "policy_version": "v1.0.0",
@@ -165,6 +180,19 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                     "total_steps_in_trees": total_steps,
                     "average_cumulative_reward": avg_reward,
                 });
+                if let Some(m) = shadow_opt {
+                    out["shadow_mode"] = json!({
+                        "effective_branching_factor": m.branching_factor,
+                        "max_branching": m.max_branching,
+                        "max_depth": m.max_depth,
+                        "total_tokens_tracked": m.total_cost_tokens,
+                        "total_latency_ms": m.total_latency_ms,
+                        "recommendations_given": m.recommendations_given,
+                        "recommendations_followed": m.recommendations_followed,
+                        "adherence_rate": m.adherence_rate,
+                        "status": "[STATUS: SHADOW_MODE_ACTIVE]"
+                    });
+                }
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 println!("============================================================");
@@ -178,6 +206,15 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                 println!("  Trajectories Tracked:  {}", trajectories.len());
                 println!("  Total Decision Steps:  {}", total_steps);
                 println!("  Average Reward:        {:.2}", avg_reward);
+                if let Some(m) = shadow_opt {
+                    println!("------------------------------------------------------------");
+                    println!("  [ETAPA 2: MODO SOMBRA - TELEMETRÍA DE EXPLORACIÓN]");
+                    println!("  Effective Branching (B):  {:.2} (max: {})", m.branching_factor, m.max_branching);
+                    println!("  Resume Adherence Rate:    {:.1}% ({}/{} seguidas)", m.adherence_rate * 100.0, m.recommendations_followed, m.recommendations_given);
+                    println!("  Total Tracked Tokens:     {}", m.total_cost_tokens);
+                    println!("  Total Tracked Latency:    {} ms", m.total_latency_ms);
+                    println!("  Status:                   [STATUS: SHADOW_MODE_ACTIVE]");
+                }
                 println!("============================================================");
             }
 
@@ -242,6 +279,45 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                 println!("```mermaid");
                 println!("{}", mermaid.trim_end());
                 println!("```");
+            }
+            Ok(())
+        }
+
+        DreamSubcommand::Shadow { task, path, json } => {
+            let target_path = path.as_deref().unwrap_or(".");
+            let backend = GraphBackend::open_for_project(Path::new(target_path))
+                .context("No se pudo abrir base de datos para consultar métricas de Modo Sombra")?;
+
+            let metrics = if let Some(ref tid) = task {
+                backend.get_shadow_metrics(tid)?.into_iter().collect::<Vec<_>>()
+            } else {
+                backend.list_shadow_metrics(Some(target_path), 50).unwrap_or_default()
+            };
+
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&metrics)?);
+            } else {
+                println!("============================================================");
+                println!("  OZYMEM: SHADOW MODE EXPLORATION METRICS [ETAPA 2]");
+                println!("============================================================");
+                if metrics.is_empty() {
+                    println!("  [STATUS: NO_METRICS] No hay trayectorias registradas aún.");
+                } else {
+                    for m in &metrics {
+                        println!("  Trajectory:               {}", m.trajectory_id);
+                        println!("  Effective Branching (B):  {:.2} (max: {})", m.branching_factor, m.max_branching);
+                        println!("  Max Depth:                {}", m.max_depth);
+                        println!("  Total Decision Steps:     {}", m.total_nodes);
+                        println!("  Total Tokens Tracked:     {}", m.total_cost_tokens);
+                        println!("  Total Latency Tracked:    {} ms", m.total_latency_ms);
+                        println!("  Recommendations Given:    {}", m.recommendations_given);
+                        println!("  Recommendations Followed: {}", m.recommendations_followed);
+                        println!("  Recommendations Ignored:  {}", m.recommendations_ignored);
+                        println!("  Adherence Rate:           {:.1}%", m.adherence_rate * 100.0);
+                        println!("  Updated At:               {}", m.updated_at);
+                        println!("------------------------------------------------------------");
+                    }
+                }
             }
             Ok(())
         }
@@ -310,6 +386,28 @@ mod tests {
 
         let cmd = DreamSubcommand::Graph {
             module: None,
+            path: Some(temp_root.to_string_lossy().to_string()),
+            json: true,
+        };
+        let res = run_dream_command(&cmd);
+        let _ = std::fs::remove_dir_all(&temp_root);
+        assert!(res.is_ok(), "run_dream_command(&cmd) failed: {:?}", res);
+    }
+
+    #[test]
+    fn test_dream_subcommand_shadow() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "ozymem-dream-shadow-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::create_dir_all(&temp_root);
+
+        let cmd = DreamSubcommand::Shadow {
+            task: None,
             path: Some(temp_root.to_string_lossy().to_string()),
             json: true,
         };
