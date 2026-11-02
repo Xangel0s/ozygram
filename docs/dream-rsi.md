@@ -1,7 +1,21 @@
-# Dream-RSI & Monte Carlo Tree Search (MCTS) v1.2.0
+# Trajectory Replay & Exploration Tuner [EXPERIMENTAL]
  
-**Dream-RSI** (*Recursive Self-Improvement via Offline MCTS Replay*) is Ozygram's continuous self-improvement subsystem. It elevates AI coding agents from flat, ephemeral chat histories into a **computable, structured, and optimizable exploration graph**.
+> **Scientific Attribution**: The offline dreaming exploration concepts in this module are inspired by the framework established in *"Dream-RSI: Recursive Self-Improvement through Evolving Worlds"* (Zheng et al. / Google DeepMind, [arXiv:2609.14858](https://arxiv.org/abs/2609.14858)).
  
+---
+
+## Implementation Status & Reality Matrix
+
+| Capability | Status | Description |
+| :--- | :--- | :--- |
+| **SQLite WAL Decision Graph** | `[IMPLEMENTADO]` | Persistent table `exploration_nodes` recording agent action hypotheses, parent-child edges, and token metrics. |
+| **Filesystem State Rollback** | `[IMPLEMENTADO]` | `rollback_snapshot`, `rollback_node`, and `rollback_to_parent` for atomic branch backtracking. |
+| **Isolated Execution Sandbox** | `[IMPLEMENTADO]` | Default-Deny worktree runner (`run_sandboxed_command`) with credential scrubbing and timeout watchdog. |
+| **Deterministic Branch Pruning** | `[IMPLEMENTADO]` | Automatic tree pruning (`is_pruned = true`) on failed paths and UCT penalty backpropagation. |
+| **Offline Trajectory Replay Tuner** | `[EXPERIMENTAL]` | Trajectory replay over recorded nodes, auto-wiring heuristics, and postmortem commit vaccines (`ozymem dream run`). |
+| **Objective Execution Evaluator** | `[EXPERIMENTAL / FASE 1]` | Structured process receipts (`exit_code`, test counts) decoupled from agent-written observation text. |
+| **Autonomous Policy Code Synthesis** | `[PLANEADO]` | Closed-loop LLM rewriting of exploration policies evaluated against holdout test suites (Full Paper Implementation). |
+
 ---
  
 ## What's New in v1.2.0 (State Rollback, Action Simulation & Visual Decision Trees)

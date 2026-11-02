@@ -68,7 +68,7 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                 .context("No se pudo inicializar GraphBackend para Dream-RSI")?;
 
             println!("============================================================");
-            println!("  OZYMEM DREAM-RSI: RECURSIVE SELF-IMPROVEMENT LOOP (MCTS)");
+            println!("  OZYMEM: TRAJECTORY REPLAY & EXPLORATION TUNER [EXPERIMENTAL]");
             println!("============================================================");
             println!("Target project: {}", target_path);
 
@@ -89,8 +89,8 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                     println!("[*] Simulando trayectoria: {} ({})", traj.id, traj.task_description);
                     let tree = backend.get_trajectory_tree(&traj.id)?;
                     println!("    Total de nodos en árbol: {}", tree.len());
-                    println!("    Simulación contrafactual completada (Costo: 0 tokens LLM).");
-                    println!("[OK] Política MCTS activa evaluada con éxito.");
+                    println!("    Inspección de trayectoria y poda determinista completada.");
+                    println!("[OK] Verificación de árbol completada.");
                 }
             }
 
@@ -155,7 +155,7 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
 
             if *json {
                 let out = json!({
-                    "engine": "Dream-RSI / MCTS",
+                    "engine": "Trajectory Replay & Exploration Tuner [EXPERIMENTAL]",
                     "active_policy": "MctsExplorationPolicy",
                     "policy_version": "v1.0.0",
                     "exploration_constant": 1.4142,
@@ -168,7 +168,7 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 println!("============================================================");
-                println!("  OZYMEM DREAM-RSI / MCTS EXPLORATION STATUS");
+                println!("  OZYMEM: TRAJECTORY REPLAY & EXPLORATION STATUS [EXPERIMENTAL]");
                 println!("============================================================");
                 println!("  Active Policy:         MctsExplorationPolicy");
                 println!("  Policy Version:        v1.0.0");

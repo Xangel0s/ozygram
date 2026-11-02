@@ -22,11 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clickable File Links & Markdown Actionable Checklists**:
   - Automatic formatting of topological refactoring sequences and candidate file scores into GitHub-flavored markdown checklists (`- [ ] Step N: [file](file:///path)`) with forward-slashed clickable `file:///` URLs.
 - **Windows Platform Hardening & Exception Safeguards**:
-  - Safeguarded `Path.home()` against Windows environments with wiped user profile variables, normalized drive letter casing (`C:` vs `c:`), and calibrated kinematic cerebellar model.
+  - Safeguarded `Path.home()` against Windows environments with wiped user profile variables, normalized drive letter casing (`C:` vs `c:`), and calibrated co-change distribution model.
 
 ### Changed
 - Release binaries compiled and verified under release profile: `ozygram.exe` (45.8 MB) and `ozymem-server.exe` (40.5 MB) deployed to `~/.cargo/bin/` and `~/.ozymem/bin/`.
-- Full workspace test suite passes with 100% coverage across 50 parser tests, 81 server tests, 19 CLI tests, and 265 Python tests.
+- Full workspace test suite passes with 100% pass rate across 415 tests (50 parser tests, 81 server tests, 19 CLI tests, and 265 Python tests).
 
 ## [0.2.2] - 2026-10-30
 

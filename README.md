@@ -11,7 +11,8 @@
 [![Storage L2](https://img.shields.io/badge/L2_Vector-ChromaDB_C++_KNN-fc5200?style=for-the-badge)](docs/semantic-search.md)
 [![Storage L3](https://img.shields.io/badge/L3_Cluster-PostgreSQL_+_pgvector_+_ltree-336791?style=for-the-badge&logo=postgresql)](docs/architecture.md)
 [![Vector](https://img.shields.io/badge/Search-FastEmbed_ONNX_+_RRF-success?style=for-the-badge)](docs/semantic-search.md)
-[![Self-Improvement](https://img.shields.io/badge/Offline_Replay-Dream--RSI-purple?style=for-the-badge)](docs/dream-rsi.md)
+[![Self-Improvement](https://img.shields.io/badge/Exploration-Trajectory_Replay_Tuner_[EXPERIMENTAL]-purple?style=for-the-badge)](docs/dream-rsi.md)
+[![Test Suite](https://img.shields.io/badge/Tests-415_Passing_(100%25)-brightgreen?style=for-the-badge)](docs/changelog.md)
 [![Platform](https://img.shields.io/badge/Platform-Windows_|_Linux_|_macOS-lightgrey?style=for-the-badge)](https://github.com/Xangel0s/ozygram)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
@@ -38,7 +39,7 @@ Stop restarting from zero.<br/>
 <strong>Empower your AI agent with continuous, self-improving intelligence.</strong>
 </p>
 
-<p><sub>A neuro-symbolic engine that maps code graphs in microseconds, simulates patches in RAM before touching disk, and dreams offline via Dream-RSI to turn past mistakes into permanent architectural instincts at $0 API cost.</sub></p>
+<p><sub>A high-performance neuro-symbolic engine that maps AST code graphs, validates patches before disk writes, and tracks MCTS decision trajectories with deterministic tree pruning and memory auto-wiring.</sub></p>
 
 </div>
 
@@ -108,24 +109,21 @@ Stop restarting from zero.<br/>
 
 Find the exact capability, technical mechanism, and documentation for your task:
 
-| What You Need | Technical Mechanism | Documentation | Recommended Tool / Command |
-| :--- | :--- | :--- | :--- |
-| **Search past fixes, gotchas & rules** | Hybrid Reciprocal Rank Fusion (FTS5 BM25 + FastEmbed ONNX) | [Semantic Search](docs/semantic-search.md) | `ozy_memory(action="search")` |
-| **Inspect symbol contracts without loading full files** | $O(1)$ `rkyv` memory-mapped contract table | [Engram System](docs/engram_system.md) | `ozy_lookup_engram` / `ozymem symbol` |
-| **Analyze Blast Radius before editing code** | Inverted directional AST import traversal & reverse dependencies | [Supervision Guide](docs/supervision-and-validation.md) | `ozy_graph(action="incoming_dependencies")` |
-| **Pre-flight test code patches safely in memory** | Read-only static caller arity & contract validator | [Cognitive Evolution](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_simulate_patch` |
-| **Surgical AST exploration with token reduction** | Tree-Sitter method skeletonization with multi-level LOD | [Token Optimization](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `view_skeleton` / `ozy_file_tree` |
-| **Audit SQL migrations for safety & idempotency** | AST DDL idempotency linter (`IF NOT EXISTS`, drop guards) | [Resilient Backend](docs/architecture.md) | `ozy_doctor(action="audit_migrations")` |
-| **End-to-end frontend to backend tracing** | Bidirectional Next.js/TSX endpoint resolution & SQL lineage | [Cross-Language](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_graph(action="endpoint_dependents")` |
-| **Deliberate high-risk code changes** | Rule-based risk review pipeline with optional LLM critic | [Dialectic Engine](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_brain(action="risk_review")` |
-| **Detect Quadratic $O(N^2)$ Loops** | Static Tree-Sitter loop body linear scan detector (`findall`, `xpath`, `querySelectorAll`) | [Resilient Backend](docs/architecture.md) | `ozy_doctor` / `extract_ast_diagnostics` |
-| **Autonomous offline self-improvement** | Offline trajectory replay dreaming ($0 API cost) & temporal memory decay | [Dream-RSI Guide](docs/dream-rsi.md) | `ozymem dream run` |
-| **3-Way Federated Memory Search** | Reciprocal Rank Fusion (SQLite Lexical + ChromaDB C++ KNN + pgvector) | [Architecture](docs/architecture.md) | `federated_rrf_search` / `ozy_memory` |
-| **Cross-Repo Contract Drift Auditing** | Bidirectional AST verification connecting FastAPI router with Next.js hooks | [Architecture](docs/architecture.md) | `CrossRepoContractTracer` / `audit_workspace` |
-| **Warm-Started Branching MCTS Plan** | Intermediate state bifurcation with noradrenergic PUCT exploration modulation | [Dream-RSI Guide](docs/dream-rsi.md) | `ozy_brain(action="plan")` |
-| **Persistent Trajectory Forest** | Hierarchical ltree subtree queries with `<@` operator in PostgreSQL | [Architecture](docs/architecture.md) | `MctsForestRepository` |
-| **Global SWR Replay Lake** | HNSW cosine distance indexing (`<=>`) over failure ripples and invariant vaccines | [Architecture](docs/architecture.md) | `search_swr_ripples_knn` |
-
+| Capability | Status | Technical Mechanism | Documentation | Tool / Command |
+| :--- | :--- | :--- | :--- | :--- |
+| **Search past fixes, gotchas & rules** | `[IMPLEMENTADO]` | Hybrid Reciprocal Rank Fusion (FTS5 BM25 + FastEmbed ONNX) | [Semantic Search](docs/semantic-search.md) | `ozy_memory(action="search")` |
+| **Inspect symbol contracts without loading full files** | `[IMPLEMENTADO]` | $O(1)$ `rkyv` memory-mapped contract table | [Engram System](docs/engram_system.md) | `ozy_lookup_engram` / `ozymem symbol` |
+| **Analyze Blast Radius before editing code** | `[IMPLEMENTADO]` | Inverted directional AST import traversal & reverse dependencies | [Supervision Guide](docs/supervision-and-validation.md) | `ozy_graph(action="incoming_dependencies")` |
+| **Pre-flight test code patches safely in memory** | `[IMPLEMENTADO]` | Read-only static caller arity & contract validator | [Cognitive Evolution](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_simulate_patch` |
+| **Surgical AST exploration with token reduction** | `[IMPLEMENTADO]` | Tree-Sitter method skeletonization with multi-level LOD | [Token Optimization](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `view_skeleton` / `ozy_file_tree` |
+| **Audit SQL migrations for safety & idempotency** | `[IMPLEMENTADO]` | AST DDL idempotency linter (`IF NOT EXISTS`, drop guards) | [Resilient Backend](docs/architecture.md) | `ozy_doctor(action="audit_migrations")` |
+| **End-to-end frontend to backend tracing** | `[IMPLEMENTADO]` | Bidirectional Next.js/TSX endpoint resolution & SQL lineage | [Cross-Language](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | `ozy_graph(action="endpoint_dependents")` |
+| **Detect Quadratic $O(N^2)$ Loops** | `[IMPLEMENTADO]` | Static Tree-Sitter loop body linear scan detector | [Resilient Backend](docs/architecture.md) | `ozy_doctor` |
+| **Ephemeral Worktree Command Isolation** | `[IMPLEMENTADO]` | Sandboxed process runner (`run_sandboxed_command`) with Default-Deny policy | [Architecture](docs/architecture.md) | `EphemeralWorktree` |
+| **Trajectory Recording & Rollback Snapshots** | `[IMPLEMENTADO]` | SQLite WAL decision tree (`exploration_nodes`) with filesystem snapshot restore | [Exploration Guide](docs/dream-rsi.md) | `record_exploration_node` / `rollback_node` |
+| **Trajectory Replay Tuner** | `[EXPERIMENTAL]` | Offline replay over recorded trees, auto-wiring, and postmortem commit vaccines | [Exploration Guide](docs/dream-rsi.md) | `ozymem dream run` |
+| **Objective Execution Evaluator** | `[EXPERIMENTAL / FASE 1]` | Deterministic reward derivation from process exit code and structured test receipts | [Exploration Guide](docs/dream-rsi.md) | `record_exploration_node` with receipts |
+| **LLM Code-as-Policy Closed Loop** | `[PLANEADO]` | Autonomous LLM policy code rewriting with holdout validation (Zheng et al. paper) | [Roadmap](docs/ROADMAP_COGNITIVE_EVOLUTION.md) | Under development |
 ---
 
 ## [QUICKSTART: 1-MINUTE INSTALL]
