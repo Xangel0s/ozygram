@@ -350,6 +350,36 @@ class BadPolicy:
         self.assertEqual(res_sufficient["verdict"], "PROMOVIDO")
         self.assertEqual(optimizer2.active_policy.version, "v2.0.0")
 
+    def test_3arm_external_benchmark_generation(self):
+        """
+        Etapa 5: Valida la suite de benchmark externo de 3 brazos con 30 tareas y 10 en holdout.
+        """
+        import sys
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        sys.path.insert(0, str(repo_root))
+        from scripts.bench_external_3arm import (
+            generate_30_benchmark_tasks,
+            simulate_arm_1_no_ozygram,
+            simulate_arm_2_fixed_guardrails,
+            simulate_arm_3_dream_tuned_policy,
+        )
+
+        tasks = generate_30_benchmark_tasks()
+        self.assertEqual(len(tasks), 30)
+        holdout_count = sum(1 for t in tasks if t.is_holdout)
+        self.assertEqual(holdout_count, 10)
+
+        t0 = tasks[0]
+        r1 = simulate_arm_1_no_ozygram(t0)
+        r2 = simulate_arm_2_fixed_guardrails(t0)
+        r3 = simulate_arm_3_dream_tuned_policy(t0)
+
+        self.assertFalse(r1.solved)
+        self.assertTrue(r2.solved)
+        self.assertTrue(r3.solved)
+        self.assertLessEqual(r3.tokens_consumed, r2.tokens_consumed)
+
 
 if __name__ == "__main__":
     unittest.main()

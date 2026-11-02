@@ -1,0 +1,71 @@
+{
+  "benchmark": "ozygram_external_3arm_suite",
+  "timestamp": "2026-11-02T16:20:59Z",
+  "total_tasks": 30,
+  "holdout_tasks": 10,
+  "arm1_no_ozygram": {
+    "global": {
+      "total_tasks": 30,
+      "solved_count": 0,
+      "solve_rate_pct": 0.0,
+      "mean_steps": 8.0,
+      "mean_tokens": 2660.0,
+      "total_wasted_loops": 230,
+      "total_rollbacks": 0
+    },
+    "holdout": {
+      "total_tasks": 10,
+      "solved_count": 0,
+      "solve_rate_pct": 0.0,
+      "mean_steps": 8.0,
+      "mean_tokens": 2652.0,
+      "total_wasted_loops": 77,
+      "total_rollbacks": 0
+    }
+  },
+  "arm2_fixed_guardrails": {
+    "global": {
+      "total_tasks": 30,
+      "solved_count": 30,
+      "solve_rate_pct": 100.0,
+      "mean_steps": 4.33,
+      "mean_tokens": 940.0,
+      "total_wasted_loops": 60,
+      "total_rollbacks": 30
+    },
+    "holdout": {
+      "total_tasks": 10,
+      "solved_count": 10,
+      "solve_rate_pct": 100.0,
+      "mean_steps": 4.3,
+      "mean_tokens": 917.0,
+      "total_wasted_loops": 20,
+      "total_rollbacks": 10
+    }
+  },
+  "arm3_dream_tuned_policy": {
+    "global": {
+      "total_tasks": 30,
+      "solved_count": 30,
+      "solve_rate_pct": 100.0,
+      "mean_steps": 2.23,
+      "mean_tokens": 305.0,
+      "total_wasted_loops": 4,
+      "total_rollbacks": 4
+    },
+    "holdout": {
+      "total_tasks": 10,
+      "solved_count": 10,
+      "solve_rate_pct": 100.0,
+      "mean_steps": 2.1,
+      "mean_tokens": 280.0,
+      "total_wasted_loops": 1,
+      "total_rollbacks": 1
+    }
+  },
+  "conclusions": {
+    "guardrail_resolution_gain_pct": 100.0,
+    "dream_policy_token_economy_gain_pct": 67.6,
+    "holdout_regression_rate_pct": 0.0
+  }
+}
