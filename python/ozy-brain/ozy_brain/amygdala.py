@@ -487,3 +487,9 @@ class AmygdalaReflexEngine:
         }
 
     run_amygdala_cycle = run_efferent_cycle
+
+
+# Formal software engineering aliases
+FailureHistoryEngine = AmygdalaReflexEngine
+ErrorRecoveryFilter = VmPFCExtinctionGater
+

@@ -252,3 +252,7 @@ class BasalGangliaEngine:
             "habits_discovered": len(habits),
             "sqlite_habits_upserted": written,
         }
+
+
+# Formal software engineering alias
+CommitCoOccurrenceEngine = BasalGangliaEngine

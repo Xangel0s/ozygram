@@ -434,3 +434,7 @@ class StdpSynapseEngine:
             }
         except Exception as e:
             return {"status": "error", "error": str(e), "synapses_recorded": 0, "edges_exported": 0}
+
+
+# Formal software engineering alias
+CausalCouplingEngine = StdpSynapseEngine

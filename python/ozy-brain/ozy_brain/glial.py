@@ -293,3 +293,7 @@ class AstrocyteMetabolicEngine:
             "sleep_pressure": 0.0,
             "badge": "[STATUS: ASTROCYTE_HOMEOSTASIS_RESTORED]",
         }
+
+
+# Formal software engineering alias
+VectorGarbageCollector = GlialHomeostasisEngine

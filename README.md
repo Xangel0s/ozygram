@@ -42,6 +42,13 @@ Modern AI coding agents face three fundamental engineering bottlenecks when navi
 * **Token Hyper-Optimization (>85% Reduction):** Slices codebases into progressive Level-of-Detail (LOD) skeletons, injecting function signatures rather than raw file bodies.
 * **Git-First Persistent Memory:** Consolidates architectural lessons, conventions, and invariants into versioned, merge-conflict-free Markdown files under `.ozy/memories/`.
 
+### Architectural Inspiration: Cognitive Neuroscience & CLS Theory
+The architecture draws inspiration from **Complementary Learning Systems (CLS)** theory in cognitive neuroscience (Kumaran, Hassabis, & McClelland):
+* **Fast Reflex Substrate (L1):** Sub-millisecond error history and contract cache in SQLite WAL.
+* **Structured Code Memory (L2/L3):** Multi-hop AST graphs and persistent vector repositories.
+* **Offline Trajectory Replay:** Idle simulation and habit consolidation reproducing Zheng et al. / DeepMind trajectory learning principles at  LLM token cost.
+*All conceptual analogies map directly to deterministic, reproducible data structures (AST indexes, graph BFS, SQLite WAL, and MCTS).*
+
 ---
 
 ## Architectural Workflows

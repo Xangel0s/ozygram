@@ -202,7 +202,7 @@ Ozygram v1.5.0 implements reverse static dependency indexing across AST import t
 
 ## 9. Resilient Backend Architecture & Universal Outbox Pattern
 
-To support enterprise microservices and CRM platforms (such as `api-geofal-crm`), Ozygram standardizes database safety and asynchronous decoupled event handling:
+To support enterprise microservices and CRM platforms (such as `backend-service`), Ozygram standardizes database safety and asynchronous decoupled event handling:
 
 1. **SQL Migration Idempotency Linter (`ozy_doctor(action="audit_migrations")`)**:
    - Static AST linter that scans SQL migration files.
@@ -212,7 +212,7 @@ To support enterprise microservices and CRM platforms (such as `api-geofal-crm`)
    - Configurable for SQLite (with WAL mode and atomic `claim_pending` write locking) and PostgreSQL (`JSONB`, `BIGSERIAL`, `SKIP LOCKED`).
    - Standardized `outbox_events` table (`id`, `event_type`, `aggregate_id`, `payload`, `status`, `retry_count`, `created_at`, `processed_at`, `error_message`).
    - Exponential backoff retry engine ($\text{delay} = \text{base}^{\text{retry\_count}}$) with zero event loss.
-3. **Microservice Worker (`api-geofal-crm/app/services/outbox.py`)**:
+3. **Microservice Worker (`backend-service/app/services/outbox.py`)**:
    - Transactional `publish_event` runs within the business database transaction in $< 2\text{ms}$, guaranteeing HTTP endpoint latency $< 50\text{ms}$.
    - Background daemon worker asynchronously dispatches emails, webhooks, and websocket broadcasts.
 
@@ -263,3 +263,21 @@ Ozygram v0.2.0 implements **Complementary Learning Systems 2.0 (CLS 2.0)** by or
   $$\text{RRF}(d) = \sum_{m \in \{\text{sqlite}, \text{chroma}, \text{postgres}\}} \frac{1}{60 + r_m(d)}$$
 - **Resilient Write-Through & Offline Graceful Degradation**: Synchronous write-through to SQLite WAL and ChromaDB, buffering or replicating to PostgreSQL if online with 0% data loss on network failure.
 
+---
+
+## 12. Architectural Inspiration & Engineering Glossary
+
+To maintain scientific transparency and eliminate ambiguity, Ozygram draws architectural inspiration from **Complementary Learning Systems (CLS)** theory in cognitive neuroscience (Kumaran, Hassabis, & McClelland, *Trends in Cognitive Sciences*). 
+
+Every bio-inspired analogy maps directly to standard, deterministic computer science structures:
+
+| Conceptual Inspiration | Underlying Computer Science Structure | Concrete Implementation in Repo |
+| :--- | :--- | :--- |
+| **Fast Reflex Layer (Amygdala)** | **Failure & Threat History Cache** | SQLite WAL table (mygdala_reflexes) tracking compile error frequency per file. |
+| **Recovery Filter (vmPFC)** | **Logistic Safety Decay Filter** | Sigmoid function reducing threat score after consecutive successful test runs. |
+| **Metabolic Cleaner (Glia)** | **Vector Garbage Collector (GC)** | SQL query detecting orphaned vectors whose physical source files were removed from disk. |
+| **Habit Mining (Basal Ganglia)** | **Commit Co-Occurrence Graph** | Polars & DuckDB temporal windowing over Git logs measuring sequential file couplings. |
+| **Synaptic Plasticity (STDP)** | **Exponential Causal Decay Weighting** | Exponential function $\Delta w = A_+ e^{-\Delta t / 	au}$ scoring temporal proximity of edits. |
+| **Exploration Gain (Locus Coeruleus)** | **Adaptive PUCT Exploration Tuning** | Dynamic multiplier adjusting {\text{puct}}$ in MCTS from .414$ to .400$ on high-uncertainty nodes. |
+| **Overshoot Guard (Cerebellum)** | **Diff Size & Arity Linter** | Static parser checking argument counts and AST diff bounds prior to disk mutation. |
+| **Idle Consolidation (Dream Replay)** | **Offline Trajectory Simulation** | Background MCTS replaying past failed trajectories in RAM and generating Markdown vaccines. |
