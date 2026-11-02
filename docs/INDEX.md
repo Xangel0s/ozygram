@@ -70,6 +70,13 @@ Welcome to the official, modular documentation for **Ozygram**, the persistent c
 ### 10. [Version History & Changelog (`docs/changelog.md`)](changelog.md)
 - Comprehensive chronological record of all architectural milestones, features, and releases.
 
+### 11. [Guía Maestra de Herramientas y Casos de Uso (`docs/herramientas-casos-de-uso.md`)](herramientas-casos-de-uso.md)
+- Referencia operativa exhaustiva de las 5 Meta-Herramientas MCP (`ozy_plan`, `ozy_context`, `ozy_patch`, `ozy_memory`, `ozy_doctor`).
+- Catálogo de comandos CLI de terminal (`ozymem dream status|shadow|run|diagnose|tree` y `ozymem doctor`).
+- Análisis de la dualidad de Dream-RSI: MCTS en RAM (Copy-on-Write) vs. Consolidación Offline (Sleep Replay).
+- Doble nivel de aislamiento y sandboxing (`SANDBOX_INVARIANT_COW_RAM_ONLY` y `EphemeralWorktree`).
+- Casos de uso prácticos y prompts recomendados para minimizar consumo de tokens.
+
 ---
 
 ## [INSTALLATION & SETUP]

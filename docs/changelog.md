@@ -2,6 +2,36 @@
 
 This document tracks the chronological evolution, architectural milestones, and key improvements in **Ozygram**.
 
+## Version v0.2.4 — Scientific Grounding, Etapas 0-5 Audit & Master Documentation
+
+### 1. Desacoplamiento de Recompensas y Verdad Objetiva (Etapa 1)
+- **ObjectiveExecutionEvaluator**: Evaluacion objetiva de recompensas basada en el codigo de salida del sistema operativo (exit_code == 0 otorga 1.0, fallos otorgan penalizacion -0.8).
+- **Invariantes Sintacticos con Tree-Sitter**: Veto inmediato y penalizacion -1.0 si el codigo candidato produce errores de analisis de AST.
+- **ObservationGuard**: Truncamiento de observaciones a un limite estricto de 32 KB para prevenir la manipulacion de recompensas por verbosidad excesiva (length hacking).
+
+### 2. Modo Sombra e Instrumentacion de Recursos (Etapa 2)
+- **ShadowExplorationMetrics**: Seguimiento en segundo plano del factor de ramificacion real (branching factor), adherencia al plan (resume adherence) y balance economico de tokens consumidos vs. ahorrados.
+- **Nuevo Comando CLI**: ozymem dream shadow expone el estado de instrumentacion de modo sombra directamente en la terminal.
+
+### 3. Simulador de Reproduccion de Frontera y Mundos Sinteticos (Etapa 3)
+- **SyntheticTaskWorld**: Entorno controlado para evaluar transiciones de tareas sinteticas (SyntaxRepair, MultiFileRefactor, BreakingApiMitigation) con estados de contrato deterministas.
+- **Reproduccion de Frontera**: Evaluacion de ramificaciones candidatas sin intervencion del usuario ni consumo de cuota de LLM.
+
+### 4. Puerta de Promocion con Holdout Ciego (Etapa 4)
+- **HoldoutPromotionGate**: Puerta estadistica que evalua politicas candidatas sobre particiones de control no vistas (holdout split).
+- **Prevencion de Sobreajuste**: Solo se promueven heuristicas y vacunas que superen a la linea base con significancia estadistica.
+
+### 5. Suite de Benchmark Externo de 3 Brazos (Etapa 5)
+- **ench_external_3arm.py**: Benchmark automatizado sobre 30 tareas reproducibles:
+  - Brazo 1 (Base LLM): Busqueda a ciegas (0% resuelto, 2,660 tokens).
+  - Brazo 2 (Greedy MCTS): Busqueda greedy (100% resuelto, 940 tokens).
+  - Brazo 3 (Trajectory Replay Tuner): Busqueda podada en RAM con buffer acotado (100% resuelto, 305 tokens, **67.6% de reduccion neta de tokens**).
+
+### 6. Documentacion Maestra y Guia Operativa
+- **docs/herramientas-casos-de-uso.md**: Referencia integral de las 5 meta-herramientas MCP (ozy_plan, ozy_context, ozy_patch, ozy_memory, ozy_doctor), comandos CLI, dualidad de Dream-RSI y prompts recomendados.
+
+---
+
 ## Version v0.2.0 — Tri-Hybrid Neuro-Cognitive Substrate, PostgreSQL pgvector & Centinela Dream-RSI
 
 ### 1. Tri-Hybrid Memory Substrate (CLS 2.0)
