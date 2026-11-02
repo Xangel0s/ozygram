@@ -51,6 +51,8 @@ pub struct ExplorationNode {
     pub is_pruned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollback_snapshot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_receipt: Option<String>,
     pub created_at: String,
 }
 
@@ -59,6 +61,25 @@ pub struct ExplorationTreeNode {
     pub node: ExplorationNode,
     pub uct_score: f64,
     pub children: Vec<ExplorationTreeNode>,
+}
+
+/// Recibo inmutable de ejecución emitido por el sistema operativo o un test runner
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ObjectiveExecutionReceipt {
+    pub exit_code: i32,
+    pub passed: bool,
+    pub duration_ms: u64,
+    pub runner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passed_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignored_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_snippet: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_snippet: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +96,8 @@ pub struct RecordNodeParams {
     pub is_pruned: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollback_snapshot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_receipt: Option<ObjectiveExecutionReceipt>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +137,8 @@ pub enum ObjectiveValidationAlert {
     TestFailed,
     FalseSolutionRejected,
     ObjectiveTestPassed,
+    ObjectiveExecutionPassed,
+    ObjectiveExecutionFailed,
 }
 
 impl ObjectiveValidationAlert {
@@ -123,6 +148,8 @@ impl ObjectiveValidationAlert {
             Self::TestFailed => "[ALERT: TEST_FAILED]",
             Self::FalseSolutionRejected => "[ALERT: FALSE_SOLUTION_REJECTED]",
             Self::ObjectiveTestPassed => "[OBJECTIVE: TEST_PASSED]",
+            Self::ObjectiveExecutionPassed => "[OBJECTIVE: VERIFIED_EXECUTION_PASSED]",
+            Self::ObjectiveExecutionFailed => "[ALERT: OBJECTIVE_EXECUTION_FAILED]",
         }
     }
 }
@@ -269,107 +296,153 @@ impl GraphBackend {
             }
         };
 
-        // 3. Calibración Objetiva y Validación Automática de Recompensas
-        let has_syntax_failure = detect_syntax_or_compilation_failure(&observation, &params.action_payload);
-        let has_general_failure = detect_failure_signals(&observation, &params.action_payload);
-        let has_success = detect_objective_success(&observation, &params.action_payload);
+        // 3. Calibración Objetiva y Validación Inmutable de Recompensas
+        let (reward, is_solution, is_pruned, validation_alert, is_objective_verified) = if let Some(ref receipt) = params.execution_receipt {
+            // [CRITERIO ETAPA 1 - EVALUADOR OBJETIVO]
+            // El texto de 'observation' redactado por el agente es ESTRICTAMENTE IGNORADO.
+            // Ninguna observación escrita por el agente puede influir en la recompensa ni evitar la poda.
+            let failed_count = receipt.failed_count.unwrap_or(0);
+            let execution_failed = receipt.exit_code != 0 || !receipt.passed || failed_count > 0;
 
-        let raw_reward_opt = params.reward_score;
-        let mut is_solution = params.is_solution.unwrap_or(false);
-        let mut is_pruned = params.is_pruned.unwrap_or(has_general_failure);
-        let mut validation_alert: Option<ObjectiveValidationAlert> = None;
-
-        let reward = if is_solution && (has_syntax_failure || has_general_failure) {
-            // Rechazo de solución falsa: el agente marcó éxito pero hay errores en la evidencia
-            is_solution = false;
-            is_pruned = true;
-            validation_alert = Some(ObjectiveValidationAlert::FalseSolutionRejected);
-            -1.0
-        } else if let Some(raw_r) = raw_reward_opt {
-            if raw_r > 0.0 && has_general_failure {
-                // Neutralizar sesgo optimista ante fallo evidente
-                is_pruned = true;
-                validation_alert = if has_syntax_failure {
-                    Some(ObjectiveValidationAlert::SyntaxError)
-                } else {
-                    Some(ObjectiveValidationAlert::TestFailed)
-                };
-                -1.0
-            } else if raw_r < 0.0 {
-                if params.is_pruned.is_none() {
-                    is_pruned = true;
-                }
-                if has_syntax_failure {
-                    validation_alert = Some(ObjectiveValidationAlert::SyntaxError);
-                } else if has_general_failure {
-                    validation_alert = Some(ObjectiveValidationAlert::TestFailed);
-                }
-                raw_r
+            if execution_failed {
+                (
+                    -1.0,
+                    false, // Veto incondicional si el agente afirmó ser solución
+                    true,  // Poda obligatoria de la rama
+                    Some(ObjectiveValidationAlert::ObjectiveExecutionFailed),
+                    true,
+                )
             } else {
-                raw_r
+                let r = if params.is_solution.unwrap_or(false) { 10.0 } else { 1.0 };
+                (
+                    r,
+                    params.is_solution.unwrap_or(false),
+                    false,
+                    Some(ObjectiveValidationAlert::ObjectiveExecutionPassed),
+                    true,
+                )
             }
         } else {
-            // Recompensa automática basada en evidencias objetivas (Auto-Reward)
-            if has_syntax_failure {
-                is_pruned = true;
-                validation_alert = Some(ObjectiveValidationAlert::SyntaxError);
-                -0.8
-            } else if has_general_failure {
-                is_pruned = true;
-                validation_alert = Some(ObjectiveValidationAlert::TestFailed);
-                -0.8
-            } else if is_solution {
-                10.0
-            } else if has_success && (params.action_type.contains("test") || params.action_type == "run_test" || params.action_type == "execute" || params.action_payload.contains("test")) {
-                validation_alert = Some(ObjectiveValidationAlert::ObjectiveTestPassed);
-                1.0
-            } else if is_pruned {
+            // Fallback heurístico si no hay recibo objetivo de ejecución (compatibilidad legacy)
+            let has_syntax_failure = detect_syntax_or_compilation_failure(&observation, &params.action_payload);
+            let has_general_failure = detect_failure_signals(&observation, &params.action_payload);
+            let has_success = detect_objective_success(&observation, &params.action_payload);
+
+            let raw_reward_opt = params.reward_score;
+            let mut is_sol = params.is_solution.unwrap_or(false);
+            let mut is_prun = params.is_pruned.unwrap_or(has_general_failure);
+            let mut val_alert: Option<ObjectiveValidationAlert> = None;
+
+            let rew = if is_sol && (has_syntax_failure || has_general_failure) {
+                is_sol = false;
+                is_prun = true;
+                val_alert = Some(ObjectiveValidationAlert::FalseSolutionRejected);
                 -1.0
+            } else if let Some(raw_r) = raw_reward_opt {
+                if raw_r > 0.0 && has_general_failure {
+                    is_prun = true;
+                    val_alert = if has_syntax_failure {
+                        Some(ObjectiveValidationAlert::SyntaxError)
+                    } else {
+                        Some(ObjectiveValidationAlert::TestFailed)
+                    };
+                    -1.0
+                } else if raw_r < 0.0 {
+                    if params.is_pruned.is_none() {
+                        is_prun = true;
+                    }
+                    if has_syntax_failure {
+                        val_alert = Some(ObjectiveValidationAlert::SyntaxError);
+                    } else if has_general_failure {
+                        val_alert = Some(ObjectiveValidationAlert::TestFailed);
+                    }
+                    raw_r
+                } else {
+                    raw_r
+                }
             } else {
-                0.0
-            }
+                if has_syntax_failure {
+                    is_prun = true;
+                    val_alert = Some(ObjectiveValidationAlert::SyntaxError);
+                    -0.8
+                } else if has_general_failure {
+                    is_prun = true;
+                    val_alert = Some(ObjectiveValidationAlert::TestFailed);
+                    -0.8
+                } else if is_sol {
+                    10.0
+                } else if has_success && (params.action_type.contains("test") || params.action_type == "run_test" || params.action_type == "execute" || params.action_payload.contains("test")) {
+                    val_alert = Some(ObjectiveValidationAlert::ObjectiveTestPassed);
+                    1.0
+                } else if is_prun {
+                    -1.0
+                } else {
+                    0.0
+                }
+            };
+            (rew, is_sol, is_prun, val_alert, false)
         };
 
-        let action_payload = if let Some(ref alert) = validation_alert {
-            let mut payload = params.action_payload.clone();
+        let mut action_payload = params.action_payload.clone();
+        if is_objective_verified {
+            if let Some(ref receipt) = params.execution_receipt {
+                if action_payload.starts_with('{') && action_payload.ends_with('}') {
+                    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&action_payload) {
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("objective_verified".to_string(), serde_json::json!(true));
+                            obj.insert("exit_code".to_string(), serde_json::json!(receipt.exit_code));
+                            obj.insert("passed".to_string(), serde_json::json!(receipt.passed));
+                            obj.insert("duration_ms".to_string(), serde_json::json!(receipt.duration_ms));
+                            obj.insert("agent_text_ignored".to_string(), serde_json::json!(true));
+                            if let Some(f) = receipt.failed_count {
+                                obj.insert("failed_count".to_string(), serde_json::json!(f));
+                            }
+                            if let Some(p) = receipt.passed_count {
+                                obj.insert("passed_count".to_string(), serde_json::json!(p));
+                            }
+                            action_payload = v.to_string();
+                        }
+                    }
+                }
+            }
+        } else if let Some(ref alert) = validation_alert {
             let alert_tag = alert.as_tag();
-            if payload.starts_with('{') && payload.ends_with('}') {
-                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&payload) {
+            if action_payload.starts_with('{') && action_payload.ends_with('}') {
+                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&action_payload) {
                     if let Some(obj) = v.as_object_mut() {
                         obj.insert("objective_reward_override".to_string(), serde_json::json!(true));
                         obj.insert("validation_tag".to_string(), serde_json::json!(alert_tag));
-                        if let Some(raw) = raw_reward_opt {
+                        if let Some(raw) = params.reward_score {
                             obj.insert("original_reward".to_string(), serde_json::json!(raw));
                         }
                         obj.insert("auto_pruned".to_string(), serde_json::json!(is_pruned));
-                        payload = v.to_string();
+                        action_payload = v.to_string();
                     }
                 }
             } else {
                 let wrapped = serde_json::json!({
-                    "raw_action": payload,
+                    "raw_action": action_payload,
                     "objective_reward_override": true,
                     "validation_tag": alert_tag,
-                    "original_reward": raw_reward_opt,
+                    "original_reward": params.reward_score,
                     "auto_pruned": is_pruned
                 });
-                payload = wrapped.to_string();
+                action_payload = wrapped.to_string();
             }
-            payload
-        } else {
-            params.action_payload
-        };
+        }
 
         let cost_tokens = params.cost_tokens.unwrap_or(0);
         let latency_ms = params.latency_ms.unwrap_or(0);
 
         // 4. Inserción del nodo
+        let receipt_json = params.execution_receipt.as_ref().map(|r| serde_json::to_string(r).unwrap_or_default());
+
         inner.sqlite.execute(
             "INSERT INTO exploration_nodes (
                 id, trajectory_id, parent_id, depth, action_type, action_payload,
                 observation, cost_tokens, latency_ms, reward_score, visit_count,
-                value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?12, ?13, ?14, datetime('now'))",
+                value_estimate, is_solution, is_pruned, rollback_snapshot, execution_receipt, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?12, ?13, ?14, ?15, datetime('now'))",
             params![
                 node_id,
                 params.trajectory_id,
@@ -385,6 +458,7 @@ impl GraphBackend {
                 is_solution,
                 is_pruned,
                 params.rollback_snapshot,
+                receipt_json,
             ],
         ).context("Error al registrar nodo de exploración")?;
 
@@ -450,6 +524,7 @@ impl GraphBackend {
             is_solution,
             is_pruned,
             rollback_snapshot: params.rollback_snapshot,
+            execution_receipt: receipt_json,
             created_at,
         })
     }
@@ -500,7 +575,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
                     observation, cost_tokens, latency_ms, reward_score, visit_count,
-                    value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
+                    value_estimate, is_solution, is_pruned, rollback_snapshot, execution_receipt, created_at
              FROM exploration_nodes
              WHERE trajectory_id = ?1
              ORDER BY depth ASC, created_at ASC",
@@ -523,7 +598,8 @@ impl GraphBackend {
                 is_solution: row.get(12)?,
                 is_pruned: row.get(13)?,
                 rollback_snapshot: row.get(14)?,
-                created_at: row.get(15)?,
+                execution_receipt: row.get(15)?,
+                created_at: row.get(16)?,
             })
         })?;
 
@@ -819,7 +895,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
                     observation, cost_tokens, latency_ms, reward_score, visit_count,
-                    value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
+                    value_estimate, is_solution, is_pruned, rollback_snapshot, execution_receipt, created_at
              FROM exploration_nodes
              WHERE trajectory_id = ?1 AND is_pruned = 0 AND is_solution = 0
              ORDER BY value_estimate DESC, depth DESC, created_at DESC
@@ -844,7 +920,8 @@ impl GraphBackend {
                 is_solution: row.get(12)?,
                 is_pruned: row.get(13)?,
                 rollback_snapshot: row.get(14)?,
-                created_at: row.get(15)?,
+                execution_receipt: row.get(15)?,
+                created_at: row.get(16)?,
             }))
         } else {
             Ok(None)
@@ -1031,7 +1108,7 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, trajectory_id, parent_id, depth, action_type, action_payload,
                     observation, cost_tokens, latency_ms, reward_score, visit_count,
-                    value_estimate, is_solution, is_pruned, rollback_snapshot, created_at
+                    value_estimate, is_solution, is_pruned, rollback_snapshot, execution_receipt, created_at
              FROM exploration_nodes
              WHERE trajectory_id = ?1
              ORDER BY depth ASC, created_at ASC",
@@ -1055,7 +1132,8 @@ impl GraphBackend {
                     is_solution: row.get(12)?,
                     is_pruned: row.get(13)?,
                     rollback_snapshot: row.get(14)?,
-                    created_at: row.get(15)?,
+                    execution_receipt: row.get(15)?,
+                    created_at: row.get(16)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1158,5 +1236,118 @@ fn sanitize_mermaid_text(text: &str, max_len: usize) -> String {
         truncated
     } else {
         sanitized
+    }
+}
+
+/// Extrae conteos estructurados de tests pasados/fallados/ignorados desde la salida estándar
+pub fn parse_structured_test_counts(stdout: &str, stderr: &str) -> (Option<u32>, Option<u32>, Option<u32>) {
+    let combined = format!("{}\n{}", stdout, stderr);
+    let mut passed = None;
+    let mut failed = None;
+    let mut ignored = None;
+
+    // Patrón Cargo: "test result: ok. 13 passed; 0 failed; 0 ignored;"
+    if let Some(pos) = combined.find("test result:") {
+        let slice = &combined[pos..];
+        if let Some(end) = slice.find('\n') {
+            let line = &slice[..end];
+            if let Some(p_pos) = line.find(" passed") {
+                let start = line[..p_pos].rfind(|c: char| !c.is_numeric()).map(|i| i + 1).unwrap_or(0);
+                if let Ok(val) = line[start..p_pos].trim().parse::<u32>() {
+                    passed = Some(val);
+                }
+            }
+            if let Some(f_pos) = line.find(" failed") {
+                let start = line[..f_pos].rfind(|c: char| !c.is_numeric()).map(|i| i + 1).unwrap_or(0);
+                if let Ok(val) = line[start..f_pos].trim().parse::<u32>() {
+                    failed = Some(val);
+                }
+            }
+            if let Some(i_pos) = line.find(" ignored") {
+                let start = line[..i_pos].rfind(|c: char| !c.is_numeric()).map(|i| i + 1).unwrap_or(0);
+                if let Ok(val) = line[start..i_pos].trim().parse::<u32>() {
+                    ignored = Some(val);
+                }
+            }
+            if passed.is_some() || failed.is_some() {
+                return (passed, failed, ignored);
+            }
+        }
+    }
+
+    // Patrón Pytest: "13 passed, 2 failed in 0.12s" o "=== 13 passed in 0.12s ==="
+    let lower = combined.to_lowercase();
+    for line in lower.lines().rev() {
+        if line.contains("passed") || line.contains("failed") {
+            if let Some(p_pos) = line.find(" passed") {
+                let start = line[..p_pos].rfind(|c: char| !c.is_numeric()).map(|i| i + 1).unwrap_or(0);
+                if let Ok(val) = line[start..p_pos].trim().parse::<u32>() {
+                    passed = Some(val);
+                }
+            }
+            if let Some(f_pos) = line.find(" failed") {
+                let start = line[..f_pos].rfind(|c: char| !c.is_numeric()).map(|i| i + 1).unwrap_or(0);
+                if let Ok(val) = line[start..f_pos].trim().parse::<u32>() {
+                    failed = Some(val);
+                }
+            }
+            if passed.is_some() || failed.is_some() {
+                return (passed, failed, ignored);
+            }
+        }
+    }
+
+    (passed, failed, ignored)
+}
+
+impl GraphBackend {
+    /// Ejecuta objetivamente un comando de tests/validación en el repositorio o sandbox
+    /// y retorna un recibo de ejecución inmutable verificable por el sistema operativo.
+    pub fn execute_objective_evaluation(
+        &self,
+        working_dir: &std::path::Path,
+        cmd: &str,
+        args: &[&str],
+    ) -> Result<ObjectiveExecutionReceipt> {
+        let start = std::time::Instant::now();
+        let mut command = std::process::Command::new(cmd);
+        command.args(args).current_dir(working_dir);
+
+        let output = command.output().with_context(|| format!("Fallo al ejecutar evaluador objetivo: {}", cmd))?;
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let exit_code = output.status.code().unwrap_or(-1);
+        let passed = output.status.success();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        let (passed_count, failed_count, ignored_count) = parse_structured_test_counts(&stdout, &stderr);
+
+        let stdout_snippet = if stdout.len() > 1024 {
+            Some(stdout[stdout.len() - 1024..].to_string())
+        } else if !stdout.is_empty() {
+            Some(stdout)
+        } else {
+            None
+        };
+
+        let stderr_snippet = if stderr.len() > 1024 {
+            Some(stderr[stderr.len() - 1024..].to_string())
+        } else if !stderr.is_empty() {
+            Some(stderr)
+        } else {
+            None
+        };
+
+        Ok(ObjectiveExecutionReceipt {
+            exit_code,
+            passed,
+            duration_ms,
+            runner: format!("{} {}", cmd, args.join(" ")),
+            passed_count,
+            failed_count,
+            ignored_count,
+            stdout_snippet,
+            stderr_snippet,
+        })
     }
 }

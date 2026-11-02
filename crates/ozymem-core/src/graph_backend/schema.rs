@@ -292,6 +292,7 @@ impl GraphBackend {
                 is_solution BOOLEAN NOT NULL DEFAULT 0,
                 is_pruned BOOLEAN NOT NULL DEFAULT 0,
                 rollback_snapshot TEXT NULL,
+                execution_receipt TEXT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(trajectory_id) REFERENCES exploration_trajectories(id) ON DELETE CASCADE,
                 FOREIGN KEY(parent_id) REFERENCES exploration_nodes(id) ON DELETE CASCADE
@@ -334,6 +335,7 @@ impl GraphBackend {
 
         // Migrate exploration_nodes: add rollback_snapshot if table existed without it
         let _ = inner.sqlite.execute("ALTER TABLE exploration_nodes ADD COLUMN rollback_snapshot TEXT NULL", []);
+        let _ = inner.sqlite.execute("ALTER TABLE exploration_nodes ADD COLUMN execution_receipt TEXT NULL", []);
 
         // Migrate v2→v3: add workspace_root column to all data tables
         for table in &["files", "functions", "file_dependencies", "lessons"] {

@@ -1826,6 +1826,7 @@ fn test_exploration_trajectory_lifecycle() {
         is_solution: Some(false),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     assert_eq!(root_node.depth, 0);
@@ -1842,6 +1843,7 @@ fn test_exploration_trajectory_lifecycle() {
         is_solution: Some(true),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     assert_eq!(child_node.depth, 1);
@@ -1882,6 +1884,7 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
         is_solution: Some(false),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // 2. Child branch 1: successful
@@ -1897,6 +1900,7 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
         is_solution: Some(true),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // 3. Child branch 2: failed / pruned
@@ -1912,6 +1916,7 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
         is_solution: Some(false),
         is_pruned: Some(true),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // Retrieve tree
@@ -1955,6 +1960,7 @@ fn test_exploration_observation_truncation_guard() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // Verification: Observation must be truncated to MAX_OBSERVATION_BYTES + notice
@@ -1981,6 +1987,7 @@ fn test_exploration_cascade_delete() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // Delete
@@ -2012,6 +2019,7 @@ fn test_exploration_auto_parenting_chain() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
     assert_eq!(n1.depth, 0);
     assert_eq!(n1.parent_id, None);
@@ -2029,6 +2037,7 @@ fn test_exploration_auto_parenting_chain() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
     assert_eq!(n2.depth, 1);
     assert_eq!(n2.parent_id, Some(n1.id.clone()));
@@ -2046,6 +2055,7 @@ fn test_exploration_auto_parenting_chain() {
         is_solution: Some(true),
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
     assert_eq!(n3.depth, 2);
     assert_eq!(n3.parent_id, Some(n2.id.clone()));
@@ -2078,6 +2088,7 @@ fn test_exploration_record_batch() {
             is_solution: None,
             is_pruned: None,
             rollback_snapshot: None,
+        execution_receipt: None,
         },
         ozymem_core::graph_backend::RecordNodeParams {
             trajectory_id: traj_id.clone(),
@@ -2091,6 +2102,7 @@ fn test_exploration_record_batch() {
             is_solution: None,
             is_pruned: None,
             rollback_snapshot: None,
+        execution_receipt: None,
         },
         ozymem_core::graph_backend::RecordNodeParams {
             trajectory_id: traj_id.clone(),
@@ -2104,6 +2116,7 @@ fn test_exploration_record_batch() {
             is_solution: Some(true),
             is_pruned: None,
             rollback_snapshot: None,
+        execution_receipt: None,
         },
     ];
 
@@ -2141,6 +2154,7 @@ fn test_exploration_objective_reward_grounding() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // Objective override should have clamped the reward to -1.0
@@ -2170,6 +2184,7 @@ fn test_exploration_diagnose_trajectory() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // Node 2: Slow bottleneck node (latency 4500ms > 3000ms) and unpruned negative reward
@@ -2185,6 +2200,7 @@ fn test_exploration_diagnose_trajectory() {
         is_solution: None,
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // Node 3: Solution node
@@ -2200,6 +2216,7 @@ fn test_exploration_diagnose_trajectory() {
         is_solution: Some(true),
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     let diag = backend.diagnose_trajectory(&traj_id).unwrap();
@@ -2235,6 +2252,7 @@ fn test_exploration_auto_pruning_on_failure() {
         is_solution: None,
         is_pruned: None, // No especificado -> auto-poda
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     assert!(failed_node.is_pruned, "El nodo con fallos en test debió ser podado automáticamente");
@@ -2263,6 +2281,7 @@ fn test_exploration_recommended_resume_node() {
         is_solution: Some(false),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // Leaf node: highest value active leaf
@@ -2278,6 +2297,7 @@ fn test_exploration_recommended_resume_node() {
         is_solution: Some(false),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     let resume_node = backend.get_recommended_resume_node(&traj_id).unwrap();
@@ -2313,6 +2333,7 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
         is_solution: Some(false),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // 2. Pruned branch (failed hypothesis)
@@ -2328,6 +2349,7 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
         is_solution: Some(false),
         is_pruned: Some(true),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     // 3. Solution branch
@@ -2343,6 +2365,7 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
         is_solution: Some(true),
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
@@ -2390,6 +2413,7 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     assert_eq!(test_node.reward_score, 1.0, "Debe asignar +1.0 ante éxito en tests sin reward manual");
@@ -2409,6 +2433,7 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     assert_eq!(syntax_node.reward_score, -0.8, "Debe penalizar con -0.8 ante error de sintaxis/compilación");
@@ -2428,6 +2453,7 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
         is_solution: Some(true), // Agente falsamente declara solución
         is_pruned: Some(false),
         rollback_snapshot: None,
+        execution_receipt: None,
     }).unwrap();
 
     assert!(!false_solution_node.is_solution, "La solución falsa debió ser rechazada (is_solution = false)");
@@ -2565,6 +2591,7 @@ fn test_exploration_node_rollback_file_snapshot() {
         is_solution: None,
         is_pruned: None,
         rollback_snapshot: Some(snapshot),
+        execution_receipt: None,
     }).unwrap();
 
     assert!(node.is_pruned, "El nodo con error de sintaxis debió ser podado automáticamente");
@@ -2598,6 +2625,7 @@ fn test_exploration_node_rollback_file_snapshot() {
         is_solution: Some(false),
         is_pruned: Some(true),
         rollback_snapshot: None, // No tiene snapshot propio
+        execution_receipt: None,
     }).unwrap();
 
     // Modificar el archivo otra vez
@@ -3026,3 +3054,102 @@ fn test_thalamus_focus_weights_lifecycle() {
 }
 
 
+
+#[test]
+fn test_objective_evaluator_ignores_pessimistic_agent_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let backend = GraphBackend::open_for_project(tmp.path()).unwrap();
+    let traj_id = backend.start_trajectory("test_proj", "Test objective evaluation", None).unwrap();
+
+    // El agente redacta una observación pesimista con palabras que antes disparaban fallos
+    let receipt = ozymem_core::graph_backend::ObjectiveExecutionReceipt {
+        exit_code: 0,
+        passed: true,
+        duration_ms: 120,
+        runner: "cargo test".to_string(),
+        passed_count: Some(15),
+        failed_count: Some(0),
+        ignored_count: Some(1),
+        stdout_snippet: Some("test result: ok. 15 passed; 0 failed".to_string()),
+        stderr_snippet: None,
+    };
+
+    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id,
+        parent_id: None,
+        action_type: "run_tests".to_string(),
+        action_payload: "{\"cmd\":\"cargo test\"}".to_string(),
+        observation: "CRITICAL FAILED: SyntaxError detected! exit code: 1! Panic in test suite!".to_string(),
+        cost_tokens: Some(50),
+        latency_ms: Some(120),
+        reward_score: None,
+        is_solution: Some(false),
+        is_pruned: None,
+        rollback_snapshot: None,
+        execution_receipt: Some(receipt),
+    }).unwrap();
+
+    // Invariante Etapa 1: La observación pesimista escrita por el agente NO PUEDE penalizar el nodo
+    assert_eq!(node.reward_score, 1.0, "El evaluador objetivo debió otorgar reward +1.0 basado en exit_code 0");
+    assert!(!node.is_pruned, "El nodo NO debe podarse porque el proceso terminó con éxito");
+    assert!(node.action_payload.contains("\"agent_text_ignored\":true"));
+    assert!(node.action_payload.contains("\"objective_verified\":true"));
+    assert!(node.execution_receipt.is_some());
+}
+
+#[test]
+fn test_objective_evaluator_vetoes_false_solution_and_optimistic_agent_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let backend = GraphBackend::open_for_project(tmp.path()).unwrap();
+    let traj_id = backend.start_trajectory("test_proj", "Test false solution veto", None).unwrap();
+
+    // El agente redacta una observación falsa afirmando que todo está verde y marca is_solution = true
+    let failed_receipt = ozymem_core::graph_backend::ObjectiveExecutionReceipt {
+        exit_code: 101,
+        passed: false,
+        duration_ms: 350,
+        runner: "cargo test".to_string(),
+        passed_count: Some(10),
+        failed_count: Some(2),
+        ignored_count: None,
+        stdout_snippet: Some("test result: FAILED. 10 passed; 2 failed".to_string()),
+        stderr_snippet: Some("panicked at assertion failed".to_string()),
+    };
+
+    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+        trajectory_id: traj_id,
+        parent_id: None,
+        action_type: "verify_solution".to_string(),
+        action_payload: "{\"action\":\"final_check\"}".to_string(),
+        observation: "All tests passed with flying colors! 100% green! Solution verified!".to_string(),
+        cost_tokens: Some(100),
+        latency_ms: Some(350),
+        reward_score: Some(10.0), // El agente intentó auto-asignarse 10.0
+        is_solution: Some(true),   // El agente afirmó ser la solución
+        is_pruned: Some(false),
+        rollback_snapshot: None,
+        execution_receipt: Some(failed_receipt),
+    }).unwrap();
+
+    // Invariante Etapa 1: El evaluador objetivo VETA incondicionalmente la solución falsa
+    assert_eq!(node.reward_score, -1.0, "El fallo de ejecución debe penalizar con -1.0");
+    assert!(!node.is_solution, "El flag is_solution debió ser vetado a false por el evaluador objetivo");
+    assert!(node.is_pruned, "El nodo debió ser podado obligatoriamente por fallo de proceso");
+    assert!(node.action_payload.contains("\"exit_code\":101"));
+}
+
+#[test]
+fn test_parse_structured_test_counts_cargo_and_pytest() {
+    // 1. Cargo test output
+    let cargo_out = "running 13 tests\ntest foo ... ok\ntest result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out";
+    let (c_pass, c_fail, c_ign) = ozymem_core::graph_backend::parse_structured_test_counts(cargo_out, "");
+    assert_eq!(c_pass, Some(13));
+    assert_eq!(c_fail, Some(0));
+    assert_eq!(c_ign, Some(1));
+
+    // 2. Pytest output
+    let pytest_out = "=== 25 passed, 3 failed, 1 warning in 1.45s ===";
+    let (p_pass, p_fail, _) = ozymem_core::graph_backend::parse_structured_test_counts(pytest_out, "");
+    assert_eq!(p_pass, Some(25));
+    assert_eq!(p_fail, Some(3));
+}

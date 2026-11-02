@@ -125,6 +125,10 @@ pub fn handle_exploration(
                 .get("rollback_snapshot")
                 .map(|v| if v.is_string() { v.as_str().unwrap().to_string() } else { v.to_string() });
 
+            let execution_receipt = args
+                .get("execution_receipt")
+                .and_then(|v| serde_json::from_value::<ozymem_core::graph_backend::ObjectiveExecutionReceipt>(v.clone()).ok());
+
             let node = backend.record_exploration_node(RecordNodeParams {
                 trajectory_id,
                 parent_id,
@@ -137,6 +141,7 @@ pub fn handle_exploration(
                 is_solution,
                 is_pruned,
                 rollback_snapshot,
+                execution_receipt,
             })?;
 
             let res = json!({
@@ -202,6 +207,7 @@ pub fn handle_exploration(
                     is_solution,
                     is_pruned,
                     rollback_snapshot,
+                    execution_receipt: None,
                 });
             }
 
@@ -215,6 +221,69 @@ pub fn handle_exploration(
                 "recorded_steps": nodes.len(),
                 "nodes": nodes,
                 "message": format!("Lote de {} pasos registrado y propagado exitosamente", nodes.len())
+            });
+
+            Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: serde_json::to_string_pretty(&res)?,
+                }],
+                is_error: None,
+            })
+        }
+
+        "execute_and_record" => {
+            let trajectory_id = resolve_trajectory_id(backend, args)?;
+            let parent_id = args.get("parent_id").and_then(Value::as_str).map(String::from);
+            let command = args.get("command").and_then(Value::as_str).unwrap_or("cargo");
+            let cmd_args_raw = args.get("args").and_then(Value::as_array);
+            let cmd_args: Vec<String> = if let Some(arr) = cmd_args_raw {
+                arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+            } else {
+                vec!["test".to_string()]
+            };
+            let cmd_args_refs: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+
+            let working_dir_str = args.get("working_dir").and_then(Value::as_str).unwrap_or(".");
+            let working_dir = std::path::Path::new(working_dir_str);
+
+            let is_solution = args.get("is_solution").and_then(Value::as_bool);
+            let observation = args.get("observation").and_then(Value::as_str).unwrap_or("Objective execution run").to_string();
+
+            // Ejecución objetiva inmutable del comando en el sistema operativo
+            let receipt = backend.execute_objective_evaluation(working_dir, command, &cmd_args_refs)?;
+
+            let action_type = args.get("action_type").and_then(Value::as_str).unwrap_or("test_execution").to_string();
+            let action_payload = json!({
+                "command": command,
+                "args": cmd_args,
+                "working_dir": working_dir_str,
+            }).to_string();
+
+            let node = backend.record_exploration_node(RecordNodeParams {
+                trajectory_id,
+                parent_id,
+                action_type,
+                action_payload,
+                observation,
+                cost_tokens: Some(0),
+                latency_ms: Some(receipt.duration_ms as i64),
+                reward_score: None,
+                is_solution,
+                is_pruned: None,
+                rollback_snapshot: None,
+                execution_receipt: Some(receipt.clone()),
+            })?;
+
+            let res = json!({
+                "status": "ok",
+                "node": node,
+                "receipt": receipt,
+                "message": if receipt.passed {
+                    "[OBJECTIVE: VERIFIED_EXECUTION_PASSED] Ejecución de tests verificada con éxito por el sistema operativo"
+                } else {
+                    "[ALERT: OBJECTIVE_EXECUTION_FAILED] Fallo de tests detectado objetivamente por código de salida del proceso"
+                }
             });
 
             Ok(ToolCallResult {
