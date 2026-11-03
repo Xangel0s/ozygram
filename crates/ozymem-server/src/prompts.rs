@@ -197,6 +197,7 @@ pub fn handle_prompts_list(
             Ok(Some(ok_response(id, serde_json::to_value(result)?)))
 }
 
+#[allow(clippy::await_holding_lock)]
 pub async fn handle_prompts_get(
     backend: &Arc<Mutex<Option<GraphBackend>>>,
     id: Value,
@@ -357,7 +358,7 @@ pub async fn handle_prompts_get(
                                 lessons_without_embedding: 0,
                             });
                     let lessons = gb.recent_lessons(None, 10).await.unwrap_or_default();
-                    let mut text = format!("# Project Status\n\n");
+                    let mut text = "# Project Status\n\n".to_string();
                     text.push_str(&format!("## Summary\n\n- Files: {}\n- Functions: {}\n- Lessons: {}\n- AST functions: {}\n- Text heuristic: {}\n\n",
                         summary.file_count, summary.function_count, summary.engram_count,
                         summary.native_ast_function_count, summary.text_heuristic_function_count));

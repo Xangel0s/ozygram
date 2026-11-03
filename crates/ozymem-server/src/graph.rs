@@ -485,8 +485,8 @@ pub async fn handle_graph_tool(
                     backend.full_scan(
                         &resolved_str,
                         Some(&|processed, total| {
-                            if let Some(ref n) = notifier {
-                                if let Some(ref pt) = progress {
+                            if let Some(n) = notifier {
+                                if let Some(pt) = progress {
                                     n.progress(pt, processed, Some(total));
                                 }
                             }

@@ -516,31 +516,12 @@ pub(crate) async fn build_architecture_report(
     scope: Option<&str>,
 ) -> anyhow::Result<String> {
     let summary = backend.get_graph_summary().await?;
-    let all_files = backend.list_all_files().unwrap_or_default();
-    let scope_norm = scope.unwrap_or("").replace('\\', "/");
-    let files: Vec<String> = if !scope_norm.is_empty() {
-        all_files
-            .into_iter()
-            .filter(|fp| fp.replace('\\', "/").contains(&scope_norm))
-            .collect()
-    } else {
-        all_files
-    };
-    let mut hotspots = Vec::new();
-    for fp in files.iter().take(500) {
-        if let Ok(n) = backend.get_graph_neighbors(fp).await {
-            let score = n.incoming.len() + n.outgoing.len();
-            if score > 0 {
-                hotspots.push((score, n.incoming.len(), n.outgoing.len(), fp.clone()));
-            }
-        }
-    }
-    hotspots.sort_by(|a, b| b.0.cmp(&a.0));
+    let hotspots = backend.get_top_coupling_hotspots(10, scope);
     let mut body = format!(
         "# Architecture Report\n\n{}\n\nTop coupling hotspots:\n",
         format_summary(&summary)
     );
-    for (score, incoming, outgoing, fp) in hotspots.iter().take(10) {
+    for (score, incoming, outgoing, fp) in hotspots.iter() {
         body.push_str(&format!(
             "- score {score} | incoming {incoming} | outgoing {outgoing}: {fp}\n"
         ));
@@ -811,7 +792,7 @@ pub fn format_simulation_result(sim: &ozymem_core::graph_backend::types::Simulat
 /// Compact tool outputs exceeding token budget (~3,500 tokens / 14,000 characters).
 /// Persists the raw payload to `.ozymem/blobs/<short_hash>.txt` and replaces the text
 /// with a summarized preview (head 40 lines, tail 10 lines) and an `ozymem://blob/<hash>` pointer.
-pub fn compact_tool_output(content: &mut Vec<ContentBlock>, project_path: Option<&str>) {
+pub fn compact_tool_output(content: &mut [ContentBlock], project_path: Option<&str>) {
     const COMPACT_THRESHOLD_CHARS: usize = 14_000;
 
     for block in content.iter_mut() {

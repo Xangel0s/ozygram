@@ -111,15 +111,7 @@ pub fn handle_parse(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing 'file_path'"))?;
 
-    let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
-    let path_obj = std::path::Path::new(&resolved);
-    let effective = if path_obj.exists() {
-        path_obj.to_path_buf()
-    } else if let Some(root) = backend.project_path() {
-        std::path::Path::new(&root).join(&resolved)
-    } else {
-        std::path::PathBuf::from(&resolved)
-    };
+    let (effective, resolved) = resolve_effective_path(backend, file_path);
 
     if !effective.exists() {
         return Ok(ToolCallResult {
@@ -187,15 +179,7 @@ pub fn handle_ast_patch(
         .and_then(Value::as_str);
 
     if let (Some(target_code), Some(replacement)) = (target_code_opt, replacement_opt) {
-        let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
-        let path_obj = std::path::Path::new(&resolved);
-        let effective = if path_obj.exists() {
-            path_obj.to_path_buf()
-        } else if let Some(root) = backend.project_path() {
-            std::path::Path::new(&root).join(&resolved)
-        } else {
-            std::path::PathBuf::from(&resolved)
-        };
+        let (effective, _resolved) = resolve_effective_path(backend, file_path);
 
         if !effective.exists() {
             return Ok(ToolCallResult {
@@ -284,15 +268,7 @@ pub fn handle_diagnostics_quick(
         .get("language")
         .and_then(Value::as_str);
 
-    let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
-    let path_obj = std::path::Path::new(&resolved);
-    let effective = if path_obj.exists() {
-        path_obj.to_path_buf()
-    } else if let Some(root) = backend.project_path() {
-        std::path::Path::new(&root).join(&resolved)
-    } else {
-        std::path::PathBuf::from(&resolved)
-    };
+    let (effective, resolved) = resolve_effective_path(backend, file_path);
 
     let source = if let Some(sc) = source_code_opt {
         sc.to_string()
@@ -443,6 +419,23 @@ pub fn handle_find_references(
     })
 }
 
+pub(crate) fn resolve_effective_path(backend: &GraphBackend, file_path: &str) -> (std::path::PathBuf, String) {
+    let direct_path = std::path::Path::new(file_path);
+    if direct_path.exists() {
+        return (direct_path.to_path_buf(), file_path.to_string());
+    }
+    let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+    let path_obj = std::path::Path::new(&resolved);
+    let effective = if path_obj.exists() {
+        path_obj.to_path_buf()
+    } else if let Some(root) = backend.project_path() {
+        std::path::Path::new(&root).join(&resolved)
+    } else {
+        std::path::PathBuf::from(&resolved)
+    };
+    (effective, resolved)
+}
+
 pub fn handle_view_skeleton(
     backend: &GraphBackend,
     tool_call: &ToolCallParams,
@@ -453,15 +446,7 @@ pub fn handle_view_skeleton(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing 'file_path'"))?;
 
-    let resolved = backend.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
-    let path_obj = std::path::Path::new(&resolved);
-    let effective = if path_obj.exists() {
-        path_obj.to_path_buf()
-    } else if let Some(root) = backend.project_path() {
-        std::path::Path::new(&root).join(&resolved)
-    } else {
-        std::path::PathBuf::from(&resolved)
-    };
+    let (effective, resolved) = resolve_effective_path(backend, file_path);
 
     if !effective.exists() {
         return Ok(ToolCallResult {

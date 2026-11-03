@@ -1096,9 +1096,10 @@ impl GraphBackend {
         // 8. Empty guard
         // ---------------------------------------------------------------
         if declared.len() <= 1 {
+            let empty_id = format!("empty_{}", sanitize_id(file_path));
             mermaid.push_str(&format!(
                 "    {}[\"[INFO: NO_DEPENDENCIES_INDEXED] No dependency data found for this file.\"]\n",
-                format!("empty_{}", sanitize_id(file_path))
+                empty_id
             ));
         }
 

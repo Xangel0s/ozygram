@@ -644,8 +644,8 @@ pub async fn handle_unified_tool(
                             backend.full_scan(
                                 &resolved_str,
                                 Some(&|processed, total| {
-                                    if let Some(ref n) = notifier {
-                                        if let Some(ref pt) = progress {
+                                    if let Some(n) = notifier {
+                                        if let Some(pt) = progress {
                                             n.progress(pt, processed, Some(total));
                                         }
                                     }
@@ -668,7 +668,7 @@ pub async fn handle_unified_tool(
                                 is_error: None,
                             }
                         }
-                        _ => handle_ozy_project_readonly(&tool_call).await?,
+                        _ => handle_ozy_project_readonly(tool_call).await?,
                     }
                 }
         _ => return Ok(None),

@@ -143,7 +143,7 @@ pub fn notify_subscribed(
         let subs = sub.lock().unwrap();
         for uri in uris {
             if subs.contains(*uri) {
-                if let Some(ref n) = notifier {
+                if let Some(n) = notifier {
                     n.raw(
                         "notifications/methods/resources/updated",
                         json!({"uri": uri}),

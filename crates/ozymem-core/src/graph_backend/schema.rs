@@ -866,6 +866,7 @@ impl GraphBackend {
         Ok(backend)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record_brain_audit(
         &self,
         request_hash: &str,

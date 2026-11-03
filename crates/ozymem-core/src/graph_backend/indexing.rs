@@ -94,7 +94,7 @@ impl GraphBackend {
             let abs_path = path.to_string_lossy().to_string();
             let current_mtime = file_mtime(path).unwrap_or_default();
             let stored = sqlite_snapshot.get(&abs_path);
-            if stored.map_or(true, |s| *s != current_mtime) {
+            if stored.is_none_or(|s| *s != current_mtime) {
                 changed = true;
                 break;
             }
@@ -757,8 +757,7 @@ impl GraphBackend {
         }
     }
 
-    /// Extracts API route definitions across project source files or a specific file.
-
+    /// Scans a project directory in the background and indexes files.
     pub async fn scan_project_background(self: Arc<Self>, project_path: String) {
         self.set_project_path(Some(&project_path));
         self.full_scan(&project_path, None).ok();
@@ -797,13 +796,10 @@ impl GraphBackend {
         Ok(results)
     }
 
-    /// Find simple paths between two files in the dependency graph.
-    /// Returns up to `max_paths` paths, each as a list of file paths from `from` to `to`.
-    /// Path length is limited to `max_hops` intermediate nodes.
-
+    /// Search AST indexed symbols (functions, classes, structs).
     pub fn search_ast_symbols(&self, query: &str, limit: usize) -> Result<Vec<StoredFunction>> {
         let inner = self.inner.lock().unwrap();
-        let limit = (limit as i64).min(50).max(1);
+        let limit = (limit as i64).clamp(1, 50);
         let like_pattern = format!("%{}%", query);
 
         let mut stmt = inner.sqlite.prepare(
@@ -830,11 +826,10 @@ impl GraphBackend {
         Ok(funcs)
     }
 
-    /// Filter graph summary by a subpath or monorepo sub-scope.
-
+    /// Returns recent AST diagnostics.
     pub fn get_ast_diagnostics(&self, limit: usize) -> Result<Vec<ozymem_parser::AstDiagnostic>> {
         let inner = self.inner.lock().unwrap();
-        let limit = (limit as i64).min(100).max(1);
+        let limit = (limit as i64).clamp(1, 100);
         let mut stmt = inner.sqlite.prepare(
             "SELECT file_path, line_number, severity, message FROM ast_diagnostics WHERE tenant_id = ?1 ORDER BY id DESC LIMIT ?2"
         )?;

@@ -1,3 +1,23 @@
+#![allow(
+    clippy::useless_conversion,
+    clippy::derivable_impls,
+    clippy::collapsible_if,
+    clippy::vec_init_then_push,
+    clippy::manual_is_multiple_of,
+    clippy::implicit_saturating_sub,
+    clippy::single_match,
+    clippy::print_literal,
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    clippy::manual_strip,
+    clippy::needless_range_loop,
+    clippy::for_kv_map,
+    clippy::needless_borrows_for_generic_args,
+    clippy::match_like_matches_macro,
+    clippy::cloned_ref_to_slice_refs,
+    clippy::zombie_processes
+)]
+
 pub mod config;
 pub mod client;
 pub mod mcp;

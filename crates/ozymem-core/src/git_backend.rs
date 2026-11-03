@@ -188,8 +188,8 @@ impl GitBackend {
 
         let mut entries = Vec::new();
         for hunk in blame.iter() {
-            let hunk_start = hunk.final_start_line() as usize;
-            let hunk_end = hunk_start + hunk.lines_in_hunk() as usize - 1;
+            let hunk_start = hunk.final_start_line();
+            let hunk_end = hunk_start + hunk.lines_in_hunk() - 1;
 
             if hunk_end < start || hunk_start > end {
                 continue;
@@ -294,12 +294,10 @@ impl GitBackend {
             Err(e) => return Err(format!("Failed to list notes for `{}`: {}", note_ref_name, e)),
         };
 
-        for item in iter {
-            if let Ok((_note_oid, commit_oid)) = item {
-                if let Ok(note) = self.repo.find_note(Some(note_ref_name), commit_oid) {
-                    if let Some(msg) = note.message() {
-                        notes.push((commit_oid.to_string(), msg.to_string()));
-                    }
+        for (_note_oid, commit_oid) in iter.flatten() {
+            if let Ok(note) = self.repo.find_note(Some(note_ref_name), commit_oid) {
+                if let Some(msg) = note.message() {
+                    notes.push((commit_oid.to_string(), msg.to_string()));
                 }
             }
         }
@@ -341,14 +339,12 @@ impl GitBackend {
         }
 
         let mut matching_commits = Vec::new();
-        for oid_res in revwalk {
-            if let Ok(oid) = oid_res {
-                if let Ok(commit) = self.repo.find_commit(oid) {
-                    if commit.time().seconds() >= threshold {
-                        matching_commits.push(commit);
-                    } else {
-                        break;
-                    }
+        for oid in revwalk.flatten() {
+            if let Ok(commit) = self.repo.find_commit(oid) {
+                if commit.time().seconds() >= threshold {
+                    matching_commits.push(commit);
+                } else {
+                    break;
                 }
             }
         }
@@ -729,8 +725,7 @@ impl MultiRepoScanner {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                if path.join(".git").exists() {
+            if path.is_dir() && path.join(".git").exists() {
                     let relative_name = path.file_name()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| "unknown".to_string());
@@ -749,7 +744,6 @@ impl MultiRepoScanner {
                         branch,
                         head_hash,
                     });
-                }
             }
         }
 

@@ -1230,10 +1230,19 @@ pub fn handle_tools_list(
                 .and_then(Value::as_str)
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(0);
+            let minimal_mode = std::env::var("OZY_MINIMAL_MCP")
+                .or_else(|_| std::env::var("OZYMEM_MINIMAL_TOOLS"))
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false);
             let show_legacy = std::env::var("OZYMEM_SHOW_LEGACY_TOOLS")
                 .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
                 .unwrap_or(false);
-            let visible_tools: Vec<_> = if show_legacy {
+            let visible_tools: Vec<_> = if minimal_mode {
+                tools
+                    .into_iter()
+                    .filter(|tool| matches!(tool.name, "ozy_patch" | "ozy_plan" | "ozy_context" | "ozy_memory" | "ozy_doctor"))
+                    .collect()
+            } else if show_legacy {
                 tools
             } else {
                 tools

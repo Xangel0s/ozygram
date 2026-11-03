@@ -45,7 +45,7 @@ pub fn extract_prohibited_terms(rule_text: &str) -> Vec<String> {
     for trigger in &["never use ", "never ", "do not use ", "do not ", "prohibited ", "evitar ", "forbidden "] {
         if let Some(pos) = lower.find(trigger) {
             let rest = &lower[pos + trigger.len()..];
-            let clause = rest.split(|c| c == ',' || c == '.' || c == ';').next().unwrap_or(rest);
+            let clause = rest.split([',', '.', ';']).next().unwrap_or(rest);
             let clause = clause.split("always").next().unwrap_or(clause);
             let clause = clause.split("instead").next().unwrap_or(clause);
             for word in clause.split(|c: char| !c.is_alphanumeric() && c != '_') {
@@ -249,10 +249,7 @@ pub fn is_noise_path(path: &Path) -> bool {
     {
         return true;
     }
-    match crate::sync::check_noise_or_huge_file(path, crate::sync::DEFAULT_MAX_DELTA_FILE_BYTES) {
-        crate::sync::NoiseFilterDecision::Process => false,
-        _ => true,
-    }
+    !matches!(crate::sync::check_noise_or_huge_file(path, crate::sync::DEFAULT_MAX_DELTA_FILE_BYTES), crate::sync::NoiseFilterDecision::Process)
 }
 
 /// Load ignore patterns from `.ozymemignore` and `.gitignore` in the project root.

@@ -4,7 +4,7 @@ kind: gotcha
 topic_key: gotcha_prevention
 title: "[REFLEXION GOTCHA] Caller and callee signatures must maintain arity parity."
 author: ozybrain_reflexion
-date: "2026-11-02"
+date: "2026-11-03"
 severity: high
 applies_to:
   - "crates/ozymem-core/src/indexing.rs"

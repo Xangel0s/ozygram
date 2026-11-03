@@ -11,7 +11,7 @@ pub(crate) async fn handle_package_tool(
     notifier: Option<&Notifier>,
 ) -> anyhow::Result<mcp_common::JsonRpcResponse> {
     let log = |level: &str, msg: String| {
-        if let Some(ref n) = notifier {
+        if let Some(n) = notifier {
             n.log(level, msg);
         }
     };
@@ -32,7 +32,7 @@ pub(crate) async fn handle_package_tool(
                 .arguments
                 .get("path")
                 .and_then(Value::as_str)
-                .map(|s| PathBuf::from(s))
+                .map(PathBuf::from)
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let proj_type = tool_call
                 .arguments

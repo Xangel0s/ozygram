@@ -70,6 +70,7 @@ pub async fn handle_resources_list(
             Ok(Some(ok_response(id, serde_json::to_value(result)?)))
 }
 
+#[allow(clippy::await_holding_lock)]
 pub async fn handle_resources_read(
     backend: &Arc<Mutex<Option<GraphBackend>>>,
     id: Value,

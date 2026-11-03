@@ -79,8 +79,6 @@ impl FastEngramReader {
             .collect()
     }
 
-    /// Cantidad de entradas en la tabla archivada
-
     /// Consulta zero-copy para extraer únicamente la firma de un símbolo sin clonar el resto de la estructura
     pub fn lookup_signature(&self, symbol_path: &str) -> Option<String> {
         self.lookup_archived(symbol_path).map(|a| a.signature.as_str().to_string())

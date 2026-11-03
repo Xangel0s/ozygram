@@ -899,10 +899,10 @@ impl GraphBackend {
             } else if variance < 1.0 {
                 1.1 // Recompensas homogéneas -> mayor explotación
             } else {
-                1.4142 // Balance estándar sqrt(2)
+                std::f64::consts::SQRT_2 // Balance estándar sqrt(2)
             }
         } else {
-            1.4142
+            std::f64::consts::SQRT_2
         };
 
         Ok(TrajectoryDiagnosis {

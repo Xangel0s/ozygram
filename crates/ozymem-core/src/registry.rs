@@ -32,6 +32,19 @@ pub enum Scale {
     Enterprise,
 }
 
+impl std::str::FromStr for Scale {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s.to_uppercase().as_str() {
+            "SMALL" => Scale::Small,
+            "MEDIUM" => Scale::Medium,
+            "LARGE" => Scale::Large,
+            "ENTERPRISE" => Scale::Enterprise,
+            _ => Scale::Unknown,
+        })
+    }
+}
+
 impl Scale {
     /// Classify a project by its file count (excluding noise directories).
     pub fn from_file_count(count: i64) -> Self {
@@ -53,6 +66,7 @@ impl Scale {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "SMALL" => Scale::Small,
@@ -66,11 +80,11 @@ impl Scale {
     /// Returns an emoji indicator for display.
     pub fn icon(&self) -> &'static str {
         match self {
-            Scale::Unknown => "❓",
-            Scale::Small => "📄",
-            Scale::Medium => "📁",
-            Scale::Large => "🏗️",
-            Scale::Enterprise => "🏢",
+            Scale::Unknown => "[?]",
+            Scale::Small => "[SM]",
+            Scale::Medium => "[MD]",
+            Scale::Large => "[LG]",
+            Scale::Enterprise => "[ENT]",
         }
     }
 }
@@ -83,6 +97,17 @@ pub enum ProjectStatus {
     Scanning,
 }
 
+impl std::str::FromStr for ProjectStatus {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s.to_uppercase().as_str() {
+            "ACTIVE" => ProjectStatus::Active,
+            "SCANNING" => ProjectStatus::Scanning,
+            _ => ProjectStatus::Sleeping,
+        })
+    }
+}
+
 impl ProjectStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -92,6 +117,7 @@ impl ProjectStatus {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "ACTIVE" => ProjectStatus::Active,
@@ -356,7 +382,7 @@ impl ProjectRegistry {
                  growth_rate, watcher_pid, last_opened, last_scan, created_at, updated_at \
                  FROM projects WHERE REPLACE(LOWER(path), '\\', '/') = LOWER(?1)",
                 params![normalized],
-                |row| row_to_project(row),
+                row_to_project,
             )
             .optional()
             .context("Failed to query project by path")
@@ -370,7 +396,7 @@ impl ProjectRegistry {
                  growth_rate, watcher_pid, last_opened, last_scan, created_at, updated_at \
                  FROM projects WHERE name = ?1",
                 params![name],
-                |row| row_to_project(row),
+                row_to_project,
             )
             .optional()
             .context("Failed to query project by name")
@@ -385,7 +411,7 @@ impl ProjectRegistry {
         )?;
 
         let mut projects = stmt
-            .query_map([], |row| row_to_project(row))?
+            .query_map([], row_to_project)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         for p in &mut projects {
@@ -664,7 +690,7 @@ impl ProjectRegistry {
 
         let cutoff = format!("-{} days", days);
         let projects = stmt
-            .query_map(params![cutoff], |row| row_to_project(row))?
+            .query_map(params![cutoff], row_to_project)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(projects)

@@ -113,7 +113,7 @@ pub(crate) async fn handle_project_tool(
     notifier: Option<&Notifier>,
 ) -> anyhow::Result<mcp_common::JsonRpcResponse> {
     let log = |level: &str, msg: String| {
-        if let Some(ref n) = notifier {
+        if let Some(n) = notifier {
             n.log(level, msg);
         }
     };

@@ -605,7 +605,7 @@ pub fn parse_with_tree_sitter(
 
                 if name.starts_with("use")
                     && name.len() > 3
-                    && name.chars().nth(3).map_or(false, |c| c.is_ascii_uppercase())
+                    && name.chars().nth(3).is_some_and(|c| c.is_ascii_uppercase())
                 {
                     kind = SymbolKind::ReactHook;
                 } else if has_jsx
@@ -614,7 +614,7 @@ pub fn parse_with_tree_sitter(
                         SupportedLanguage::JavaScript
                             | SupportedLanguage::TypeScript
                             | SupportedLanguage::TypeScriptReact
-                    ) && name.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                    ) && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
                         && name.chars().any(|c| c.is_ascii_lowercase()))
                 {
                     kind = SymbolKind::ReactComponent;
@@ -861,9 +861,7 @@ fn find_brace_block_end(lines: &[&str], start_index: usize) -> usize {
                 depth += 1;
                 seen_open = true;
             } else if character == '}' {
-                if depth > 0 {
-                    depth -= 1;
-                }
+                depth = depth.saturating_sub(1);
             }
             i += 1;
         }

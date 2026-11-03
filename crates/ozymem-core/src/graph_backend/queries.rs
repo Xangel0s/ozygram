@@ -256,8 +256,8 @@ impl GraphBackend {
                 continue;
             }
             for neighbor in inner.graph.neighbors_directed(curr, petgraph::Direction::Incoming) {
-                if !visited.contains_key(&neighbor) {
-                    visited.insert(neighbor, d + 1);
+                if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(neighbor) {
+                    e.insert(d + 1);
                     queue.push_back((neighbor, d + 1));
                     if let Some(w) = inner.graph.node_weight(neighbor) {
                         results.push(IncomingDependencyDetail {
@@ -323,6 +323,58 @@ impl GraphBackend {
             .neighbors_directed(idx, petgraph::Direction::Outgoing)
             .filter_map(|n| inner.graph.node_weight(n).map(|w| w.path.clone()))
             .collect()
+    }
+
+    /// Returns the top coupling hotspots (score, incoming, outgoing, file_path) directly
+    /// from in-memory Petgraph topology with single lock acquisition and sub-millisecond latency.
+    pub fn get_top_coupling_hotspots(
+        &self,
+        limit: usize,
+        scope: Option<&str>,
+    ) -> Vec<(usize, usize, usize, String)> {
+        let inner = self.inner.lock().unwrap();
+        let scope_norm = scope.unwrap_or("").replace('\\', "/");
+        let mut hotspots = Vec::new();
+
+        for idx in inner.graph.node_indices() {
+            if let Some(w) = inner.graph.node_weight(idx) {
+                let path_norm = w.path.replace('\\', "/");
+                if !scope_norm.is_empty() && !path_norm.contains(&scope_norm) {
+                    continue;
+                }
+                let incoming = inner.graph.neighbors_directed(idx, petgraph::Direction::Incoming).count();
+                let outgoing = inner.graph.neighbors_directed(idx, petgraph::Direction::Outgoing).count();
+                let score = incoming + outgoing;
+                if score > 0 {
+                    hotspots.push((score, incoming, outgoing, w.path.clone()));
+                }
+            }
+        }
+
+        if hotspots.is_empty() {
+            if let Ok(mut stmt) = inner.sqlite.prepare(
+                "SELECT origin_path, COUNT(*) as out_cnt FROM file_dependencies
+                 WHERE tenant_id = ?1 GROUP BY origin_path ORDER BY out_cnt DESC LIMIT ?2"
+            ) {
+                if let Ok(rows) = stmt.query_map(params![self.tenant_id, limit as i64], |row| {
+                    let path: String = row.get(0)?;
+                    let cnt: i64 = row.get(1)?;
+                    Ok((cnt as usize, 0, cnt as usize, path))
+                }) {
+                    for r in rows.flatten() {
+                        let path_norm = r.3.replace('\\', "/");
+                        if scope_norm.is_empty() || path_norm.contains(&scope_norm) {
+                            hotspots.push(r);
+                        }
+                    }
+                }
+            }
+        } else {
+            hotspots.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            hotspots.truncate(limit);
+        }
+
+        hotspots
     }
 
     pub async fn unified_search(
@@ -512,8 +564,7 @@ impl GraphBackend {
         None
     }
 
-    /// Search AST indexed symbols (functions, classes, structs) when explicit lessons are empty.
-
+    /// Filter graph summary by a subpath or monorepo sub-scope.
     pub fn get_subpath_graph_summary(&self, subpath: &str) -> Result<GraphSummary> {
         let norm_sub = crate::normalize_path(subpath).replace('\\', "/");
         let like1 = format!("%{}%", norm_sub);
@@ -629,7 +680,7 @@ impl GraphBackend {
                 .unwrap_or("");
             if !parent_dir.is_empty() {
                 let inner = self.inner.lock().unwrap();
-                for (path, _) in &inner.file_index {
+                for path in inner.file_index.keys() {
                     if path != &resolved && path != &norm_path && path.starts_with(parent_dir) {
                         candidate_neighbor_files.push(path.clone());
                         if candidate_neighbor_files.len() >= 4 {
@@ -1022,6 +1073,7 @@ impl GraphBackend {
     }
 
     /// High-performance literal/regex search across workspace with token budgeting.
+    #[allow(clippy::too_many_arguments)]
     pub fn search_literal(
         &self,
         query: &str,

@@ -91,11 +91,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// - Capitalizes the Windows drive letter (e.g. `c:/` -> `C:/`).
 /// - Trims trailing slashes (preserving the root slash if it is just `/`).
 pub fn normalize_path(path: &str) -> String {
-    let cleaned = if path.starts_with(r"\\?\") {
-        &path[4..]
-    } else {
-        path
-    };
+    let cleaned = path.strip_prefix(r"\\?\").unwrap_or(path);
 
     let mut s = cleaned.replace('\\', "/");
 

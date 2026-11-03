@@ -54,8 +54,8 @@ pub fn parse_fastapi_routes(source: &str, file_path: &str) -> Vec<ApiRouteDefini
             let mut handler_name = String::from("handler");
             let mut dto_model = None;
 
-            for j in (i + 1)..std::cmp::min(i + 6, lines.len()) {
-                if let Some(fn_caps) = func_re.captures(lines[j]) {
+            for line in lines.iter().take(std::cmp::min(i + 6, lines.len())).skip(i + 1) {
+                if let Some(fn_caps) = func_re.captures(line) {
                     if let Some(name) = fn_caps.get(1) {
                         handler_name = name.as_str().to_string();
                     }

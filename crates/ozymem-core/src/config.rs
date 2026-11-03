@@ -165,21 +165,12 @@ impl Default for ComputeConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct StorageConfig {
     #[serde(default)]
     pub postgres_dsn: Option<String>,
     #[serde(default)]
     pub neural_reranker: bool,
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            postgres_dsn: None,
-            neural_reranker: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]

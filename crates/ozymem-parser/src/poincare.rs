@@ -112,8 +112,8 @@ impl PoincarePoint {
         let coeff_v = 1.0 - norm_u_sq;
 
         let mut res = [0.0f32; POINCARE_DIM];
-        for i in 0..POINCARE_DIM {
-            res[i] = (coeff_u * self.coords[i] + coeff_v * other.coords[i]) / denom;
+        for (i, item) in res.iter_mut().enumerate() {
+            *item = (coeff_u * self.coords[i] + coeff_v * other.coords[i]) / denom;
         }
 
         PoincarePoint::from_coords(res)

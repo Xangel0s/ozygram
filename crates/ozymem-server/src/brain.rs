@@ -348,7 +348,7 @@ pub(crate) async fn handle_ozy_brain(
     if let Some(ref role) = critique_role_opt {
         if let Some(obj) = response.as_object_mut() {
             if !obj.contains_key("critique") || obj.get("critique").map(|v| v.is_null()).unwrap_or(false) {
-                let target = target_file_opt.as_deref().unwrap_or("workspace");
+                let target = target_file_opt.unwrap_or("workspace");
                 obj.insert("critique".to_string(), build_role_critique(role, target, goal));
             }
         }
@@ -388,7 +388,7 @@ pub(crate) async fn handle_ozy_brain(
     let git_head = git_context
         .get("recent_commits")
         .and_then(Value::as_array)
-        .and_then(|arr| arr.get(0))
+        .and_then(|arr| arr.first())
         .and_then(|c| c.get("id").or(c.get("hash")))
         .and_then(Value::as_str);
 

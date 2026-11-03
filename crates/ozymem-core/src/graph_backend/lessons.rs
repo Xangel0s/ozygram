@@ -49,6 +49,7 @@ impl GraphBackend {
         Ok(inner.sqlite.last_insert_rowid())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_observation(
         &self,
         session_id: &str,
@@ -68,13 +69,13 @@ impl GraphBackend {
         let topic = topic_key.map(normalize_topic_key).filter(|s| !s.is_empty());
 
         if let Some(ref topic) = topic {
-            if let Some(id) = inner.sqlite.query_row(
+            if let Ok(id) = inner.sqlite.query_row(
                 "SELECT id FROM observations
                  WHERE project = ?1 AND scope = ?2 AND topic_key = ?3 AND tenant_id = ?4 AND deleted_at IS NULL
                  ORDER BY id DESC LIMIT 1",
                 params![project, scope, topic, self.tenant_id],
                 |row| row.get::<_, i64>(0),
-            ).ok() {
+            ) {
                 inner.sqlite.execute(
                     "UPDATE observations SET session_id = ?1, type = ?2, title = ?3, content = ?4,
                         tool_name = ?5, normalized_hash = ?6, revision_count = revision_count + 1,
@@ -86,7 +87,7 @@ impl GraphBackend {
             }
         }
 
-        if let Some(id) = inner
+        if let Ok(id) = inner
             .sqlite
             .query_row(
                 "SELECT id FROM observations
@@ -103,7 +104,6 @@ impl GraphBackend {
                 ],
                 |row| row.get::<_, i64>(0),
             )
-            .ok()
         {
             inner.sqlite.execute(
                 "UPDATE observations SET duplicate_count = duplicate_count + 1, last_seen_at = ?1, updated_at = ?1
@@ -146,7 +146,7 @@ impl GraphBackend {
         limit: usize,
     ) -> Result<Vec<ObservationEntry>> {
         let inner = self.inner.lock().unwrap();
-        let limit = (limit as i64).min(100).max(1);
+        let limit = (limit as i64).clamp(1, 100);
         let project = project.unwrap_or_else(|| default_project_name(&inner));
         let scope = normalize_scope(scope);
         let mut out = Vec::new();
@@ -312,7 +312,7 @@ impl GraphBackend {
                    FROM lessons
                    WHERE id = ?1 AND tenant_id = ?2 LIMIT 1";
         let mut stmt = inner.sqlite.prepare(sql)?;
-        let mut rows = stmt.query_map(params![id, self.tenant_id], |row| LessonEntry::from_row(row))?;
+        let mut rows = stmt.query_map(params![id, self.tenant_id], LessonEntry::from_row)?;
         if let Some(res) = rows.next() {
             Ok(Some(res?))
         } else {
@@ -390,6 +390,7 @@ impl GraphBackend {
         let mut pruned_count = 0;
         let mut pruned_lessons = Vec::new();
 
+        #[allow(clippy::type_complexity)]
         let lessons_to_evaluate: Vec<(i64, String, String, String, i64, Option<String>, f64, i64)> = {
             let inner = self.inner.lock().unwrap();
             let mut stmt = inner.sqlite.prepare(
@@ -558,7 +559,7 @@ impl GraphBackend {
     /// Synchronous version of recent_lessons for fast bundle export / tooling.
     pub fn recent_lessons_sync(&self, kind: Option<&str>, limit: usize) -> Result<Vec<LessonEntry>> {
         let inner = self.inner.lock().unwrap();
-        let limit = (limit as i64).min(10000).max(1);
+        let limit = (limit as i64).clamp(1, 10000);
         let fwd_root = crate::normalize_path(&inner.workspace_root).replace('\\', "/");
         let bck_root = fwd_root.replace('/', "\\");
 
@@ -587,7 +588,7 @@ impl GraphBackend {
             let results = stmt
                 .query_map(
                     params![self.tenant_id, k, fwd_root, bck_root, limit],
-                    |row| LessonEntry::from_row(row),
+                    LessonEntry::from_row,
                 )?
                 .filter_map(|r| r.ok())
                 .collect();
@@ -597,7 +598,7 @@ impl GraphBackend {
             let results = stmt
                 .query_map(
                     params![self.tenant_id, fwd_root, bck_root, limit],
-                    |row| LessonEntry::from_row(row),
+                    LessonEntry::from_row,
                 )?
                 .filter_map(|r| r.ok())
                 .collect();
@@ -728,4 +729,4 @@ impl GraphBackend {
         let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
         Self::check_lessons_freshness_with_root(lessons, root_path);
     }
-}
+}

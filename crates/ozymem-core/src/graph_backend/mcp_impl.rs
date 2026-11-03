@@ -233,7 +233,7 @@ impl McpBackend for GraphBackend {
         limit: usize,
     ) -> Result<Vec<LessonEntry>> {
         let inner = self.inner.lock().unwrap();
-        let limit = (limit as i64).min(100).max(1);
+        let limit = (limit as i64).clamp(1, 100);
 
         // Try FTS5 MATCH first; fall back to LIKE if query syntax is invalid
         let mut results = Vec::new();
@@ -343,7 +343,7 @@ impl McpBackend for GraphBackend {
         )?;
         let rows = stmt.query_map(
             params![file_path, norm_path, resolved, self.tenant_id, root],
-            |row| LessonEntry::from_row(row),
+            LessonEntry::from_row,
         )?;
         let mut results: Vec<LessonEntry> = rows.filter_map(|r| r.ok()).collect();
         let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
@@ -368,7 +368,7 @@ impl McpBackend for GraphBackend {
         )?;
         let rows = stmt.query_map(
             params![file_path, norm_path, resolved, symbol_name, self.tenant_id, root],
-            |row| LessonEntry::from_row(row),
+            LessonEntry::from_row,
         )?;
         let mut results: Vec<LessonEntry> = rows.filter_map(|r| r.ok()).collect();
         let root_path = if root.is_empty() { None } else { Some(Path::new(&root)) };
@@ -378,7 +378,7 @@ impl McpBackend for GraphBackend {
 
     async fn recent_lessons(&self, kind: Option<&str>, limit: usize) -> Result<Vec<LessonEntry>> {
         let inner = self.inner.lock().unwrap();
-        let limit = (limit as i64).min(100).max(1);
+        let limit = (limit as i64).clamp(1, 100);
         let root = inner.workspace_root.clone();
 
         let (sql, kind_clause) = match kind {
@@ -405,14 +405,14 @@ impl McpBackend for GraphBackend {
             let k = kind.unwrap();
             let rows = stmt.query_map(
                 params![self.tenant_id, k, root, limit],
-                |row| LessonEntry::from_row(row),
+                LessonEntry::from_row,
             )?;
             rows.filter_map(|r| r.ok()).collect()
         } else {
             let mut stmt = inner.sqlite.prepare(&sql)?;
             let rows = stmt.query_map(
                 params![self.tenant_id, root, limit],
-                |row| LessonEntry::from_row(row),
+                LessonEntry::from_row,
             )?;
             rows.filter_map(|r| r.ok()).collect()
         };

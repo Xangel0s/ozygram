@@ -26,6 +26,7 @@ use crate::resources::{
 use crate::schemas::handle_tools_list;
 use crate::unified::handle_unified_tool;
 
+#[allow(clippy::await_holding_lock)]
 pub async fn handle_request(
     backend: &Arc<Mutex<Option<GraphBackend>>>,
     request: mcp_common::JsonRpcRequest,

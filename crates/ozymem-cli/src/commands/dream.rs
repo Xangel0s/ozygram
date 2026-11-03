@@ -208,7 +208,7 @@ pub fn run_dream_command(cmd: &DreamSubcommand) -> Result<()> {
                     "engine": "Trajectory Replay & Exploration Tuner [EXPERIMENTAL]",
                     "active_policy": "MctsExplorationPolicy",
                     "policy_version": "v1.0.0",
-                    "exploration_constant": 1.4142,
+                    "exploration_constant": std::f64::consts::SQRT_2,
                     "prune_threshold": -3.0,
                     "max_observation_limit_kb": 32,
                     "total_trajectories_recorded": trajectories.len(),

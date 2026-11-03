@@ -98,7 +98,7 @@ pub fn extract_engram_contracts(
             while curr >= 0 {
                 let line_str = lines[curr as usize].trim();
                 if line_str.starts_with("///") || line_str.starts_with("//") || line_str.starts_with("#") || line_str.starts_with("*") {
-                    doc_lines.push(line_str.trim_start_matches(|c| c == '/' || c == '#' || c == '*' || c == ' ').trim().to_string());
+                    doc_lines.push(line_str.trim_start_matches(['/', '#', '*', ' ']).trim().to_string());
                     curr -= 1;
                 } else {
                     break;

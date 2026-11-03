@@ -38,10 +38,10 @@ impl MarkdownMemory {
 
     /// Returns whether this memory is currently active (defaults to true if status is omitted).
     pub fn is_active(&self) -> bool {
-        match self.metadata.status.as_deref().map(|s| s.to_lowercase()).as_deref() {
-            Some("resolved") | Some("archived") => false,
-            _ => true,
-        }
+        !matches!(
+            self.metadata.status.as_deref().map(|s| s.to_lowercase()).as_deref(),
+            Some("resolved") | Some("archived")
+        )
     }
 
     /// Numerical severity weight for ranking in pre-flight alerts (higher = more critical).
@@ -315,12 +315,11 @@ fn parse_yaml_frontmatter(raw: &str) -> Result<MarkdownMemoryMetadata> {
 
 fn strip_quotes(s: &str) -> &str {
     let trimmed = s.trim();
-    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    if ((trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\x27') && trimmed.ends_with('\x27')))
+        && trimmed.len() >= 2
     {
-        if trimmed.len() >= 2 {
-            return &trimmed[1..trimmed.len() - 1];
-        }
+        return &trimmed[1..trimmed.len() - 1];
     }
     trimmed
 }
