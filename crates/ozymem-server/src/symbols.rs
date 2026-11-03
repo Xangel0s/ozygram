@@ -11,7 +11,9 @@ pub fn handle_get_symbol(
         .arguments
         .get("file_path")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing 'file_path'"))?;
+        .or_else(|| tool_call.arguments.get("path").and_then(Value::as_str))
+        .or_else(|| tool_call.arguments.get("directory").and_then(Value::as_str))
+        .ok_or_else(|| anyhow::anyhow!("missing 'file_path', 'path', or 'directory'"))?;
     let symbol_name = tool_call
         .arguments
         .get("symbol_name")
@@ -79,7 +81,9 @@ pub fn handle_file_tree(
         .arguments
         .get("file_path")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing 'file_path'"))?;
+        .or_else(|| tool_call.arguments.get("directory").and_then(Value::as_str))
+        .or_else(|| tool_call.arguments.get("path").and_then(Value::as_str))
+        .ok_or_else(|| anyhow::anyhow!("missing 'file_path', 'directory', or 'path'"))?;
     let depth = tool_call
         .arguments
         .get("depth")

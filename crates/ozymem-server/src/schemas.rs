@@ -1093,12 +1093,12 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_file_tree",
-                    description: "Devuelve el árbol jerárquico esquelético de miembros AST (funciones, clases, componentes, hooks, interfaces) y dependencias de un archivo, ahorrando hasta 95% de tokens respecto a leer el archivo completo.",
+                    description: "Devuelve el árbol jerárquico esquelético de miembros AST (si es un archivo) o el árbol de archivos y subdirectorios con tamaños (si es una carpeta), ahorrando hasta 95% de tokens sin invocar comandos de terminal.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "file_path": { "type": "string", "description": "Ruta del archivo a inspeccionar" },
-                            "depth": { "type": "integer", "default": 2, "description": "Profundidad máxima de dependencias" },
+                            "file_path": { "type": "string", "description": "Ruta del archivo o carpeta a inspeccionar" },
+                            "depth": { "type": "integer", "default": 2, "description": "Profundidad máxima de dependencias o subdirectorios" },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text", "description": "Formato de salida" }
                         },
                         "required": ["file_path"],

@@ -739,10 +739,25 @@ impl GraphBackend {
         Ok(ozymem_parser::extract_symbol_source(&resolved, symbol_name, &source, lang))
     }
 
-    /// Returns skeletal AST file member tree and outgoing dependencies.
+    /// Returns skeletal AST file member tree and outgoing dependencies (if a file),
+    /// or hierarchical directory tree with file sizes (if a directory).
     pub fn get_file_tree(&self, file_path: &str, depth: u32, format: &str) -> Result<String> {
         let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
+
+        let path_obj = std::path::Path::new(&resolved);
+        let effective = if path_obj.exists() {
+            path_obj.to_path_buf()
+        } else if let Some(root) = self.project_path() {
+            std::path::Path::new(&root).join(&resolved)
+        } else {
+            std::path::PathBuf::from(&resolved)
+        };
+
+        // If target is a directory, render a hierarchical directory tree of files and subfolders
+        if effective.is_dir() {
+            return self.get_directory_tree(&effective, depth, format);
+        }
 
         let inner = self.inner.lock().unwrap();
         let mut functions = Vec::new();
@@ -853,6 +868,102 @@ impl GraphBackend {
             }
         }
 
+        Ok(out)
+    }
+
+    /// Returns hierarchical directory tree of files and subdirectories with sizes and depth containment.
+    pub fn get_directory_tree(&self, dir_path: &std::path::Path, depth: u32, format: &str) -> Result<String> {
+        let max_depth = (depth as usize).clamp(1, 6);
+        let norm_dir = crate::normalize_path(&dir_path.to_string_lossy());
+
+        let mut file_entries = Vec::new();
+        let mut dir_count = 0;
+        let mut file_count = 0;
+
+        let walker = walkdir::WalkDir::new(dir_path)
+            .min_depth(1)
+            .max_depth(max_depth)
+            .follow_links(false)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    !crate::graph_backend::helpers::is_noise_dir(e.path())
+                } else {
+                    true
+                }
+            });
+
+        for entry in walker {
+            let Ok(entry) = entry else { continue };
+            let p = entry.path();
+            let rel_path = match p.strip_prefix(dir_path) {
+                Ok(r) => crate::normalize_path(&r.to_string_lossy()),
+                Err(_) => crate::normalize_path(&p.to_string_lossy()),
+            };
+            let is_dir = entry.file_type().is_dir();
+            let size = if is_dir {
+                dir_count += 1;
+                0
+            } else {
+                file_count += 1;
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
+            let depth_level = entry.depth();
+            file_entries.push((rel_path, is_dir, size, depth_level));
+        }
+
+        if format == "json" {
+            let json_items: Vec<_> = file_entries
+                .iter()
+                .map(|(p, is_dir, sz, d)| {
+                    serde_json::json!({
+                        "path": p,
+                        "is_dir": is_dir,
+                        "size_bytes": sz,
+                        "depth": d
+                    })
+                })
+                .collect();
+            return Ok(serde_json::to_string_pretty(&serde_json::json!({
+                "type": "directory",
+                "directory": norm_dir,
+                "depth": depth,
+                "total_files": file_count,
+                "total_directories": dir_count,
+                "items": json_items
+            }))?);
+        }
+
+        let mut out = String::new();
+        out.push_str(&format!("Directory: {}\n", norm_dir));
+        if file_entries.is_empty() {
+            out.push_str("└── (empty directory)\n");
+            return Ok(out);
+        }
+
+        for (idx, (rel, is_dir, sz, depth_level)) in file_entries.iter().enumerate() {
+            let is_last = idx + 1 == file_entries.len() || {
+                file_entries[idx + 1..].iter().all(|(_, _, _, next_d)| *next_d < *depth_level)
+            };
+            let branch = if is_last { "└──" } else { "├──" };
+            let indent = "│   ".repeat(depth_level.saturating_sub(1));
+            let type_str = if *is_dir {
+                format!("{}/", rel.split('/').next_back().unwrap_or(rel))
+            } else {
+                let name = rel.split('/').next_back().unwrap_or(rel);
+                let sz_str = if *sz < 1024 {
+                    format!("{} B", sz)
+                } else if *sz < 1024 * 1024 {
+                    format!("{:.1} KB", *sz as f64 / 1024.0)
+                } else {
+                    format!("{:.1} MB", *sz as f64 / (1024.0 * 1024.0))
+                };
+                format!("{} ({})", name, sz_str)
+            };
+            out.push_str(&format!("{}{}{}\n", indent, branch, if branch.is_empty() { "" } else { " " }.to_string() + &type_str));
+        }
+        out.push_str(&format!("\nSummary: {} files, {} subdirectories (depth: {})\n", file_count, dir_count, depth));
         Ok(out)
     }
 

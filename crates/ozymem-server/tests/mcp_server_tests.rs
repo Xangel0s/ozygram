@@ -2691,6 +2691,25 @@ export function handleReorderCard(a: number, b: number) {
         assert!(tree_text.contains("[MEMBER: REACTHOOK] useKanban") || tree_text.contains("[MEMBER: REACT_HOOK] useKanban"));
         assert!(tree_text.contains("[MEMBER: FUNCTION] handleReorderCard"));
 
+        // 2b. Test ozy_file_tree on a directory path (polymorphic directory tree)
+        let dir_tree_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(22)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_file_tree",
+                "arguments": {
+                    "directory": tmp_root.to_string_lossy().to_string()
+                }
+            })),
+        };
+        let dir_tree_resp = handle_request(&backend_ref, dir_tree_req, None, None).await.unwrap().unwrap();
+        assert!(dir_tree_resp.error.is_none());
+        let dir_tree_text = dir_tree_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(dir_tree_text.contains("Directory:"));
+        assert!(dir_tree_text.contains("Kanban.tsx"));
+        assert!(dir_tree_text.contains("Summary:"));
+
         // 3. Test ozy_get_symbol (extract only handleReorderCard)
         let sym_req = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
