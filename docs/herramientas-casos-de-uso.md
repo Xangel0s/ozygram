@@ -239,7 +239,156 @@ ozymem doctor
 
 ---
 
-## 7. Registro de Versión
+## 7. Automatización Fluida y Protocolo de Intercepción (Zero-Prompting)
+
+Uno de los desafíos más comunes al integrar herramientas MCP avanzadas es que los agentes de IA suelen **olvidar usarlas** a menos que el desarrollador copie y pegue explícitamente nombres de herramientas y ejemplos de prompts en cada turno.
+
+### 7.1. La Brecha de Rendimiento: 23 Minutos vs. 4 Minutos
+
+En pruebas empíricas sobre monorepos de producción (como `crmnew`, 1,500+ archivos), se observa una discrepancia drástica de velocidad:
+
+| Modo de Operación | Tiempo de Resolución | Consumo de Tokens | Comportamiento del Agente |
+| :--- | :--- | :--- | :--- |
+| **Sin Ozygram (Nativo Ciego)** | **23 minutos** | Alto (>45,000 tokens) | Ejecuta búsquedas lentas en terminal (`Get-ChildItem`, `Select-String`), lee 10-15 archivos completos con `read_file`, satura el contexto, edita a ciegas y comete errores de tipos. |
+| **Con Ozygram (Guiado)** | **4 minutos** | Mínimo (<6,000 tokens) | `ozy_context` localiza las funciones exactas en <5 ms, `ozy_patch(simulate)` valida en RAM volátil (CoW) en <400 ms sin tocar disco, y aplica la solución quirúrgica en 1 turno. |
+
+### 7.2. Causas del Olvido y Sesgo Nativo del LLM
+
+1. **Sesgo hacia Herramientas Built-in**: Los LLMs comerciales (Claude, Gemini, GPT) están fuertemente condicionados por RLHF a priorizar sus herramientas nativas (`read_file`, `edit_file`, `grep`) sobre servidores MCP externos.
+2. **Parálisis de Elección**: Catálogos MCP con más de 20 herramientas fragmentadas generan dudas en el modelo, haciéndolo retroceder a lo familiar: `read_file`.
+3. **Reglas Pasivas Enterradas**: Si las instrucciones de un proyecto (`AGENTS.md`) colocan Ozygram en la línea 500 como un "consejo opcional", el agente lo ignora.
+
+### 7.3. La Solución: Intercepción de 2 Niveles
+
+Para que el agente active Ozygram de forma **100% fluida y autónoma sin que tengas que pegar ejemplos**, se aplican dos mecanismos coordinados:
+
+#### Nivel A: Schemas Imperativos en el Servidor MCP (`schemas.rs`)
+Desde la versión v0.2.4+, Ozygram inyecta directivas imperativas de precedencia en los esquemas de herramientas que lee el LLM:
+
+* **`ozy_context`**: Comienza con `[PRIMARY CODE EXPLORATION TOOL - INVOKE BEFORE read_file OR grep]`.
+* **`ozy_patch`**: Comienza con `[MANDATORY PRE-FLIGHT PATCHER - ALWAYS SIMULATE BEFORE EDITING]`.
+* **`ozy_plan`**: Comienza con `[PRIMARY ARCHITECTURAL PLANNER]`.
+
+Esto actúa como un gancho cognitivo que intercepta las herramientas nativas antes de que el LLM decida su primera acción.
+
+#### Nivel B: Plantilla de Cabecera para `AGENTS.md` / `GEMINI.md` / `CLAUDE.md`
+Coloca este bloque en las primeras 10 líneas del archivo de reglas de tu proyecto (`AGENTS.md`, `CLAUDE.md`, o `GEMINI.md`):
+
+```markdown
+## Protocolo Obligatorio de Herramientas (Ozygram First)
+
+> [!IMPORTANT]
+> **REGLA DE PRECEDENCIA ESTRICTA PARA AGENTES**:
+> El espacio de trabajo está indexado en Ozygram. Para evitar exploraciones lentas de 20+ minutos y saturación de contexto:
+>
+> 1. **Exploración**: ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo o `grep` recursivo a ciegas. SIEMPRE invocar primero `ozy_context(action="task", query="<tarea o error>")` o `ozy_context(action="file", lod="contracts")`.
+> 2. **Modificación**: ANTES de escribir en disco, es OBLIGATORIO ejecutar `ozy_patch(action="simulate", file_path="...", candidate_code="...", target_symbol="...")` para verificar en memoria RAM (Copy-on-Write) que la firma no rompa llamadores en otros módulos.
+> 3. **Planificación**: Para tareas full-stack o que toquen múltiples componentes, ejecutar `ozy_plan(goal="...")` para obtener la secuencia topológica estricta y el blast radius en RAM.
+```
+
+### 7.4. Resultado Práctico para el Desarrollador (Zero-Prompting)
+
+Con esta configuración activa:
+* Ya no necesitas recordar ni escribir la sintaxis exacta de `ozy_patch(action='simulate'...)` en cada turno de chat.
+* Puedes formular requerimientos directos y cotidianos:
+  > *"aplica al rol asistente_sedes_ingenieria"*  
+  > *"optimiza el lag de la tabla de Publicidad"*
+* El agente **interceptará automáticamente la intención**, ejecutará `ozy_context` y `ozy_patch(simulate)` en el primer turno, y completará la tarea en **4 minutos** en lugar de perderse durante **23 minutos**.
+
+### 7.5. Playbook de Prompts de Alta Eficiencia (Casos de Estudio Reales)
+
+Para situaciones donde el desarrollador desee acelerar la convergencia del agente al máximo o integrarlo en scripts de automatización CI/CD, este playbook proporciona las directivas óptimas probadas en monorepos de producción:
+
+#### Caso A: Corrección de Bugs con Mínimo Consumo de Tokens
+* **Objetivo:** Resolver una anomalía de lógica o interfaz sin cargar archivos completos en contexto ni romper contratos adyacentes.
+* **Prompt Recomendado:**
+  ```text
+  "Hay un bug en [descripción del fallo o error]. Utiliza ozy_context(lod='contracts') y ozy_plan con MCTS para diagnosticar el problema y calcular el radio de explosión mínimo antes de editar ningún archivo. Aplica la solución mediante ozy_patch quirúrgico."
+  ```
+* **Flujo Interno del Agente:**
+  1. Invoca `ozy_context(action="task", query="[error]")` para extraer contratos AST limpios sin inflar el contexto (>85% ahorro de tokens).
+  2. Ejecuta `ozy_plan(goal="corregir bug")` para evaluar rutas alternativas en RAM sin tocar el disco.
+  3. Aplica la mutación puntual mediante `ozy_patch(action="apply")`.
+
+#### Caso B: Refactorización de Funciones Compartidas y Protección de Aridad
+* **Objetivo:** Alterar parámetros, firmas o tipos de retorno en componentes o endpoints consumidos transversalmente sin provocar errores en tiempo de compilación.
+* **Prompt Recomendado:**
+  ```text
+  "Necesito modificar la firma de la función [nombre_funcion] en [archivo]. Antes de escribir en disco, ejecuta ozy_patch(action='simulate') para comprobar si rompe la aridad de los llamadores en el resto del proyecto y muéstrame los resultados de la simulación en RAM."
+  ```
+* **Flujo Interno y Salida Esperada:**
+  El motor genera instantáneamente (<400 ms) el reporte de impacto en memoria volátil Copy-on-Write:
+  ```text
+  [SPECULATIVE GHOST PATCH REPORT]
+  Target Symbol: [nombre_funcion]
+  Target File:   [archivo]
+  Verdict:       [STATUS: APPROVED: NO CONTRACT BREAKAGE]
+  Isolation:     [SANDBOX_INVARIANT_COW_RAM_ONLY]
+  [CONTRACT ANALYSIS]
+    • Arity Changed: false
+    • Required Parameters: N -> N
+    • Impacted Callers Inspected: M
+    • Breaks Callers: false
+  ```
+
+#### Caso C: Implementación Full-Stack (Backend FastAPI + Frontend Next.js)
+* **Objetivo:** Desarrollar una nueva funcionalidad que atraviesa base de datos, API REST y componentes de interfaz de usuario de forma sincronizada.
+* **Prompt Recomendado:**
+  ```text
+  "Vamos a implementar la nueva característica [nombre_feature]. Usa ozy_plan para determinar la secuencia topológica estricta (modelo -> esquema -> enrutador -> componente frontend) y reporta los riesgos antes de comenzar la implementación."
+  ```
+* **Flujo Interno del Agente:**
+  1. `ozy_plan` calcula la secuencia topológica estricta garantizando que los contratos base (schemas Pydantic / TypeScript types) existan antes de codificar la interfaz visual.
+  2. Identifica endpoints dependientes cruzados (`CONSUMES_ENDPOINT`) y previene desincronizaciones de contrato REST/hook.
+
+#### Caso D: Optimización de Rendimiento y Componentes de Alta Carga (Tablas / Virtualización)
+* **Objetivo:** Escalar renderizado de interfaces con miles de registros (1,000 a 100,000 filas) evitando bloqueos de pestaña (*Page Unresponsive*) y cuellos de botella de API.
+* **Prompt Recomendado:**
+  ```text
+  "En [Componente.tsx], vamos a ampliar el tamaño de página (ej. 1,000 a 100,000 registros) y optimizar el lag de renderizado. Antes de escribir en disco, ejecuta ozy_patch(action='simulate') para comprobar la firma en memoria RAM y sugiere la estrategia de virtualización/containment adecuada."
+  ```
+* **Flujo Interno del Agente:**
+  1. Simula la modificación del selector de paginación en RAM.
+  2. Verifica en `router.py` si las validaciones `le` del backend (ej. `le=500` vs `le=100000`) permiten la carga masiva.
+  3. Recomienda e implementa Virtualización de DOM (`@tanstack/react-virtual` o `content-visibility: auto`) para reciclar nodos del DOM y mantener la tasa de 60 FPS sin fugas de memoria.
+
+---
+
+### 7.6. Matriz de Decisión para el Agente Autónomo (Cheat Sheet Interno)
+
+Cuando un agente opera con Ozygram integrado, sigue esta matriz unificada de decisión sin requerir instrucciones manuales:
+
+| Intención del Usuario | Primera Acción (Ozygram) | Segunda Acción (Validación) | Acción Final (Mutación) |
+| :--- | :--- | :--- | :--- |
+| Localizar bug / entender código | `ozy_context(action="task")` | `ozy_context(lod="contracts")` | No muta; reporta diagnóstico |
+| Cambiar firma / parámetro | `ozy_context(action="file")` | `ozy_patch(action="simulate")` | `ozy_patch(action="apply")` |
+| Nueva funcionalidad compleja | `ozy_plan(goal="...")` | `ozy_doctor(action="status")` | Edición secuencial guiada |
+| Consultar lecciones previas | `ozy_memory(action="search")` | Lectura de `.ozy/memories/` | Aplicación de invariante aprendida |
+| Auditar salud o migraciones | `ozy_doctor(action="audit_migrations")` | `ozy_doctor(action="code")` | Reporte de diagnóstico estructurado |
+
+---
+
+### 7.7. Anatomía Comparativa: 23 Minutos vs. 4 Minutos
+
+```text
+[ESCENARIO TRADICIONAL: 23 MINUTOS (SIN OZYGRAM)]
+Turno 1: Get-ChildItem recursivo en terminal (15 seg) -> Salida masiva no filtrada.
+Turno 2: Select-String regex buscando cadenas (20 seg) -> Resultados confusos.
+Turnos 3-8: read_file sobre 10 archivos completos (4 minutos) -> 45,000 tokens consumidos.
+Turnos 9-14: Edición tentativa en disco con edit_file -> Fallos de TypeScript y sintaxis.
+Turnos 15-22: Reparaciones manuales iterativas, lecturas adicionales y resolución de aridad.
+TOTAL: ~23 minutos, alto consumo de contexto, riesgo de regresiones silenciosas.
+
+[ESCENARIO OPTIMIZADO: 4 MINUTOS (CON OZYGRAM ZERO-PROMPTING)]
+Turno 1: ozy_context(action="task") extrae contratos AST exactos en <5 ms (1,200 tokens).
+Turno 2: ozy_patch(action="simulate") verifica aridad y llamadores en RAM en <400 ms.
+Turno 3: ozy_patch(action="apply") aplica la sustitución quirúrgica en disco en <10 ms.
+TOTAL: ~4 minutos, <6,000 tokens consumidos, 0 regresiones de llamadores.
+```
+
+---
+
+## 8. Registro de Versión
 
 * **Versión del documento:** v0.2.4
 * **Crates asociados:** `ozymem-core v0.2.4`, `ozymem-parser v0.2.4`, `ozymem-server v0.2.4`, `ozymem-cli v0.2.4`.

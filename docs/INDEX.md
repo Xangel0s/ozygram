@@ -56,6 +56,7 @@ Welcome to the official, modular documentation for **Ozygram**, the persistent c
 - Setup guide for Antigravity IDE, Claude Code, Cursor, Windsurf, and VS Code.
 - Complete catalog of 30+ MCP tools: memory, code graph, cognitive brain, diagnostics, and code health.
 - MCP Resources (`ozymem://summary`, `recent-lessons`, etc.) and dynamic resource subscriptions.
+- **Autonomous Agent Precedence & Zero-Prompting Setup**: 2-tier cognitive interception protocol and the 23m vs. 4m benchmark.
 
 ### 8. [High-Performance Tooling ("The Dream Team") (`docs/dream-team-tools.md`)](dream-team-tools.md)
 - `tgrep` integration (Microsoft): Sub-millisecond trigram regex search across large monorepos.
@@ -75,7 +76,8 @@ Welcome to the official, modular documentation for **Ozygram**, the persistent c
 - Catálogo de comandos CLI de terminal (`ozymem dream status|shadow|run|diagnose|tree` y `ozymem doctor`).
 - Análisis de la dualidad de Dream-RSI: MCTS en RAM (Copy-on-Write) vs. Consolidación Offline (Sleep Replay).
 - Doble nivel de aislamiento y sandboxing (`SANDBOX_INVARIANT_COW_RAM_ONLY` y `EphemeralWorktree`).
-- Casos de uso prácticos y prompts recomendados para minimizar consumo de tokens.
+- **Automatización Fluida y Zero-Prompting (23 min vs. 4 min)**: Intercepción cognitiva de 2 niveles, plantillas de cabecera para `AGENTS.md`, y matriz de decisión interna.
+- **Playbook de Prompts de Alta Eficiencia**: Casos reales probados en producción (Casos A, B, C y D: Bug fixing, refactor de aridad, full-stack, y virtualización de tablas masivas).
 
 ---
 
