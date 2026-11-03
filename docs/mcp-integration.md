@@ -131,9 +131,20 @@ To enable 100% fluid, zero-prompting tool invocation (where the developer writes
    > **REGLA DE PRECEDENCIA ESTRICTA PARA AGENTES**:
    > El espacio de trabajo está indexado en Ozygram. Para evitar exploraciones lentas de 20+ minutos y saturación de contexto:
    >
-   > 1. **Exploración**: ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo o `grep` recursivo a ciegas. SIEMPRE invocar primero `ozy_context(action="task", query="<tarea o error>")` o `ozy_context(action="file", lod="contracts")`.
-   > 2. **Modificación**: ANTES de escribir en disco, es OBLIGATORIO ejecutar `ozy_patch(action="simulate", file_path="...", candidate_code="...", target_symbol="...")` para verificar en memoria RAM (Copy-on-Write) que la firma no rompa llamadores en otros módulos.
-   > 3. **Planificación**: Para tareas full-stack o que toquen múltiples componentes, ejecutar `ozy_plan(goal="...")` para obtener la secuencia topológica estricta y el blast radius en RAM.
+   > 1. **Exploración y Localización Inicial (Ozygram First)**:
+   >    - ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo, `grep` recursivo, comandos de terminal (`Select-String`, `dir`) o scripts ad-hoc de Python (`python -c "..."`, `python scratch/*.py`) para buscar o leer líneas de código.
+   >    - SIEMPRE invocar primero `ozy_context(action="task", query="<requisito o error>")` para localizar archivos y funciones relevantes en < 5 ms.
+   >    - Usar `ozy_get_symbol(file_path="...", symbol_name="...")` para extraer funciones, componentes o enums directamente por AST sin adivinar números de línea.
+   >    - Usar `ozy_context(action="file", file_path="...", lod="contracts")` para extraer contratos AST sin volcar cientos de líneas de código al contexto.
+   >    - Usar `ozy_search_literal(query="<texto>")` para coincidencias exactas de rutas, roles o constantes.
+   >    - Si solo necesitas leer un rango puntual de líneas, usa `read_file` con `StartLine` y `EndLine`. Jamás abras Python para hacer `open().readlines()`, ya que colapsa con `UnicodeEncodeError: 'charmap' (cp1252)` en Windows.
+   > 2. **Modificación y Edición de Código (Ghost Patching en RAM)**:
+   >    - ESTÁ TERMINANTEMENTE PROHIBIDO crear o ejecutar scripts ad-hoc de Python (`scratch/update_*.py`) para reemplazar texto o regex a ciegas. Esto rompe tipos de TypeScript y provoca fallos de compilación (`type-check Exited with code 1`).
+   >    - ANTES de tocar el disco, es OBLIGATORIO ejecutar `ozy_patch(action="simulate", file_path="...", candidate_code="...", target_symbol="...")`.
+   >    - Esto simula el cambio en memoria RAM volátil (Copy-on-Write) y valida la paridad de aridad y contratos de llamadores en todo el proyecto.
+   >    - Solo tras obtener `[STATUS: APPROVED: NO CONTRACT BREAKAGE]` se procede con `ozy_patch(action="apply")` o `edit_file`.
+   > 3. **Planificación y Refactorizaciones Complejas**:
+   >    - Para tareas que conecten frontend y backend o afecten múltiples componentes, ejecutar `ozy_plan(goal="...")` para calcular la secuencia topológica estricta y el radio de explosión (MCTS en RAM).
    ```
 
 ### 4.2. Tested Benchmark: 23 Minutes vs. 4 Minutes

@@ -388,6 +388,41 @@ TOTAL: ~4 minutos, <6,000 tokens consumidos, 0 regresiones de llamadores.
 
 ---
 
+### 7.8. Antipatrón Crítico: La Trampa de los Scripts Ad-Hoc de Python (`scratch/*.py` y `python -c`)
+
+Un fallo recurrente en agentes de codificación no entrenados en Ozygram es recurrir a scripts ad-hoc de Python en terminal para inspeccionar o modificar código cuando se restringe la lectura masiva:
+
+```text
+[FALLO TIPICO OBSERVADO EN PRODUCCION]
+1. $ python scratch/update_grid_role.py
+   Updated seguimiento-cliente-grid.tsx
+   Updated index.tsx
+2. Ran run type-check in crm-geofal · Exited with code 1
+3. $ python -c "lines = open('crm-geofal/src/lib/control-module-access.ts', encoding='utf-8').readlines()
+      for i in range(330, 350): print(f'{i+1}: {lines[i]}', end='')"
+   Traceback (most recent call last):
+     File "C:\Program Files\Python312\Lib\encodings\cp1252.py", line 19, in encode
+       return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+   UnicodeEncodeError: 'charmap' codec can't encode characters in position 10-11: character maps to <undefined>
+4. Ran find all normRole in control-module-access.ts >
+```
+
+#### ¿Por qué ocurre este antipatrón?
+1. **Inercia de REPL / Scratchpad**: El modelo intenta manipular cadenas con expresiones regulares en Python creyendo que es más rápido que usar herramientas de edición nativas.
+2. **Trampa de Codificación en Windows (CP1252 vs UTF-8)**: La consola de Windows ejecuta por defecto la página de códigos CP1252. Al imprimir texto UTF-8 con caracteres especiales o tildes, Python colapsa con `UnicodeEncodeError`, perdiendo el turno sin entregar información al agente.
+3. **Edición sin AST = Ruptura de Tipos**: Los scripts de reemplazo de cadenas no entienden el AST ni la aridad de TypeScript, generando de inmediato errores de compilación (`type-check Exited with code 1`) y dejando scripts huérfanos no rastreados en `scratch/`.
+
+#### Mapeo Estricto de Alternativas Deterministas
+
+| Acción que el Agente intentó con Python | Alternativa Obligatoria Ozygram / Nativa | Por qué es Superior |
+| :--- | :--- | :--- |
+| Leer líneas 330 a 350 para ver una función | `ozy_get_symbol(file_path="...", symbol_name="normRole")` o `read_file(Path="...", StartLine=330, EndLine=350)` | `read_file` nativo ya maneja rangos en UTF-8 sin invocar Python. `ozy_get_symbol` extrae por AST sin depender de números de línea. |
+| Buscar apariciones de un símbolo (`normRole`) | `ozy_search_literal(query="normRole", path_prefix="...")` | Búsqueda en Rust (<15 ms) con tope de 800 tokens, sin colapsos de consola. |
+| Modificar código transversalmente | `ozy_patch(action="simulate")` seguido de `ozy_patch(action="apply")` | Valida aridad y contratos en memoria RAM (Copy-on-Write) previniendo roturas de TypeScript (`type-check`). |
+| Inspección desde consola/terminal | `ozymem symbol <archivo> <simbolo>` o `ozymem query "grep normRole"` | Binario Rust nativo sin dependencias ni conflictos de codificación. |
+
+---
+
 ## 8. Registro de Versión
 
 * **Versión del documento:** v0.2.4

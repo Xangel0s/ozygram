@@ -6,6 +6,29 @@ Contains core system modules, memory engines, and CRM integrations:
 - `crmnew/api-geofal-crm/`: Central FastAPI backend for Geofal CRM.
 - `crmnew/crm-geofal/`: Next.js 16 App Router frontend dashboard.
 
+## Protocolo Obligatorio de Herramientas y Aceleración Cognitiva (Ozygram First)
+
+> [!IMPORTANT]
+> **REGLA DE PRECEDENCIA ESTRICTA PARA AGENTES**:
+> El espacio de trabajo está indexado en Ozygram. Para evitar exploraciones lentas de 20+ minutos y consumo excesivo de tokens:
+>
+> 1. **Exploración y Localización Inicial (Ozygram First)**:
+>    - ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo, `grep` recursivo, comandos de terminal (`Select-String`, `dir`) o scripts ad-hoc de Python (`python -c "..."`, `python scratch/*.py`) para buscar o leer líneas de código.
+>    - SIEMPRE invocar primero `ozy_context(action="task", query="<requisito o error>")` para localizar archivos y funciones relevantes en < 5 ms.
+>    - Usar `ozy_get_symbol(file_path="...", symbol_name="...")` para extraer funciones, componentes o enums directamente por AST sin adivinar números de línea.
+>    - Usar `ozy_context(action="file", file_path="...", lod="contracts")` para extraer contratos AST sin volcar cientos de líneas de código al contexto.
+>    - Usar `ozy_search_literal(query="<texto>")` para coincidencias exactas de rutas, roles o constantes.
+>    - Si solo necesitas leer un rango puntual de líneas, usa `read_file` con `StartLine` y `EndLine`. Jamás abras Python para hacer `open().readlines()`, ya que colapsa con `UnicodeEncodeError: 'charmap' (cp1252)` en Windows.
+> 2. **Modificación y Edición de Código (Ghost Patching en RAM)**:
+>    - ESTÁ TERMINANTEMENTE PROHIBIDO crear o ejecutar scripts ad-hoc de Python (`scratch/update_*.py`) para reemplazar texto o regex a ciegas. Esto rompe tipos de TypeScript y provoca fallos de compilación (`type-check Exited with code 1`).
+>    - ANTES de tocar el disco, es OBLIGATORIO ejecutar `ozy_patch(action="simulate", file_path="...", candidate_code="...", target_symbol="...")`.
+>    - Esto simula el cambio en memoria RAM volátil (Copy-on-Write) y valida la paridad de aridad y contratos de llamadores en todo el proyecto.
+>    - Solo tras obtener `[STATUS: APPROVED: NO CONTRACT BREAKAGE]` se procede con `ozy_patch(action="apply")` o `edit_file`.
+> 3. **Planificación y Refactorizaciones Complejas**:
+>    - Para tareas que conecten frontend y backend o afecten múltiples componentes, ejecutar `ozy_plan(goal="...")` para calcular la secuencia topológica estricta y el radio de explosión (MCTS en RAM).
+> 4. **Prevención de Regresiones**:
+>    - Al inspeccionar archivos, `ozy_context` inyecta automáticamente alertas `[ALERT: GOTCHA_PREVENTION]`. El agente debe respetarlas para no reintroducir bugs ya resueltos.
+
 ## Active Conventions
 - SOLID, DRY, KISS principles applied across all modules.
 - Non-destructive changes: Always backup database tables and files before structural modifications.
