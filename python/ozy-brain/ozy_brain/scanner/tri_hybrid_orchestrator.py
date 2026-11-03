@@ -149,7 +149,7 @@ class TriHybridMemoryOrchestrator:
             doc_id=gotcha.id,
             content=doc_content,
             metadata={
-                "project": "crmnew",
+                "project": "default",
                 "severity": gotcha.severity,
                 "kind": gotcha.kind,
                 "topic_key": gotcha.topic_key,
@@ -211,7 +211,7 @@ class TriHybridMemoryOrchestrator:
         hazard_desc: str,
         invariant_vaccine: str,
         error_gradient: float,
-        tenant_id: str = "crmnew",
+        tenant_id: str = "default",
     ) -> Dict[str, Any]:
         """
         Stores SWR failure ripple across ChromaDB episodic lake and PostgreSQL pgvector lake.

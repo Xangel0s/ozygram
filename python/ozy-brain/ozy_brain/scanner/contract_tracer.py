@@ -95,7 +95,7 @@ class DualActiveContractShimGenerator:
             )
             return DualActiveContractShim(
                 alert_kind=alert.kind,
-                target_file=alert.backend_file or "api-geofal-crm/app/routers/fallback.py",
+                target_file=alert.backend_file or "app/routers/fallback.py",
                 target_route=alert.canonical_path,
                 shim_code=code,
                 description=f"Auto-generated fallback endpoint for orphan consumer '{alert.canonical_path}'",
@@ -111,7 +111,7 @@ class DualActiveContractShimGenerator:
             )
             return DualActiveContractShim(
                 alert_kind=alert.kind,
-                target_file=alert.backend_file or "api-geofal-crm/app/routers/main.py",
+                target_file=alert.backend_file or "app/routers/main.py",
                 target_route=alert.canonical_path,
                 shim_code=code,
                 description=f"Multi-method shim for {alert.canonical_path} supporting {methods}",
@@ -125,7 +125,7 @@ class DualActiveContractShimGenerator:
             )
             return DualActiveContractShim(
                 alert_kind=alert.kind,
-                target_file=alert.backend_file or "api-geofal-crm/app/routers/main.py",
+                target_file=alert.backend_file or "app/routers/main.py",
                 target_route=alert.canonical_path,
                 shim_code=code,
                 description=f"Schema adapter for unsynchronized route {alert.canonical_path}",

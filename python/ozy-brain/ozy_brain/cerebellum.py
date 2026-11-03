@@ -41,14 +41,14 @@ def extract_subsystem(file_path: str) -> str:
         norm = norm[8:]
     elif "/ozygram/" in norm:
         norm = norm[norm.index("/ozygram/") + 9:]
-    for root_marker in ("crmnew/", "packages/"):
+    for root_marker in ("packages/", "apps/", "services/", "crmnew/"):
         if root_marker in norm:
             norm = norm[norm.index(root_marker):]
             break
     parts = [p for p in norm.split("/") if p]
     if len(parts) <= 1:
         return "root"
-    if parts[0] in ("crates", "python", "crmnew", "src", "packages") and len(parts) > 2:
+    if parts[0] in ("crates", "python", "src", "packages", "apps", "services", "modules", "crmnew") and len(parts) > 2:
         return f"{parts[0]}/{parts[1]}"
     return parts[0]
 

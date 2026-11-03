@@ -83,7 +83,7 @@ class PostgresNativeEngine:
         """
         CREATE TABLE IF NOT EXISTS ozy_swr_ripples (
             id VARCHAR(64) PRIMARY KEY,
-            tenant_id VARCHAR(32) NOT NULL DEFAULT 'crmnew',
+            tenant_id VARCHAR(32) NOT NULL DEFAULT 'default',
             file_path TEXT NOT NULL,
             error_signature TEXT NOT NULL,
             hazard_description TEXT NOT NULL,
@@ -223,7 +223,7 @@ class PostgresNativeEngine:
         invariant_vaccine: str,
         error_gradient: float,
         embedding: List[float],
-        tenant_id: str = "crmnew",
+        tenant_id: str = "default",
     ) -> str:
         """Inserts a high-gradient failure ripple into pgvector lake."""
         if not self.is_available:
