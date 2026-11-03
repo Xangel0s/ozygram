@@ -10,7 +10,7 @@ pub(crate) fn mark_legacy_tools_deprecated(value: &mut Value) {
             continue;
         }
         if let Some(desc) = tool.get("description").and_then(Value::as_str) {
-            let new_desc = format!("[DEPRECATED: use one of the 7 unified ozy_* tools] {desc}");
+            let new_desc = format!("[DEPRECATED: use one of the 5 unified ozy_* meta-tools] {desc}");
             tool["description"] = Value::String(new_desc);
         }
         tool["deprecated"] = Value::Bool(true);

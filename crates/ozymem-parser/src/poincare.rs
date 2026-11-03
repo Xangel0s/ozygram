@@ -159,8 +159,8 @@ let hash = hasher.finish();
         let sign_secondary = if (hash & 2) == 0 { 1.0 } else { -1.0 };
 
         let mut step_coords = [0.0f32; POINCARE_DIM];
-        step_coords[dim_primary] += sign_primary * depth_factor * 0.7071;
-        step_coords[dim_secondary] += sign_secondary * depth_factor * 0.7071;
+        step_coords[dim_primary] += sign_primary * depth_factor * std::f32::consts::FRAC_1_SQRT_2;
+        step_coords[dim_secondary] += sign_secondary * depth_factor * std::f32::consts::FRAC_1_SQRT_2;
 
         let step_point = PoincarePoint::from_coords(step_coords);
         current_point = current_point.mobius_add(&step_point);

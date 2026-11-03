@@ -193,7 +193,7 @@ pub async fn run_deregister(name_arg: Option<String>) -> anyhow::Result<()> {
             .default(true)
             .interact()?
         {
-            let _ = run_stop(Some(project_name.clone()));
+            let _ = run_stop(Some(project_name.clone())).await;
         } else {
             println!("Operación abortada por seguridad (el watcher sigue activo).");
             return Ok(());

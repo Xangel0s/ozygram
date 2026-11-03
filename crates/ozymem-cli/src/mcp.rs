@@ -431,8 +431,11 @@ async fn handle_request(
                 .ok_or_else(|| anyhow::anyhow!("missing params for tools/call"))?;
             let tool_call: ToolCallParams = serde_json::from_value(params)?;
 
-            let session = SESSION.lock().unwrap();
-            let Some(proj_path) = &session.project_path else {
+            let (proj_path, current_project_name) = {
+                let session = SESSION.lock().unwrap();
+                (session.project_path.clone(), session.current_project.as_deref().unwrap_or("").to_string())
+            };
+            let Some(proj_path) = &proj_path else {
                 return Ok(Some(error_response(id, -32603, "MCP no inicializado con un proyecto válido")));
             };
 
@@ -455,7 +458,7 @@ async fn handle_request(
 
                     let body = format!(
                         "Proyecto Activo: {}\nRuta: {}\nTotal Archivos: {}\nTotal Funciones Mapeadas: {}\nTotal Engramas Formados: {}",
-                        session.current_project.as_deref().unwrap_or(""),
+                        &current_project_name,
                         proj_path,
                         summary.file_count,
                         summary.function_count,
@@ -483,7 +486,7 @@ async fn handle_request(
                     };
 
                     let body = if results.is_empty() {
-                        format!("Símbolo '{}' no encontrado en el proyecto '{}'.", symbol_name, session.current_project.as_deref().unwrap_or(""))
+                        format!("Símbolo '{}' no encontrado en el proyecto '{}'.", symbol_name, &current_project_name)
                     } else {
                         format!("Resultados para la búsqueda de '{}':\n{}", symbol_name, results.join("\n"))
                     };
