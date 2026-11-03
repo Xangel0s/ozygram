@@ -10,7 +10,7 @@ pub fn handle_tools_list(
             let tools = vec![
                 mcp_common::ToolDefinition {
                     name: "ozy_patch",
-                    description: "Unified code patching & modification tool: fuzzy AST block patching (action='apply'), in-memory test-time simulation (action='simulate'), and surgical AST symbol replacement (action='replace_symbol'). Replaces ozy_ast_patch, ozy_simulate_patch, and ozy_replace_symbol.",
+                    description: "[MANDATORY PRE-FLIGHT PATCHER - ALWAYS SIMULATE BEFORE EDITING] Unified code modification tool. ALWAYS run action='simulate' BEFORE modifying any file on disk to verify caller signatures, arity parity, and prevent breaking changes via volatile RAM Copy-on-Write sandbox (< 400ms). Use action='apply' for fuzzy AST block patching with auto-indentation and Tree-Sitter syntax verification. Replaces ozy_ast_patch, ozy_simulate_patch, and ozy_replace_symbol.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -37,7 +37,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_plan",
-                    description: "Unified cognitive planning & exploration tool: topological edit sequence, Active Inference EFE-MCTS, reverse blast radius analysis, and Hippocampal Theta-Gamma working memory packing. Replaces ozy_brain(action='plan').",
+                    description: "[PRIMARY ARCHITECTURAL PLANNER] Native Rust Active Inference EFE-MCTS planner: generates topological edit sequences, blast radius analysis, and Hippocampal Theta-Gamma working memory packing. ALWAYS invoke this before starting multi-file, cross-service, or full-stack refactoring tasks. Replaces ozy_brain(action='plan').",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -57,7 +57,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_context",
-                    description: "Unified context tool: task bundle, file context, project memory context, project schema, indexed files, and recent lessons. Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
+                    description: "[PRIMARY CODE EXPLORATION TOOL - INVOKE BEFORE read_file OR grep] Unified context engine: retrieves AST contracts, function signatures, dependency cones, and [ALERT: GOTCHA_PREVENTION] warnings in < 1ms without token bloat. Actions: 'task' (finds relevant files/symbols by task description in 1 turn), 'file' (extracts AST contracts with lod='contracts'), 'project' (dependency topology). Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -79,7 +79,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_memory",
-                    description: "Unified Ozy memory tool: legacy lessons plus sessions, observations, prompts, timeline, soft delete, topic upserts, dedupe, and passive capture.",
+                    description: "[PERSISTENT TEAM MEMORY ENGINE] Git-first team memories and lessons learned: search, save, and sync gotchas, architectural decisions, and bugfixes. Prevents repeating past mistakes and preserves institutional knowledge merge-conflict-free.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -157,7 +157,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_doctor",
-                    description: "Ozymem/Ozygram system doctor: DB, registry, projects, memories, embeddings, watchers, indexes, and preview-safe repair suggestions. Use action='audit_migrations' to lint SQL migration files for idempotency ([ALERT: NON_IDEMPOTENT_SQL]) and unguarded destructive statements ([ALERT: DESTRUCTIVE_UNGUARDED]). Use action='code' to run static code analysis for duplicates and architectural smells.",
+                    description: "[SYSTEM & CODE HEALTH DOCTOR] Diagnostics and architectural smell analysis: action='status' (DB, WAL, watchers), action='code' (duplicate detection and static analysis), action='audit_migrations' (SQL migration idempotency linter).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
