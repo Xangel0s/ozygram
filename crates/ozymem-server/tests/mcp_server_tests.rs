@@ -2940,7 +2940,7 @@ export function handleReorderCard(a: number, b: number) {
         let src_dir = tmp_root.join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
         let app_py = src_dir.join("app.py");
-        std::fs::write(&app_py, "# 11. migration_11\n# 12. Insertar registros RAPK PARA ALMACENES\ndef init():\n    pass\n").unwrap();
+        std::fs::write(&app_py, "# 11. migration_11\n# 12. Insertar registros RAPK PARA ALMACENES\nroles = [{'role_id': 'sig'}]\ndef init():\n    pass\n").unwrap();
 
         // Create noise dir that should be ignored
         let node_modules = tmp_root.join("node_modules");
@@ -3009,6 +3009,23 @@ export function handleReorderCard(a: number, b: number) {
         let resp_budget = handle_request(&backend_ref, budget_req, None, None).await.unwrap().unwrap();
         let budget_json: Value = serde_json::from_str(resp_budget.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
         assert!(budget_json["status"] == "budget_reached" || budget_json["status"] == "success");
+
+        // 4. Overly rigid query with escaped double quotes fallback ("\"role_id\": \"sig\"" vs 'role_id': 'sig')
+        let rigid_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_search_literal",
+                "arguments": {
+                    "query": "\"role_id\": \"sig\""
+                }
+            })),
+        };
+        let resp_rigid = handle_request(&backend_ref, rigid_req, None, None).await.unwrap().unwrap();
+        let rigid_json: Value = serde_json::from_str(resp_rigid.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(rigid_json["matches_count"], 1, "Must find match via auto-fallback despite rigid escaped quotes");
+        assert!(rigid_json["matches"][0]["line_content"].as_str().unwrap().contains("role_id"));
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }

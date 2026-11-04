@@ -1311,6 +1311,112 @@ impl GraphBackend {
             }
         }
 
+        if matches.is_empty() && !is_regex {
+            let stripped = query.replace('\\', "").trim_matches(|c| c == '"' || c == '\'').trim().to_string();
+            let tokens: Vec<String> = query
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_lowercase())
+                .collect();
+
+            if (!stripped.is_empty() && stripped != query) || tokens.len() >= 2 {
+                let fallback_walker = walkdir::WalkDir::new(&root_dir)
+                    .follow_links(false)
+                    .into_iter()
+                    .filter_entry(|e| {
+                        if e.file_type().is_dir() {
+                            !crate::graph_backend::helpers::is_noise_dir(e.path())
+                        } else {
+                            true
+                        }
+                    });
+
+                for entry in fallback_walker {
+                    let Ok(entry) = entry else { continue };
+                    if !entry.file_type().is_file() { continue };
+                    let path = entry.path();
+
+                    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                        let ext_lower = ext.to_lowercase();
+                        if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc") {
+                            continue;
+                        }
+                    }
+
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.len() > 512 * 1024 {
+                            continue;
+                        }
+                    }
+
+                    let Ok(content) = std::fs::read_to_string(path) else { continue };
+                    let lines: Vec<&str> = content.lines().collect();
+
+                    for (idx, line) in lines.iter().enumerate() {
+                        let line_lower = line.to_lowercase();
+                        let line_matches = if tokens.len() >= 2 {
+                            tokens.iter().all(|t| line_lower.contains(t))
+                        } else {
+                            line_lower.contains(&stripped.to_lowercase())
+                        };
+
+                        if line_matches {
+                            let line_number = idx + 1;
+                            let trimmed = line.trim();
+                            let snippet = if trimmed.len() > 250 {
+                                format!("{}...", &trimmed[..247])
+                            } else {
+                                trimmed.to_string()
+                            };
+                            let before_ctx = if context_lines > 0 {
+                                let s = idx.saturating_sub(context_lines);
+                                lines[s..idx].iter().map(|l| l.trim().to_string()).collect()
+                            } else {
+                                Vec::new()
+                            };
+                            let after_ctx = if context_lines > 0 {
+                                let e = (idx + 1 + context_lines).min(lines.len());
+                                lines[(idx + 1)..e].iter().map(|l| l.trim().to_string()).collect()
+                            } else {
+                                Vec::new()
+                            };
+
+                            let snippet_token_cost = (snippet.len() + 10) / 4 + 1
+                                + before_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>()
+                                + after_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>();
+
+                            if estimated_tokens + snippet_token_cost > token_budget && !matches.is_empty() {
+                                status = "budget_reached".to_string();
+                                break;
+                            }
+
+                            estimated_tokens += snippet_token_cost;
+                            let rel_path = path
+                                .strip_prefix(&root_dir)
+                                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                                .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+
+                            matches.push(LiteralMatch {
+                                file_path: rel_path,
+                                line_number,
+                                line_content: snippet,
+                                before_context: before_ctx,
+                                after_context: after_ctx,
+                            });
+
+                            if matches.len() >= max_matches {
+                                status = "max_matches_reached".to_string();
+                                break;
+                            }
+                        }
+                    }
+                    if matches.len() >= max_matches {
+                        break;
+                    }
+                }
+            }
+        }
+
         Ok(LiteralSearchResult {
             status,
             query: query.to_string(),
