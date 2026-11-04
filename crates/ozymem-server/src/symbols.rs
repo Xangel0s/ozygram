@@ -362,7 +362,7 @@ pub fn handle_search_literal(
         .arguments
         .get("context_lines")
         .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
+        .unwrap_or(1) as usize;
 
     let res = backend.search_literal(
         query,

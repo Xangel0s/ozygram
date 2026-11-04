@@ -441,10 +441,19 @@ pub(crate) async fn build_ozy_task_context(
         }
         if let Ok(neighbors) = backend.get_graph_neighbors(fp).await {
             body.push_str(&format!(
-                "Dependents: {} | Dependencies: {}\n",
+                "Graph Topology -> Dependents (Blast Radius): {} | Dependencies: {}\n",
                 neighbors.incoming.len(),
                 neighbors.outgoing.len()
             ));
+            for dep in neighbors.incoming.iter().take(4) {
+                body.push_str(&format!("  ← {dep}\n"));
+            }
+            if neighbors.incoming.len() > 4 {
+                body.push_str(&format!("  ... +{} more incoming\n", neighbors.incoming.len() - 4));
+            }
+            for dep in neighbors.outgoing.iter().take(3) {
+                body.push_str(&format!("  → {dep}\n"));
+            }
         }
     }
     Ok(body)

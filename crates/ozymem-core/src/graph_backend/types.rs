@@ -535,7 +535,9 @@ pub struct LiteralMatch {
     pub file_path: String,
     pub line_number: usize,
     pub line_content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub before_context: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after_context: Vec<String>,
 }
 

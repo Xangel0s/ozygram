@@ -1240,7 +1240,7 @@ impl GraphBackend {
 
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 let ext_lower = ext.to_lowercase();
-                if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc") {
+                if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc" | "tsbuildinfo" | "map") {
                     continue;
                 }
             }
@@ -1338,7 +1338,7 @@ impl GraphBackend {
 
                     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                         let ext_lower = ext.to_lowercase();
-                        if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc") {
+                        if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc" | "tsbuildinfo" | "map") {
                             continue;
                         }
                     }
