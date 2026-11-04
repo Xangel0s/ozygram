@@ -352,12 +352,12 @@ pub fn handle_search_literal(
         .arguments
         .get("token_budget")
         .and_then(Value::as_u64)
-        .unwrap_or(800) as usize;
+        .unwrap_or(2500) as usize;
     let max_matches = tool_call
         .arguments
         .get("max_matches")
         .and_then(Value::as_u64)
-        .unwrap_or(25) as usize;
+        .unwrap_or(30) as usize;
     let context_lines = tool_call
         .arguments
         .get("context_lines")

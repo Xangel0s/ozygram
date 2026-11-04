@@ -1264,22 +1264,49 @@ impl GraphBackend {
                     } else {
                         trimmed.to_string()
                     };
-                    let before_ctx = if context_lines > 0 {
+                    let mut before_ctx = if context_lines > 0 {
                         let s = idx.saturating_sub(context_lines);
-                        lines[s..idx].iter().map(|l| l.trim().to_string()).collect()
+                        lines[s..idx]
+                            .iter()
+                            .map(|l| {
+                                let t = l.trim();
+                                if t.len() > 180 {
+                                    format!("{}...", &t[..177])
+                                } else {
+                                    t.to_string()
+                                }
+                            })
+                            .collect()
                     } else {
                         Vec::new()
                     };
-                    let after_ctx = if context_lines > 0 {
+                    let mut after_ctx = if context_lines > 0 {
                         let e = (idx + 1 + context_lines).min(lines.len());
-                        lines[(idx + 1)..e].iter().map(|l| l.trim().to_string()).collect()
+                        lines[(idx + 1)..e]
+                            .iter()
+                            .map(|l| {
+                                let t = l.trim();
+                                if t.len() > 180 {
+                                    format!("{}...", &t[..177])
+                                } else {
+                                    t.to_string()
+                                }
+                            })
+                            .collect()
                     } else {
                         Vec::new()
                     };
 
-                    let snippet_token_cost = (snippet.len() + 10) / 4 + 1
+                    let mut snippet_token_cost = (snippet.len() + 10) / 4 + 1
                         + before_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>()
                         + after_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>();
+
+                    if estimated_tokens + snippet_token_cost > token_budget {
+                        // Truncate context to keep match within budget
+                        before_ctx.clear();
+                        after_ctx.clear();
+                        snippet_token_cost = (snippet.len() + 10) / 4 + 1;
+                    }
 
                     if estimated_tokens + snippet_token_cost > token_budget && !matches.is_empty() {
                         status = "budget_reached".to_string();
@@ -1368,22 +1395,49 @@ impl GraphBackend {
                             } else {
                                 trimmed.to_string()
                             };
-                            let before_ctx = if context_lines > 0 {
+                            let mut before_ctx = if context_lines > 0 {
                                 let s = idx.saturating_sub(context_lines);
-                                lines[s..idx].iter().map(|l| l.trim().to_string()).collect()
+                                lines[s..idx]
+                                    .iter()
+                                    .map(|l| {
+                                        let t = l.trim();
+                                        if t.len() > 180 {
+                                            format!("{}...", &t[..177])
+                                        } else {
+                                            t.to_string()
+                                        }
+                                    })
+                                    .collect()
                             } else {
                                 Vec::new()
                             };
-                            let after_ctx = if context_lines > 0 {
+                            let mut after_ctx = if context_lines > 0 {
                                 let e = (idx + 1 + context_lines).min(lines.len());
-                                lines[(idx + 1)..e].iter().map(|l| l.trim().to_string()).collect()
+                                lines[(idx + 1)..e]
+                                    .iter()
+                                    .map(|l| {
+                                        let t = l.trim();
+                                        if t.len() > 180 {
+                                            format!("{}...", &t[..177])
+                                        } else {
+                                            t.to_string()
+                                        }
+                                    })
+                                    .collect()
                             } else {
                                 Vec::new()
                             };
 
-                            let snippet_token_cost = (snippet.len() + 10) / 4 + 1
+                            let mut snippet_token_cost = (snippet.len() + 10) / 4 + 1
                                 + before_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>()
                                 + after_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>();
+
+                            if estimated_tokens + snippet_token_cost > token_budget {
+                                // Truncate context to keep match within budget
+                                before_ctx.clear();
+                                after_ctx.clear();
+                                snippet_token_cost = (snippet.len() + 10) / 4 + 1;
+                            }
 
                             if estimated_tokens + snippet_token_cost > token_budget && !matches.is_empty() {
                                 status = "budget_reached".to_string();
