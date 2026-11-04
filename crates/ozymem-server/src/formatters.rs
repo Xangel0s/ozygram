@@ -290,13 +290,26 @@ pub(crate) async fn build_ozy_task_context(
         .filter(|l| l.stale == 0)
         .collect();
     let mut ast_symbols: Vec<ozymem_core::StoredFunction> = Vec::new();
+    let mut matched_files: Vec<String> = Vec::new();
     let mut body = format!("[Ozy Context for \"{query}\"]\n");
     if lessons.is_empty() {
-        if let Ok(syms) = backend.search_ast_symbols(query, 10) {
-            if syms.is_empty() {
-                body.push_str("No matching memories found.\n");
-            } else {
-                body.push_str("(no explicit lessons found — falling back to indexed AST symbols)\n\n[AST Symbols matching query]\n");
+        let syms = backend.search_ast_symbols(query, 10).unwrap_or_default();
+        let files_found = backend.search_files(query, 10).unwrap_or_default();
+
+        if syms.is_empty() && files_found.is_empty() {
+            body.push_str("No matching memories, files, or symbols found.\n");
+        } else {
+            body.push_str("(no explicit lessons found — falling back to indexed repository modules & AST symbols)\n\n");
+            if !files_found.is_empty() {
+                body.push_str("[Matching Repository Files / Modules]\n");
+                for (i, f) in files_found.iter().enumerate() {
+                    body.push_str(&format!("{}. {}\n", i + 1, f));
+                }
+                body.push('\n');
+                matched_files = files_found;
+            }
+            if !syms.is_empty() {
+                body.push_str("[AST Symbols matching query]\n");
                 for (i, s) in syms.iter().enumerate() {
                     body.push_str(&format!(
                         "{}. {} [{}] L{}-L{} ({})\n",
@@ -310,8 +323,6 @@ pub(crate) async fn build_ozy_task_context(
                 }
                 ast_symbols = syms;
             }
-        } else {
-            body.push_str("No matching memories found.\n");
         }
     } else {
         for (i, e) in lessons.iter().enumerate() {
@@ -342,15 +353,17 @@ pub(crate) async fn build_ozy_task_context(
             .into_iter()
             .collect()
     } else {
-        ast_symbols
-            .iter()
-            .filter_map(|s| {
-                let parts: Vec<&str> = s.strategy.split(" in ").collect();
-                parts.get(1).map(|p| p.to_string())
-            })
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect()
+        let mut f_set = std::collections::HashSet::new();
+        for f in matched_files {
+            f_set.insert(f);
+        }
+        for s in &ast_symbols {
+            let parts: Vec<&str> = s.strategy.split(" in ").collect();
+            if let Some(p) = parts.get(1) {
+                f_set.insert(p.to_string());
+            }
+        }
+        f_set.into_iter().collect()
     };
     files.sort();
 

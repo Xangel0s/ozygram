@@ -796,22 +796,88 @@ impl GraphBackend {
         Ok(results)
     }
 
-    /// Search AST indexed symbols (functions, classes, structs).
+    /// Search AST indexed symbols (functions, classes, structs) with multi-token fuzzy matching.
     pub fn search_ast_symbols(&self, query: &str, limit: usize) -> Result<Vec<StoredFunction>> {
         let inner = self.inner.lock().unwrap();
         let limit = (limit as i64).clamp(1, 50);
-        let like_pattern = format!("%{}%", query);
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        let mut stmt = inner.sqlite.prepare(
-            "SELECT name, kind, start_line, end_line, strategy, file_path 
-             FROM functions 
-             WHERE (name LIKE ?1 OR file_path LIKE ?1) AND tenant_id = ?2 
-             ORDER BY CASE WHEN name LIKE ?1 THEN 0 ELSE 1 END, name ASC 
-             LIMIT ?3"
-        )?;
+        let tokens: Vec<String> = trimmed
+            .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase())
+            .collect();
+
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if tokens.len() == 1 {
+            let like_pattern = format!("%{}%", tokens[0]);
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT name, kind, start_line, end_line, strategy, file_path \
+                 FROM functions \
+                 WHERE (name LIKE ?1 OR file_path LIKE ?1) AND tenant_id = ?2 \
+                 ORDER BY CASE WHEN name LIKE ?1 THEN 0 ELSE 1 END, name ASC \
+                 LIMIT ?3"
+            )?;
+
+            let funcs: Vec<StoredFunction> = stmt
+                .query_map(params![like_pattern, self.tenant_id, limit], |row| {
+                    Ok(StoredFunction {
+                        name: row.get(0)?,
+                        kind: row.get(1)?,
+                        start_line: row.get(2)?,
+                        end_line: row.get(3)?,
+                        strategy: format!("{} in {}", row.get::<_, String>(4)?, row.get::<_, String>(5)?),
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            return Ok(funcs);
+        }
+
+        let search_tokens: Vec<String> = tokens.into_iter().take(6).collect();
+        let chained_pattern = format!("%{}%", search_tokens.join("%"));
+
+        let mut score_clauses = Vec::new();
+        let mut or_clauses = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        params_vec.push(Box::new(self.tenant_id.clone())); // ?1
+        params_vec.push(Box::new(limit));                  // ?2
+        params_vec.push(Box::new(chained_pattern));        // ?3
+
+        for token in &search_tokens {
+            let token_like = format!("%{}%", token);
+            params_vec.push(Box::new(token_like));
+            let idx = params_vec.len();
+            score_clauses.push(format!("(CASE WHEN name LIKE ?{0} THEN 15 WHEN file_path LIKE ?{0} THEN 10 ELSE 0 END)", idx));
+            or_clauses.push(format!("(name LIKE ?{0} OR file_path LIKE ?{0})", idx));
+        }
+
+        let score_expr = score_clauses.join(" + ");
+        let or_expr = or_clauses.join(" OR ");
+
+        let sql = format!(
+            "SELECT name, kind, start_line, end_line, strategy, file_path, \
+                    ((CASE WHEN name LIKE ?3 THEN 100 WHEN file_path LIKE ?3 THEN 50 ELSE 0 END) + {score_expr}) AS match_score \
+             FROM functions \
+             WHERE tenant_id = ?1 \
+               AND (name LIKE ?3 OR file_path LIKE ?3 OR {or_expr}) \
+             ORDER BY match_score DESC, CASE WHEN name LIKE ?3 THEN 0 ELSE 1 END, name ASC \
+             LIMIT ?2"
+        );
+
+        let mut stmt = inner.sqlite.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
 
         let funcs: Vec<StoredFunction> = stmt
-            .query_map(params![like_pattern, self.tenant_id, limit], |row| {
+            .query_map(rusqlite::params_from_iter(params_refs), |row| {
                 Ok(StoredFunction {
                     name: row.get(0)?,
                     kind: row.get(1)?,
@@ -824,6 +890,86 @@ impl GraphBackend {
             .collect();
 
         Ok(funcs)
+    }
+
+    /// Search indexed files matching multi-token queries.
+    pub fn search_files(&self, query: &str, limit: usize) -> Result<Vec<String>> {
+        let inner = self.inner.lock().unwrap();
+        let limit = (limit as i64).clamp(1, 50);
+
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let tokens: Vec<String> = trimmed
+            .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase())
+            .collect();
+
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if tokens.len() == 1 {
+            let pattern = format!("%{}%", tokens[0]);
+            let mut stmt = inner.sqlite.prepare(
+                "SELECT path FROM files WHERE tenant_id = ?1 AND path LIKE ?2 ORDER BY path ASC LIMIT ?3"
+            )?;
+            let rows = stmt.query_map(params![self.tenant_id, pattern, limit], |row| {
+                row.get::<_, String>(0)
+            })?;
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            return Ok(results);
+        }
+
+        let search_tokens: Vec<String> = tokens.into_iter().take(6).collect();
+        let chained_pattern = format!("%{}%", search_tokens.join("%"));
+
+        let mut score_clauses = Vec::new();
+        let mut or_clauses = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        params_vec.push(Box::new(self.tenant_id.clone())); // ?1
+        params_vec.push(Box::new(limit));                  // ?2
+        params_vec.push(Box::new(chained_pattern));        // ?3
+
+        for token in &search_tokens {
+            let token_like = format!("%{}%", token);
+            params_vec.push(Box::new(token_like));
+            let idx = params_vec.len();
+            score_clauses.push(format!("(CASE WHEN path LIKE ?{0} THEN 10 ELSE 0 END)", idx));
+            or_clauses.push(format!("path LIKE ?{0}", idx));
+        }
+
+        let score_expr = score_clauses.join(" + ");
+        let or_expr = or_clauses.join(" OR ");
+
+        let sql = format!(
+            "SELECT path, \
+                    ((CASE WHEN path LIKE ?3 THEN 50 ELSE 0 END) + {score_expr}) AS match_score \
+             FROM files \
+             WHERE tenant_id = ?1 \
+               AND (path LIKE ?3 OR {or_expr}) \
+             ORDER BY match_score DESC, path ASC \
+             LIMIT ?2"
+        );
+
+        let mut stmt = inner.sqlite.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
     }
 
     /// Returns recent AST diagnostics.

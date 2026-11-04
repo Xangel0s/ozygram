@@ -14,7 +14,8 @@ Contains core system modules, memory engines, and CRM integrations:
 >
 > 1. **Exploración y Localización Inicial (Ozygram First)**:
 >    - ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo, `grep` recursivo, comandos de terminal (`Select-String`, `dir`) o scripts ad-hoc de Python (`python -c "..."`, `python scratch/*.py`) para buscar o leer líneas de código.
->    - SIEMPRE invocar primero `ozy_context(action="task", query="<requisito o error>")` para localizar archivos y funciones relevantes en < 5 ms.
+>    - SIEMPRE invocar primero `ozy_context(action="task", query="<requisito o error>")` para localizar archivos y funciones relevantes en < 5 ms. Soporta búsqueda difusa multitoken inteligente (e.g. `"carga puntual excel"` localiza automáticamente `carga_puntual/excel.py`, componentes frontend y contratos AST).
+>    - Para errores en reportes o plantillas Excel dañadas (`.xlsx` / HRESULT 0x808c0002): ESTÁ PROHIBIDO escribir scripts en Python para descomprimir o parchar XML. Ejecutar directamente `ozy_doctor(action="templates")` para auditar la integridad OpenXML y detectar prefijos no declarados en `mc:Ignorable` en < 2 segundos.
 >    - Usar `ozy_get_symbol(file_path="...", symbol_name="...")` para extraer funciones, componentes o enums directamente por AST sin adivinar números de línea.
 >    - Usar `ozy_context(action="file", file_path="...", lod="contracts")` para extraer contratos AST sin volcar cientos de líneas de código al contexto.
 >    - Usar `ozy_search_literal(query="<texto>")` para coincidencias exactas de rutas, roles o constantes.
@@ -127,7 +128,7 @@ To avoid context bloat, syntax breaks, and latency, agents must adhere to the fo
 2. `ozy_plan(goal="...")`: Native Rust Active Inference EFE-MCTS with topological edit sequence and Hippocampal Theta-Gamma working memory packing.
 3. `ozy_context(action="file"|"task"|"project", lod="contracts")` > raw `view_file`: AST skeletons, transitive caller cones, and automatic `[ALERT: GOTCHA_PREVENTION]` injection.
 4. `ozy_memory(action="search"|"save"|"sync_markdown"|"export_git_notes")`: Git-First markdown sync, Amygdala reflexes, and TGVR vector retrieval.
-5. `ozy_doctor(action="status"|"code"|"audit_migrations")`: SQLite WAL integrity, outbox health, consolidated duplicate detection, and SQL migration idempotency linter.
+5. `ozy_doctor(action="status"|"code"|"audit_migrations"|"templates")`: SQLite WAL integrity, outbox health, consolidated duplicate detection, SQL migration idempotency linter, and OpenXML (.xlsx) template corruption & undeclared namespace linter.
 
 
 - Frontier AI Engineering & Cognitive Upgrades (v3.4.0):

@@ -305,6 +305,22 @@ pub async fn handle_request(
                             }],
                             is_error: None,
                         }
+                    } else if action == "templates" || action == "excel_doctor" || action == "template_linter" {
+                        let path_arg = tool_call
+                            .arguments
+                            .get("path")
+                            .or_else(|| tool_call.arguments.get("target_path"))
+                            .or_else(|| tool_call.arguments.get("file_path"))
+                            .and_then(Value::as_str);
+                        let report =
+                            crate::doctor::audit_excel_templates(Some(backend), path_arg).await?;
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: report,
+                            }],
+                            is_error: None,
+                        }
                     } else {
                         handle_ozy_doctor(Some(backend), &tool_call).await?
                     }

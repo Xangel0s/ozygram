@@ -25,6 +25,7 @@ regex = "1"
 walkdir = "2"
 sha2.workspace = true
 home = "0.5"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.31", features = ["bundled"] }

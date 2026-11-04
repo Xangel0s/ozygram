@@ -157,19 +157,20 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_doctor",
-                    description: "[SYSTEM & CODE HEALTH DOCTOR] Diagnostics and architectural smell analysis: action='status' (DB, WAL, watchers), action='code' (duplicate detection and static analysis), action='audit_migrations' (SQL migration idempotency linter).",
+                    description: "[SYSTEM & CODE HEALTH DOCTOR] Diagnostics and architectural smell analysis: action='status' (DB, WAL, watchers), action='code' (duplicate detection and static analysis), action='audit_migrations' (SQL migration idempotency linter), action='templates' (OpenXML .xlsx template corruption and undeclared namespace linter).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["status", "audit_migrations", "code"],
+                                "enum": ["status", "audit_migrations", "code", "templates"],
                                 "default": "status",
-                                "description": "Acción a ejecutar:\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)"
+                                "description": "Acción a ejecutar:\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)\n- 'templates': linter de plantillas OpenXML (.xlsx) para detectar corrupción de namespaces XML, prefijos no declarados en mc:Ignorable y archivos dañados sin scripts en Python"
                             },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
                             "include_projects": { "type": "boolean", "default": true },
                             "migrations_path": { "type": "string", "description": "Optional directory to scan for .sql files for action='audit_migrations' (default: project root)" },
+                            "path": { "type": "string", "description": "Optional file or directory path for action='templates' (default: project templates/ or root)" },
                             "scope": { "type": "string", "description": "Optional file or directory scope for action='code'" },
                             "min_duplicate_lines": { "type": "integer", "default": 6, "description": "Min duplicate lines threshold for action='code'" },
                             "max_findings": { "type": "integer", "default": 20, "description": "Max findings to return for action='code'" }

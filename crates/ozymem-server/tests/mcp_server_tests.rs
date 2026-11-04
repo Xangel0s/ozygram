@@ -4768,3 +4768,139 @@ Always use context manager with SessionLocal() as db.
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
 
+    #[tokio::test]
+    async fn test_fuzzy_task_context_and_excel_template_doctor() {
+        use std::io::Write;
+
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_fuzzy_excel_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 1. Create realistic source files imitating Carga Puntual
+        let carga_dir = tmp_root.join("api-geofal-crm").join("app").join("modules").join("carga_puntual");
+        std::fs::create_dir_all(&carga_dir).unwrap();
+        let py_code = r#"
+def generate_carga_puntual_excel(payload):
+    return "ok"
+
+def build_formato_filename(muestra, codigo, nombre):
+    return f"{codigo}_{nombre}_{muestra}"
+"#;
+        std::fs::write(carga_dir.join("excel.py"), py_code).unwrap();
+
+        // Create templates directory
+        let tpl_dir = tmp_root.join("api-geofal-crm").join("app").join("templates").join("informes").join("CargaPuntual");
+        std::fs::create_dir_all(&tpl_dir).unwrap();
+
+        // 2. Create a corrupted .xlsx template with undeclared Ignorable namespaces (The exact bug)
+        let corrupted_xlsx_path = tpl_dir.join("1- Inf N 001-26 RO01 CARGA PUNTUAL-1.xlsx");
+        {
+            let file = std::fs::File::create(&corrupted_xlsx_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("xl/worksheets/sheet1.xml", options).unwrap();
+            let bad_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" mc:Ignorable="x14ac xr xr2 xr3">
+    <sheetData/>
+</worksheet>"#;
+            zip.write_all(bad_xml.as_bytes()).unwrap();
+            zip.finish().unwrap();
+        }
+
+        // 3. Create a healthy .xlsx template
+        let healthy_xlsx_path = tmp_root.join("templates").join("healthy_template.xlsx");
+        std::fs::create_dir_all(tmp_root.join("templates")).unwrap();
+        {
+            let file = std::fs::File::create(&healthy_xlsx_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("xl/worksheets/sheet1.xml", options).unwrap();
+            let good_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+    <sheetData/>
+</worksheet>"#;
+            zip.write_all(good_xml.as_bytes()).unwrap();
+            zip.finish().unwrap();
+        }
+
+        // 4. Initialize MCP backend and scan directory
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/")),
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // 5. Test multi-token fuzzy search with ozy_context task query "carga puntual excel"
+        let ctx_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "task",
+                    "query": "carga puntual excel"
+                }
+            })),
+        };
+        let ctx_resp = handle_request(&backend, ctx_req, None, None).await.unwrap().unwrap();
+        assert!(ctx_resp.error.is_none());
+        let ctx_text = ctx_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(!ctx_text.contains("No matching memories found."), "Must NOT return cold 'No matching memories found'");
+        assert!(ctx_text.contains("Matching Repository Files / Modules") || ctx_text.contains("AST Symbols matching query"));
+        assert!(ctx_text.contains("excel.py"));
+        assert!(ctx_text.contains("generate_carga_puntual_excel") || ctx_text.contains("carga_puntual"));
+
+        // 6. Test ozy_doctor with action="templates"
+        let doc_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "templates"
+                }
+            })),
+        };
+        let doc_resp = handle_request(&backend, doc_req, None, None).await.unwrap().unwrap();
+        assert!(doc_resp.error.is_none());
+        let doc_text = doc_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(doc_text.contains("# OpenXML Excel Template Audit Report"));
+        assert!(doc_text.contains("[FAIL]"), "Must detect corrupted template");
+        assert!(doc_text.contains("UNDECLARED_NAMESPACE"));
+        assert!(doc_text.contains("x14ac"));
+        assert!(doc_text.contains("Status: ACTION_REQUIRED"));
+
+        // 7. Test ozy_doctor targeting only the healthy template
+        let healthy_doc_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(4)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "templates",
+                    "path": healthy_xlsx_path.to_string_lossy().to_string()
+                }
+            })),
+        };
+        let healthy_doc_resp = handle_request(&backend, healthy_doc_req, None, None).await.unwrap().unwrap();
+        assert!(healthy_doc_resp.error.is_none());
+        let healthy_text = healthy_doc_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(healthy_text.contains("[PASS]"));
+        assert!(healthy_text.contains("Status: HEALTHY"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+

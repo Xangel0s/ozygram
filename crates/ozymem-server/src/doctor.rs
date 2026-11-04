@@ -2,6 +2,10 @@ use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common::{self, ContentBlock, ToolCallResult};
 use serde_json::Value;
 use crate::formatters::build_architecture_report;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use regex::Regex;
+use walkdir::WalkDir;
 
 pub(crate) async fn handle_ozy_doctor(
     backend: Option<&GraphBackend>,
@@ -363,5 +367,196 @@ pub(crate) fn format_doctor_payload(payload: &Value) -> String {
         "\nRecommended actions are preview-only; no autosanado is executed without confirmation.\n",
     );
     body
+}
+
+/// Audit OpenXML (.xlsx) templates for XML namespace corruption, undeclared mc:Ignorable prefixes, and archive integrity.
+pub(crate) async fn audit_excel_templates(
+    backend: Option<&GraphBackend>,
+    target_path: Option<&str>,
+) -> anyhow::Result<String> {
+    let mut files_to_check: Vec<PathBuf> = Vec::new();
+
+    if let Some(tp) = target_path {
+        let p = Path::new(tp);
+        if p.is_file() {
+            files_to_check.push(p.to_path_buf());
+        } else if p.is_dir() {
+            for entry in WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
+                let ep = entry.path();
+                if ep.is_file() && ep.extension().and_then(|s| s.to_str()) == Some("xlsx") {
+                    files_to_check.push(ep.to_path_buf());
+                }
+            }
+        }
+    } else {
+        let root = backend
+            .and_then(|b| b.project_path())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+        let search_dirs = [
+            root.join("app").join("templates"),
+            root.join("api-geofal-crm").join("app").join("templates"),
+            root.join("templates"),
+            root.clone(),
+        ];
+
+        let mut seen = std::collections::HashSet::new();
+        for dir in &search_dirs {
+            if dir.exists() {
+                for entry in WalkDir::new(dir)
+                    .max_depth(8)
+                    .into_iter()
+                    .filter_entry(|e| {
+                        let name = e.file_name().to_string_lossy();
+                        !name.starts_with('.')
+                            && name != "node_modules"
+                            && name != "target"
+                            && name != ".git"
+                            && name != ".venv"
+                            && name != "dist"
+                            && name != "build"
+                    })
+                    .filter_map(|e| e.ok())
+                {
+                    let p = entry.path();
+                    if p.is_file()
+                        && p.extension().and_then(|s| s.to_str()) == Some("xlsx")
+                        && seen.insert(p.to_path_buf())
+                    {
+                        files_to_check.push(p.to_path_buf());
+                    }
+                }
+                if !files_to_check.is_empty() && dir != &root {
+                    break;
+                }
+            }
+        }
+    }
+
+    if files_to_check.is_empty() {
+        return Ok("No .xlsx templates found in scope to audit.\n".to_string());
+    }
+
+    let mut body = String::from("# OpenXML Excel Template Audit Report\n\n");
+    let mut corrupted_count = 0usize;
+    let mut healthy_count = 0usize;
+
+    let ignorable_regex = Regex::new(r#"(?:mc:Ignorable|ns\d+:Ignorable|Ignorable)\s*=\s*"([^"]+)""#)
+        .map_err(|e| anyhow::anyhow!("Regex compilation error: {e}"))?;
+
+    for file_path in &files_to_check {
+        let display_path = file_path.display().to_string();
+        let file = match std::fs::File::open(file_path) {
+            Ok(f) => f,
+            Err(e) => {
+                corrupted_count += 1;
+                body.push_str(&format!(
+                    "[FAIL] {}\n  - [CRITICAL: IO_ERROR] Unable to open file: {}\n\n",
+                    display_path, e
+                ));
+                continue;
+            }
+        };
+
+        let mut archive = match zip::ZipArchive::new(std::io::BufReader::new(file)) {
+            Ok(a) => a,
+            Err(e) => {
+                corrupted_count += 1;
+                body.push_str(&format!(
+                    "[FAIL] {}\n  - [CRITICAL: INVALID_ZIP_ARCHIVE] Corrupted ZIP structure: {}\n\n",
+                    display_path, e
+                ));
+                continue;
+            }
+        };
+
+        let mut issues = Vec::new();
+        let mut sheet_count = 0usize;
+
+        for i in 0..archive.len() {
+            let mut entry = match archive.by_index(i) {
+                Ok(e) => e,
+                Err(e) => {
+                    issues.push(format!("[CORRUPTED ENTRY #{i}] {}", e));
+                    continue;
+                }
+            };
+
+            let name = entry.name().to_string();
+            if name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml") {
+                sheet_count += 1;
+                let mut content = String::new();
+                if let Err(e) = entry.read_to_string(&mut content) {
+                    issues.push(format!(
+                        "[CRITICAL: UNREADABLE_XML] {}: failed to read UTF-8 stream: {}",
+                        name, e
+                    ));
+                    continue;
+                }
+
+                if let Some(caps) = ignorable_regex.captures(&content) {
+                    if let Some(val) = caps.get(1) {
+                        let prefixes: Vec<&str> = val.as_str().split_whitespace().collect();
+                        for prefix in prefixes {
+                            let decl_pattern_1 = format!("xmlns:{}=", prefix);
+                            let decl_pattern_2 = format!("xmlns:{} =", prefix);
+                            if !content.contains(&decl_pattern_1) && !content.contains(&decl_pattern_2) {
+                                issues.push(format!(
+                                    "[CRITICAL: UNDECLARED_NAMESPACE] {}: undeclared prefix '{}' referenced in Ignorable attribute.\n    Explanation: Violates ISO/IEC 29500 (OpenXML). Causes Excel repair error 0x808c0002 on file open.\n    Remediation: Declare xmlns:{} in root <worksheet> element or strip '{}' from Ignorable.",
+                                    name, prefix, prefix, prefix
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                if !content.contains("</worksheet>") && !content.ends_with("/>") {
+                    issues.push(format!(
+                        "[CRITICAL: MALFORMED_XML] {}: missing closing </worksheet> root tag.",
+                        name
+                    ));
+                }
+            } else if name == "xl/workbook.xml" {
+                let mut content = String::new();
+                if let Err(e) = entry.read_to_string(&mut content) {
+                    issues.push(format!(
+                        "[CRITICAL: UNREADABLE_XML] xl/workbook.xml: failed to read UTF-8 stream: {}",
+                        e
+                    ));
+                } else if !content.contains("</workbook>") && !content.ends_with("/>") {
+                    issues.push(
+                        "[CRITICAL: MALFORMED_XML] xl/workbook.xml: missing closing </workbook> root tag."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
+        if issues.is_empty() {
+            healthy_count += 1;
+            body.push_str(&format!(
+                "[PASS] {} (valid OpenXML structure, {} worksheet(s) verified)\n",
+                display_path, sheet_count
+            ));
+        } else {
+            corrupted_count += 1;
+            body.push_str(&format!("[FAIL] {}\n", display_path));
+            for issue in issues {
+                body.push_str(&format!("  - {}\n", issue));
+            }
+            body.push('\n');
+        }
+    }
+
+    body.push_str(&format!(
+        "\nSummary: {} file(s) checked - {} healthy, {} corrupted.\nStatus: {}\n",
+        files_to_check.len(),
+        healthy_count,
+        corrupted_count,
+        if corrupted_count == 0 { "HEALTHY" } else { "ACTION_REQUIRED" }
+    ));
+
+    Ok(body)
 }
 
