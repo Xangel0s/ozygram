@@ -1196,8 +1196,24 @@ impl GraphBackend {
         context_lines: usize,
     ) -> Result<LiteralSearchResult> {
         let root_dir = if let Some(p) = path_prefix {
-            let resolved = self.resolve_target_path(p).unwrap_or_else(|| p.to_string());
-            std::path::PathBuf::from(resolved)
+            let clean = p.trim().trim_matches(|c| c == '"' || c == '\'');
+            let path_obj = std::path::Path::new(clean);
+            if path_obj.exists() {
+                path_obj.to_path_buf()
+            } else if let Some(resolved) = self.resolve_target_path(clean) {
+                let r_obj = std::path::Path::new(&resolved);
+                if r_obj.exists() {
+                    r_obj.to_path_buf()
+                } else if let Some(root) = self.project_path() {
+                    std::path::Path::new(&root).join(&resolved)
+                } else {
+                    r_obj.to_path_buf()
+                }
+            } else if let Some(root) = self.project_path() {
+                std::path::Path::new(&root).join(clean)
+            } else {
+                path_obj.to_path_buf()
+            }
         } else if let Some(root) = self.project_path() {
             std::path::PathBuf::from(root)
         } else {

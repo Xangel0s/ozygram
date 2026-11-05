@@ -3027,6 +3027,24 @@ export function handleReorderCard(a: number, b: number) {
         assert_eq!(rigid_json["matches_count"], 1, "Must find match via auto-fallback despite rigid escaped quotes");
         assert!(rigid_json["matches"][0]["line_content"].as_str().unwrap().contains("role_id"));
 
+        // 5. Test search with file_path argument alias (scopes scan to single file and avoids output.txt overflow)
+        let file_path_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(6)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_search_literal",
+                "arguments": {
+                    "query": "role_id",
+                    "file_path": app_py.to_string_lossy()
+                }
+            })),
+        };
+        let resp_fp = handle_request(&backend_ref, file_path_req, None, None).await.unwrap().unwrap();
+        let fp_json: Value = serde_json::from_str(resp_fp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(fp_json["total_scanned_files"], 1, "Must scan exactly 1 file when file_path is passed");
+        assert_eq!(fp_json["matches_count"], 1, "Must find match in specified file");
+
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 

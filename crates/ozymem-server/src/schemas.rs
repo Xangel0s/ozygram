@@ -1157,6 +1157,8 @@ pub fn handle_tools_list(
                         "properties": {
                             "query": { "type": "string", "description": "Texto exacto o patrón regex a buscar" },
                             "path_prefix": { "type": "string", "description": "Subcarpeta o archivo para acotar la búsqueda" },
+                            "file_path": { "type": "string", "description": "Ruta específica de archivo a acotar (alias de path_prefix)" },
+                            "path": { "type": "string", "description": "Ruta de archivo o carpeta (alias de path_prefix)" },
                             "is_regex": { "type": "boolean", "default": false, "description": "Si es true, interpreta query como expresión regular" },
                             "case_sensitive": { "type": "boolean", "default": false, "description": "Distinguir mayúsculas y minúsculas" },
                             "token_budget": { "type": "integer", "default": 800, "description": "Límite máximo estimado de tokens a devolver en los snippets" },

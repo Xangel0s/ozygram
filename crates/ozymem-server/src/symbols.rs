@@ -337,6 +337,9 @@ pub fn handle_search_literal(
     let path_prefix = tool_call
         .arguments
         .get("path_prefix")
+        .or_else(|| tool_call.arguments.get("file_path"))
+        .or_else(|| tool_call.arguments.get("path"))
+        .or_else(|| tool_call.arguments.get("file"))
         .and_then(Value::as_str);
     let is_regex = tool_call
         .arguments
@@ -352,17 +355,17 @@ pub fn handle_search_literal(
         .arguments
         .get("token_budget")
         .and_then(Value::as_u64)
-        .unwrap_or(2500) as usize;
+        .unwrap_or(800) as usize;
     let max_matches = tool_call
         .arguments
         .get("max_matches")
         .and_then(Value::as_u64)
-        .unwrap_or(30) as usize;
+        .unwrap_or(20) as usize;
     let context_lines = tool_call
         .arguments
         .get("context_lines")
         .and_then(Value::as_u64)
-        .unwrap_or(1) as usize;
+        .unwrap_or(0) as usize;
 
     let res = backend.search_literal(
         query,
