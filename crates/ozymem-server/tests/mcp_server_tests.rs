@@ -3031,6 +3031,143 @@ export function handleReorderCard(a: number, b: number) {
     }
 
     #[tokio::test]
+    async fn test_tools_doctor_excel_data_mcp() {
+        use std::io::Write;
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_excel_data_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // Initialize MCP backend
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let xlsx_path = tmp_root.join("test_import.xlsx");
+        let file = std::fs::File::create(&xlsx_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+    <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>"#).unwrap();
+
+        zip.start_file("xl/workbook.xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+    <sheets>
+        <sheet name="Probetas" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
+    </sheets>
+</workbook>"#).unwrap();
+
+        zip.start_file("xl/worksheets/sheet1.xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+    <dimension ref="A1:N50"/>
+    <sheetData>
+        <row r="29">
+            <c r="A29" t="s"><v>0</v></c>
+            <c r="H29"><v>0.41666666666666669</v></c>
+        </row>
+        <row r="30">
+            <c r="B30" t="e"><v>#REF!</v></c>
+        </row>
+    </sheetData>
+</worksheet>"#).unwrap();
+
+        zip.finish().unwrap();
+
+        // Call ozy_doctor with action="excel_data"
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(10)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "excel_data",
+                    "path": xlsx_path.to_string_lossy()
+                }
+            })),
+        };
+
+        let resp = handle_request(&backend_ref, req, None, None).await.unwrap().unwrap();
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(text.contains("Ozy Doctor Excel Data Inspector"), "Must contain inspector header");
+        assert!(text.contains("UNFORMATTED_FLOAT_TIME"), "Must flag float time in H29");
+        assert!(text.contains("10:00:00"), "Must calculate equivalent time 10:00:00");
+        assert!(text.contains("FORMULA_ERROR"), "Must flag formula error in B30");
+        assert!(text.contains("ANOMALIES_FOUND"), "Summary must report anomalies");
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
+    async fn test_tools_doctor_excel_data_real_large_file_mcp() {
+        let real_path = std::path::Path::new(r"C:\Users\Lenovo\Documents\crmnew\REC Nº 3707-26 TECSUR SA.xlsx");
+        if !real_path.exists() {
+            return;
+        }
+
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_real_large_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp_root);
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let start = std::time::Instant::now();
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(20)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "excel_data",
+                    "path": real_path.to_string_lossy()
+                }
+            })),
+        };
+
+        let resp = handle_request(&backend_ref, req, None, None).await.unwrap().unwrap();
+        let elapsed = start.elapsed();
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(text.contains("H27"), "Must identify anomalous cell H27");
+        assert!(text.contains("UNFORMATTED_FLOAT_TIME"), "Must flag float time in H27");
+        assert!(text.contains("10:00:00"), "Must compute 10:00:00");
+        assert!(elapsed.as_millis() < 3000, "Processing 30MB Excel must complete in < 3s, took: {:?}", elapsed);
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
     async fn test_tools_ast_patch_indent_alignment_mcp() {
         let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_patch_{}", std::process::id()));

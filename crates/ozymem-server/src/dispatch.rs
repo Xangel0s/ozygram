@@ -321,6 +321,32 @@ pub async fn handle_request(
                             }],
                             is_error: None,
                         }
+                    } else if action == "excel_data" || action == "inspect_excel" || action == "excel_inspect" {
+                        let path_arg = tool_call
+                            .arguments
+                            .get("path")
+                            .or_else(|| tool_call.arguments.get("target_path"))
+                            .or_else(|| tool_call.arguments.get("file_path"))
+                            .and_then(Value::as_str);
+                        let max_rows = tool_call
+                            .arguments
+                            .get("max_rows")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(10) as usize;
+                        let max_text_len = tool_call
+                            .arguments
+                            .get("max_text_len")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(50) as usize;
+                        let report =
+                            crate::doctor::inspect_excel_data(Some(backend), path_arg, max_rows, max_text_len).await?;
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: report,
+                            }],
+                            is_error: None,
+                        }
                     } else {
                         handle_ozy_doctor(Some(backend), &tool_call).await?
                     }

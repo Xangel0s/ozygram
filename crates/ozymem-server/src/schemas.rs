@@ -157,23 +157,25 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_doctor",
-                    description: "[SYSTEM & CODE HEALTH DOCTOR] Diagnostics and architectural smell analysis: action='status' (DB, WAL, watchers), action='code' (duplicate detection and static analysis), action='audit_migrations' (SQL migration idempotency linter), action='templates' (OpenXML .xlsx template corruption and undeclared namespace linter).",
+                    description: "[SYSTEM & CODE HEALTH DOCTOR] Diagnostics and architectural smell analysis: action='status' (DB, WAL, watchers), action='code' (duplicate detection and static analysis), action='audit_migrations' (SQL migration idempotency linter), action='templates' (OpenXML .xlsx template corruption and undeclared namespace linter), action='excel_data' (Deep Excel data inspector: cell anomalies, unformatted float times e.g. 0.416666 exceeding VARCHAR(10), formula errors, string length overflows, and tabular row preview in <50ms without python scripts).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["status", "audit_migrations", "code", "templates"],
+                                "enum": ["status", "audit_migrations", "code", "templates", "excel_data"],
                                 "default": "status",
-                                "description": "Acción a ejecutar:\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)\n- 'templates': linter de plantillas OpenXML (.xlsx) para detectar corrupción de namespaces XML, prefijos no declarados en mc:Ignorable y archivos dañados sin scripts en Python"
+                                "description": "Acción a ejecutar:\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)\n- 'templates': linter de plantillas OpenXML (.xlsx) para detectar corrupción de namespaces XML, prefijos no declarados en mc:Ignorable y archivos dañados sin scripts en Python\n- 'excel_data': inspector de datos Excel (.xlsx) para diagnosticar celdas anómalas, horas flotantes no formateadas (0.416666), longitudes de texto que rompen columnas de BD y errores de fórmula al instante sin Python"
                             },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
                             "include_projects": { "type": "boolean", "default": true },
                             "migrations_path": { "type": "string", "description": "Optional directory to scan for .sql files for action='audit_migrations' (default: project root)" },
-                            "path": { "type": "string", "description": "Optional file or directory path for action='templates' (default: project templates/ or root)" },
+                            "path": { "type": "string", "description": "Optional file or directory path (.xlsx for templates/excel_data, or directory for scan)" },
                             "scope": { "type": "string", "description": "Optional file or directory scope for action='code'" },
                             "min_duplicate_lines": { "type": "integer", "default": 6, "description": "Min duplicate lines threshold for action='code'" },
-                            "max_findings": { "type": "integer", "default": 20, "description": "Max findings to return for action='code'" }
+                            "max_findings": { "type": "integer", "default": 20, "description": "Max findings to return for action='code'" },
+                            "max_rows": { "type": "integer", "default": 10, "description": "Max sample rows to preview for action='excel_data'" },
+                            "max_text_len": { "type": "integer", "default": 50, "description": "Length threshold to flag long strings for action='excel_data'" }
                         },
                         "additionalProperties": false
                     }),

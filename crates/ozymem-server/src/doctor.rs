@@ -560,3 +560,474 @@ pub(crate) async fn audit_excel_templates(
     Ok(body)
 }
 
+fn extract_attr<'a>(tag: &'a str, attr: &str) -> Option<&'a str> {
+    let pattern = format!("{attr}=\"");
+    let start = tag.find(&pattern)? + pattern.len();
+    let end = tag[start..].find('"')? + start;
+    Some(&tag[start..end])
+}
+
+fn parse_cell_coord(coord: &str) -> (String, usize) {
+    let mut col = String::new();
+    let mut row_str = String::new();
+    for c in coord.chars() {
+        if c.is_ascii_alphabetic() {
+            col.push(c.to_ascii_uppercase());
+        } else if c.is_ascii_digit() {
+            row_str.push(c);
+        }
+    }
+    let row_num = row_str.parse::<usize>().unwrap_or(0);
+    (col, row_num)
+}
+
+fn decode_xml_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+}
+
+/// Inspects an Excel (.xlsx) data file for cell anomalies: unformatted float times,
+/// string length overflows, formula errors, and provides a structured preview of worksheets.
+pub(crate) async fn inspect_excel_data(
+    backend: Option<&GraphBackend>,
+    path_arg: Option<&str>,
+    max_rows: usize,
+    max_text_len: usize,
+) -> anyhow::Result<String> {
+    let target_path = if let Some(p) = path_arg {
+        let clean = p.trim().trim_matches(|c| c == '"' || c == '\'');
+        let pb = PathBuf::from(clean);
+        if pb.is_absolute() && pb.exists() {
+            pb
+        } else if let Some(b) = backend {
+            if let Some(proj) = b.project_path() {
+                let candidate = Path::new(&proj).join(clean);
+                if candidate.exists() {
+                    candidate
+                } else {
+                    pb
+                }
+            } else {
+                pb
+            }
+        } else {
+            pb
+        }
+    } else {
+        let root = backend
+            .and_then(|b| b.project_path())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let mut found = None;
+        for entry in WalkDir::new(&root).max_depth(3).into_iter().filter_map(|e| e.ok()) {
+            let p = entry.path();
+            if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("xlsx") {
+                found = Some(p.to_path_buf());
+                break;
+            }
+        }
+        match found {
+            Some(f) => f,
+            None => return Ok("No .xlsx file found to inspect. Specify path=\"path/to/file.xlsx\".\n".to_string()),
+        }
+    };
+
+    if !target_path.exists() {
+        return Ok(format!("File not found: {}\n", target_path.display()));
+    }
+
+    let file = match std::fs::File::open(&target_path) {
+        Ok(f) => f,
+        Err(e) => return Ok(format!("[FAIL] Could not open file {}: {}\n", target_path.display(), e)),
+    };
+
+    let mut archive = match zip::ZipArchive::new(std::io::BufReader::new(file)) {
+        Ok(a) => a,
+        Err(e) => return Ok(format!("[FAIL] Corrupted or invalid .xlsx (ZIP) archive {}: {}\n", target_path.display(), e)),
+    };
+
+    // Find all archive entry names
+    let all_names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+        .collect();
+
+    // 1. Extract shared strings
+    let mut shared_strings = Vec::new();
+    let sst_entry = all_names
+        .iter()
+        .find(|n| *n == "xl/sharedStrings.xml" || *n == "sharedStrings.xml" || n.ends_with("/sharedStrings.xml"))
+        .cloned();
+    if let Some(sst_name) = sst_entry {
+        if let Ok(mut entry) = archive.by_name(&sst_name) {
+            let mut xml = String::new();
+            if entry.read_to_string(&mut xml).is_ok() {
+                let mut pos = 0;
+                while let Some(si_start) = xml[pos..].find("<si") {
+                    let abs_si = pos + si_start;
+                    let Some(si_end) = xml[abs_si..].find("</si>") else { break };
+                    let si_slice = &xml[abs_si..abs_si + si_end];
+                    let mut s = String::new();
+                    let mut t_pos = 0;
+                    while let Some(t_idx) = si_slice[t_pos..].find("<t") {
+                        let abs_t = t_pos + t_idx;
+                        let Some(tag_close) = si_slice[abs_t..].find('>') else { break };
+                        let content_start = abs_t + tag_close + 1;
+                        let Some(t_end) = si_slice[content_start..].find("</t>") else { break };
+                        s.push_str(&si_slice[content_start..content_start + t_end]);
+                        t_pos = content_start + t_end + 4;
+                    }
+                    shared_strings.push(decode_xml_entities(&s));
+                    pos = abs_si + si_end + 5;
+                }
+            }
+        }
+    }
+
+    // 2. Extract sheets list from workbook.xml
+    let mut sheet_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let wb_entry = all_names
+        .iter()
+        .find(|n| *n == "xl/workbook.xml" || *n == "workbook.xml" || n.ends_with("/workbook.xml"))
+        .cloned();
+    if let Some(wb_name) = wb_entry {
+        if let Ok(mut entry) = archive.by_name(&wb_name) {
+            let mut xml = String::new();
+            if entry.read_to_string(&mut xml).is_ok() {
+                let sheet_re = Regex::new(r#"<sheet\s+[^>]*name="([^"]+)"[^>]*sheetId="([^"]+)""#)?;
+                for cap in sheet_re.captures_iter(&xml) {
+                    let name = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                    let id = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+                    sheet_names.insert(format!("sheet{}.xml", id), name.clone());
+                    sheet_names.insert(format!("xl/worksheets/sheet{}.xml", id), name);
+                }
+            }
+        }
+    }
+
+    // 3. Collect sheet entry names
+    let sheet_entries: Vec<String> = all_names
+        .into_iter()
+        .filter(|n| {
+            (n.starts_with("xl/worksheets/sheet") || n.starts_with("sheet") || n.contains("/sheet"))
+                && n.ends_with(".xml")
+                && !n.ends_with(".rels")
+        })
+        .collect();
+
+    let mut body = format!(
+        "# Ozy Doctor Excel Data Inspector\n\nFile: `{}`\nTotal Shared Strings: {}\nWorksheets Found: {}\n\n",
+        target_path.display(),
+        shared_strings.len(),
+        sheet_entries.len()
+    );
+
+    let mut total_anomalies = 0usize;
+
+    for sheet_entry_name in &sheet_entries {
+        let base_name = sheet_entry_name
+            .trim_start_matches("xl/worksheets/")
+            .split('/')
+            .last()
+            .unwrap_or(sheet_entry_name);
+        let display_name = sheet_names
+            .get(base_name)
+            .or_else(|| sheet_names.get(sheet_entry_name))
+            .cloned()
+            .unwrap_or_else(|| base_name.to_string());
+
+        let mut content = String::new();
+        if let Ok(mut entry) = archive.by_name(sheet_entry_name) {
+            let _ = entry.read_to_string(&mut content);
+        }
+
+        // Fast dimension extraction without regex
+        let dimension = if let Some(dim_pos) = content.find("<dimension") {
+            let max_look = content.len().min(dim_pos + 120);
+            extract_attr(&content[dim_pos..max_look], "ref")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            "Unknown".to_string()
+        };
+
+        struct ExtractedCell {
+            pos: usize,
+            coord: String,
+            value: String,
+            is_formula_err: bool,
+        }
+
+        let mut extracted: Vec<ExtractedCell> = Vec::new();
+
+        // Pass A: Find all <v> tags in document order
+        let mut v_search = 0;
+        while let Some(rel) = content[v_search..].find("<v") {
+            let v_idx = v_search + rel;
+            let after_v = &content[v_idx + 2..];
+            if after_v.starts_with('>') || after_v.starts_with(' ') {
+                if let Some(v_close) = after_v.find("</v>") {
+                    if let Some(tag_close) = after_v.find('>') {
+                        let inner_val = &after_v[tag_close + 1..v_close];
+                        let back_limit = v_idx.saturating_sub(1024);
+                        if let Some(rel_c) = content[back_limit..v_idx].rfind("<c ") {
+                            let c_start = back_limit + rel_c;
+                            if let Some(rel_c_close) = content[c_start..v_idx].find('>') {
+                                let cell_tag = &content[c_start..c_start + rel_c_close + 1];
+                                if !cell_tag.ends_with("/>") {
+                                    if let Some(coord) = extract_attr(cell_tag, "r") {
+                                        let cell_type = extract_attr(cell_tag, "t").map(|s| s.to_string());
+                                        let is_err = cell_type.as_deref() == Some("e");
+                                        let resolved = if cell_type.as_deref() == Some("s") {
+                                            if let Ok(idx) = inner_val.trim().parse::<usize>() {
+                                                if idx < shared_strings.len() {
+                                                    shared_strings[idx].clone()
+                                                } else {
+                                                    format!("[SST#{idx}]")
+                                                }
+                                            } else {
+                                                inner_val.to_string()
+                                            }
+                                        } else {
+                                            decode_xml_entities(inner_val.trim())
+                                        };
+
+                                        extracted.push(ExtractedCell {
+                                            pos: c_start,
+                                            coord: coord.to_string(),
+                                            value: resolved,
+                                            is_formula_err: is_err,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    v_search = v_idx + 2 + v_close + 4;
+                    continue;
+                }
+            }
+            v_search = v_idx + 2;
+        }
+
+        // Pass B: Find all <is> tags (inline strings)
+        let mut is_search = 0;
+        while let Some(rel) = content[is_search..].find("<is") {
+            let is_idx = is_search + rel;
+            let after_is = &content[is_idx + 3..];
+            if after_is.starts_with('>') || after_is.starts_with(' ') {
+                if let Some(is_close) = after_is.find("</is>") {
+                    let is_inner = &after_is[..is_close];
+                    let mut s = String::new();
+                    let mut t_pos = 0;
+                    while let Some(t_idx) = is_inner[t_pos..].find("<t") {
+                        let abs_t = t_pos + t_idx;
+                        let Some(tag_close) = is_inner[abs_t..].find('>') else { break };
+                        let content_start = abs_t + tag_close + 1;
+                        let Some(t_end) = is_inner[content_start..].find("</t>") else { break };
+                        s.push_str(&is_inner[content_start..content_start + t_end]);
+                        t_pos = content_start + t_end + 4;
+                    }
+
+                    let back_limit = is_idx.saturating_sub(1024);
+                    if let Some(rel_c) = content[back_limit..is_idx].rfind("<c ") {
+                        let c_start = back_limit + rel_c;
+                        if let Some(rel_c_close) = content[c_start..is_idx].find('>') {
+                            let cell_tag = &content[c_start..c_start + rel_c_close + 1];
+                            if !cell_tag.ends_with("/>") {
+                                if let Some(coord) = extract_attr(cell_tag, "r") {
+                                    extracted.push(ExtractedCell {
+                                        pos: c_start,
+                                        coord: coord.to_string(),
+                                        value: decode_xml_entities(&s),
+                                        is_formula_err: false,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    is_search = is_idx + 3 + is_close + 5;
+                    continue;
+                }
+            }
+            is_search = is_idx + 3;
+        }
+
+        // Sort extracted cells by document position
+        extracted.sort_by_key(|c| c.pos);
+
+        let mut anomalies = Vec::new();
+        let mut row_cells: std::collections::BTreeMap<usize, std::collections::BTreeMap<String, String>> = std::collections::BTreeMap::new();
+        let non_empty_count = extracted.len();
+
+        for cell in extracted {
+            let coord = cell.coord;
+            let resolved_val = cell.value;
+            let is_formula_err = cell.is_formula_err;
+
+            if resolved_val.is_empty() {
+                continue;
+            }
+
+            let (col, row_num) = parse_cell_coord(&coord);
+
+            // Anomaly 1: Formula errors (#REF!, #VALUE!, etc.)
+            if is_formula_err
+                || resolved_val.starts_with("#REF!")
+                || resolved_val.starts_with("#VALUE!")
+                || resolved_val.starts_with("#DIV/0!")
+                || resolved_val.starts_with("#N/A")
+                || resolved_val.starts_with("#NAME?")
+                || resolved_val.starts_with("#NUM!")
+                || resolved_val.starts_with("#NULL!")
+            {
+                anomalies.push(format!(
+                    "- [FORMULA_ERROR] Celda {coord}: contiene error de fórmula '{resolved_val}'."
+                ));
+            }
+
+            // Anomaly 2: Unformatted float time (e.g. 0.41666666666666669 -> 10:00:00)
+            if (resolved_val.starts_with("0.") && resolved_val.len() >= 7)
+                || (resolved_val.starts_with('0') && resolved_val.contains('.') && resolved_val.len() >= 7)
+            {
+                if let Ok(f) = resolved_val.parse::<f64>() {
+                    if f > 0.0 && f < 1.0 {
+                        let total_seconds = (f * 86400.0).round() as u64 % 86400;
+                        let h = total_seconds / 3600;
+                        let m = (total_seconds % 3600) / 60;
+                        let s = total_seconds % 60;
+                        let time_str = format!("{:02}:{:02}:{:02}", h, m, s);
+                        anomalies.push(format!(
+                            "- [CRITICAL: UNFORMATTED_FLOAT_TIME] Celda {coord}: valor '{resolved_val}' (longitud: {} chars) equivale a hora '{time_str}'.\n  Alerta: Excede límites de columna VARCHAR(10) en PostgreSQL y causa DataError / StringDataRightTruncation.",
+                            resolved_val.len()
+                        ));
+                    }
+                }
+            }
+
+            // Anomaly 3: String Length Overflow
+            if resolved_val.len() > max_text_len {
+                let preview = if resolved_val.len() > 60 {
+                    format!("{}...", &resolved_val[..57])
+                } else {
+                    resolved_val.clone()
+                };
+                anomalies.push(format!(
+                    "- [TEXT_LENGTH_OVERFLOW] Celda {coord}: longitud {} caracteres (> {}): '{preview}'",
+                    resolved_val.len(),
+                    max_text_len
+                ));
+            }
+
+            // Anomaly 4: Unformatted serial datetime (e.g. 46302.41666)
+            if resolved_val.contains('.') && resolved_val.len() >= 8 {
+                if let Ok(f) = resolved_val.parse::<f64>() {
+                    if (40000.0..=60000.0).contains(&f) {
+                        let frac = f - (f as i64 as f64);
+                        let total_seconds = (frac * 86400.0).round() as u64 % 86400;
+                        let h = total_seconds / 3600;
+                        let m = (total_seconds % 3600) / 60;
+                        let s = total_seconds % 60;
+                        let time_str = format!("{:02}:{:02}:{:02}", h, m, s);
+                        anomalies.push(format!(
+                            "- [SUSPECT_SERIAL_DATETIME] Celda {coord}: float '{resolved_val}' representa fecha serial Excel con hora no formateada ({time_str})."
+                        ));
+                    }
+                }
+            }
+
+            if row_num > 0 && row_cells.len() < max_rows + 20 {
+                row_cells.entry(row_num).or_default().insert(col, resolved_val);
+            }
+        }
+
+        total_anomalies += anomalies.len();
+
+        body.push_str(&format!(
+            "## Worksheet: `{}` (`{}`)\n- Dimension: {}\n- Celdas no vacías: {}\n- Anomalías detectadas: {}\n\n",
+            display_name,
+            sheet_entry_name,
+            dimension,
+            non_empty_count,
+            anomalies.len()
+        ));
+
+        if anomalies.is_empty() {
+            body.push_str("Sin anomalías críticas detectadas en esta hoja.\n\n");
+        } else {
+            body.push_str("### Anomalías Detectadas:\n");
+            for a in anomalies.iter().take(30) {
+                body.push_str(&format!("{}\n", a));
+            }
+            if anomalies.len() > 30 {
+                body.push_str(&format!("... y {} anomalías adicionales omitidas.\n", anomalies.len() - 30));
+            }
+            body.push('\n');
+        }
+
+        // Preview sample rows
+        if !row_cells.is_empty() {
+            body.push_str("### Vista Previa de Filas (Muestreo):\n");
+            let mut sample_rows: Vec<usize> = row_cells.keys().cloned().take(max_rows).collect();
+            sample_rows.sort();
+
+            // Collect all unique columns in these sample rows
+            let mut cols_set = std::collections::BTreeSet::new();
+            for r in &sample_rows {
+                if let Some(cols) = row_cells.get(r) {
+                    for c in cols.keys() {
+                        cols_set.insert(c.clone());
+                    }
+                }
+            }
+            let cols_list: Vec<String> = cols_set.into_iter().take(12).collect();
+
+            // Table header
+            body.push_str("| Fila |");
+            for c in &cols_list {
+                body.push_str(&format!(" {} |", c));
+            }
+            body.push('\n');
+
+            body.push_str("| --- |");
+            for _ in &cols_list {
+                body.push_str(" --- |");
+            }
+            body.push('\n');
+
+            // Table rows
+            for r in &sample_rows {
+                body.push_str(&format!("| {} |", r));
+                if let Some(cells) = row_cells.get(r) {
+                    for c in &cols_list {
+                        let val = cells.get(c).map(|s| s.replace('|', "\\|")).unwrap_or_default();
+                        let preview = if val.len() > 25 {
+                            format!("{}...", &val[..22])
+                        } else {
+                            val
+                        };
+                        body.push_str(&format!(" {} |", preview));
+                    }
+                } else {
+                    for _ in &cols_list {
+                        body.push_str(" |");
+                    }
+                }
+                body.push('\n');
+            }
+            body.push('\n');
+        }
+    }
+
+    body.push_str(&format!(
+        "## Resumen General\nTotal de Hojas Auditadas: {}\nTotal de Anomalías: {}\nEstado: {}\n",
+        sheet_entries.len(),
+        total_anomalies,
+        if total_anomalies == 0 { "CLEAN" } else { "ANOMALIES_FOUND" }
+    ));
+
+    Ok(body)
+}
+
