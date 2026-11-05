@@ -14,21 +14,27 @@ Contains core system modules, memory engines, and CRM integrations:
 >
 > 1. **Exploración y Localización Inicial (Ozygram First)**:
 >    - ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo, `grep` recursivo, comandos de terminal (`Select-String`, `dir`) o scripts ad-hoc de Python (`python -c "..."`, `python scratch/*.py`) para buscar o leer líneas de código.
+>    - **Inspección de Archivos y Plantillas Excel (.xlsx / .xls)**:
+>      - ESTÁ TERMINANTEMENTE PROHIBIDO escribir scripts de Python con `openpyxl`, `pandas` o similares (`python -c "import openpyxl..."`) para inspeccionar hojas, dimensiones, headers, columnas o filas de Excel.
+>      - Es OBLIGATORIO ejecutar directamente `ozy_doctor(action="excel_data", file_path="...")`. En < 50 ms extrae automáticamente todas las hojas, dimensiones, fila de encabezados, muestreo de datos y detecta anomalías de tipo/longitud.
+>      - Para auditar reportes dañados o corrupción OpenXML (HRESULT 0x808c0002): ejecutar `ozy_doctor(action="templates")` para auditar la integridad OpenXML y namespaces de `mc:Ignorable`.
 >    - SIEMPRE invocar primero `ozy_context(action="task", query="<requisito o error>")` para localizar archivos y funciones relevantes en < 5 ms. Soporta búsqueda difusa multitoken inteligente (e.g. `"carga puntual excel"` localiza automáticamente `carga_puntual/excel.py`, componentes frontend y contratos AST).
->    - Para errores en reportes o plantillas Excel dañadas (`.xlsx` / HRESULT 0x808c0002): ESTÁ PROHIBIDO escribir scripts en Python para descomprimir o parchar XML. Ejecutar directamente `ozy_doctor(action="templates")` para auditar la integridad OpenXML y detectar prefijos no declarados en `mc:Ignorable` en < 2 segundos.
 >    - Usar `ozy_get_symbol(file_path="...", symbol_name="...")` para extraer funciones, componentes o enums directamente por AST sin adivinar números de línea.
 >    - Usar `ozy_context(action="file", file_path="...", lod="contracts")` para extraer contratos AST sin volcar cientos de líneas de código al contexto.
 >    - Usar `ozy_search_literal(query="<texto>")` para coincidencias exactas o de palabras clave de rutas, roles o constantes (cuenta con auto-tolerancia de comillas y reintento multitoken si la query original contiene escapes).
->    - **Veto al Anti-patrón de Lectura en Rodajas ("Chunk Sliding")**: ESTÁ TERMINANTEMENTE PROHIBIDO encadenar lecturas sucesivas de `read_file` sobre el mismo archivo (e.g. `L680-740`, `L630-680`, `L570-630`). Si un archivo tiene más de 150 líneas (como `use-auth.ts`), es OBLIGATORIO invocar `ozy_context(action="file", file_path="...", lod="contracts")` o `ozy_get_symbol` para ubicar en 1 solo paso (< 5 ms) la función, hook o bloque y su número exacto de línea antes de leer.
->    - **Veto Absoluto a `Select-String` y `Get-ChildItem -Recurse`**: ESTÁ TERMINANTEMENTE PROHIBIDO ejecutar comandos de terminal de PowerShell (`Get-ChildItem -Recurse | Select-String`, `findstr`, `dir /s`) para buscar texto en el código. Esto desperdicia minutos en Windows. Toda búsqueda de texto debe canalizarse exclusivamente a través de `ozy_search_literal` u `ozy_context(action="task")`.
+>    - **Veto al Anti-patrón de Lectura en Rodajas ("Chunk Sliding")**: ESTÁ TERMINANTEMENTE PROHIBIDO encadenar lecturas sucesivas de `read_file` sobre el mismo archivo (e.g. `L1-100`, `L100-140`, `L200-260`, etc.). Si un archivo tiene más de 150 líneas (como `role-matrix.ts` o `use-auth.ts`), es OBLIGATORIO invocar `ozy_context(action="file", file_path="...", lod="contracts")` o `ozy_get_symbol` para ubicar en 1 solo paso (< 5 ms) la función, hook o bloque y su número exacto de línea antes de leer.
+>    - **Veto Absoluto a `Select-String` y `Get-ChildItem -Recurse`**: ESTÁ TERMINANTEMENTE PROHIBIDO ejecutar comandos de terminal de PowerShell (`Get-ChildItem -Recurse | Select-String`, `findstr`, `dir /s`) para buscar archivos o texto en el código. Esto colapsa y congela la terminal en Windows al recorrer carpetas como `node_modules` o `.venv`. Toda búsqueda debe canalizarse exclusivamente a través de `ozy_search_literal` u `ozy_context(action="task")`.
 >    - Si solo necesitas leer un rango puntual de líneas, usa `read_file` con `StartLine` y `EndLine`. Jamás abras Python para hacer `open().readlines()`, ya que colapsa con `UnicodeEncodeError: 'charmap' (cp1252)` en Windows.
 > 2. **Modificación y Edición de Código (Ghost Patching en RAM)**:
 >    - ESTÁ TERMINANTEMENTE PROHIBIDO crear o ejecutar scripts ad-hoc de Python (`scratch/update_*.py`) para reemplazar texto o regex a ciegas. Esto rompe tipos de TypeScript y provoca fallos de compilación (`type-check Exited with code 1`).
 >    - ANTES de tocar el disco, es OBLIGATORIO ejecutar `ozy_patch(action="simulate", file_path="...", candidate_code="...", target_symbol="...")`.
 >    - Esto simula el cambio en memoria RAM volátil (Copy-on-Write) y valida la paridad de aridad y contratos de llamadores en todo el proyecto.
 >    - Solo tras obtener `[STATUS: APPROVED: NO CONTRACT BREAKAGE]` se procede con `ozy_patch(action="apply")` o `edit_file`.
-> 3. **Planificación y Refactorizaciones Complejas**:
->    - Para tareas que conecten frontend y backend o afecten múltiples componentes, ejecutar `ozy_plan(goal="...")` para calcular la secuencia topológica estricta y el radio de explosión (MCTS en RAM).
+> 3. **Planificación y Refactorizaciones Complejas (Plan First Protocol)**:
+>    - Para CUALQUIER tarea que implique planificar ("realiza el plan", "auditoría de módulo", "nuevo módulo", "diseño arquitectónico"), refactorizar o conectar frontend y backend:
+>    - ESTÁ TERMINANTEMENTE PROHIBIDO redactar planes manuales a ciegas o buscar archivos con comandos de shell.
+>    - Es OBLIGATORIO ejecutar `ozy_plan(goal="<descripción clara del objetivo>")` en el PRIMER turno. Esto ejecuta el motor Active Inference EFE-MCTS en RAM en < 1 segundo, calculando la secuencia topológica estricta de edición, dependencias de AST y radio de impacto (blast radius).
+>    - El agente debe basar su plan de acción directamente en la salida de `ozy_plan`.
 > 4. **Prevención de Regresiones**:
 >    - Al inspeccionar archivos, `ozy_context` inyecta automáticamente alertas `[ALERT: GOTCHA_PREVENTION]`. El agente debe respetarlas para no reintroducir bugs ya resueltos.
 
