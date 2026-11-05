@@ -293,13 +293,95 @@ pub(crate) async fn build_ozy_task_context(
     let mut matched_files: Vec<String> = Vec::new();
     let mut body = format!("[Ozy Context for \"{query}\"]\n");
     if lessons.is_empty() {
-        let syms = backend.search_ast_symbols(query, 10).unwrap_or_default();
-        let files_found = backend.search_files(query, 10).unwrap_or_default();
+        let mut syms = backend.search_ast_symbols(query, 10).unwrap_or_default();
+        let mut files_found = backend.search_files(query, 10).unwrap_or_default();
+
+        let mut multi_token_fallback = false;
+        if syms.is_empty() && files_found.is_empty() {
+            let stop_words: std::collections::HashSet<&str> = [
+                "de", "en", "la", "el", "al", "un", "una", "los", "las", "del", "por", "para", "con",
+                "to", "in", "on", "at", "is", "by", "or", "if", "an", "the", "and", "for", "with", "from",
+                "se", "ya", "es", "su", "sus", "tu", "tus", "mi", "mis", "as", "como", "que", "y", "o"
+            ].iter().cloned().collect();
+
+            let tokens: Vec<String> = query
+                .to_lowercase()
+                .replace(['/', '-', '_', ':', '.', ',', ';', '"', '\''], " ")
+                .split_whitespace()
+                .filter(|t| t.len() >= 2 && !stop_words.contains(*t))
+                .map(|t| t.to_string())
+                .collect();
+
+            if !tokens.is_empty() {
+                multi_token_fallback = true;
+                // 1. Search AST symbols by each token
+                for token in &tokens {
+                    if token.len() >= 3 {
+                        if let Ok(token_syms) = backend.search_ast_symbols(token, 5) {
+                            for s in token_syms {
+                                if !syms.iter().any(|existing| existing.name == s.name && existing.strategy == s.strategy) {
+                                    syms.push(s);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Pre-score all indexed files by token matching
+                let all_files = backend.list_all_files().unwrap_or_default();
+                let mut scored_files: Vec<(usize, String)> = all_files
+                    .into_iter()
+                    .filter_map(|path| {
+                        let lower = path.to_lowercase();
+                        if lower.contains("/dist/") || lower.contains("/build/") || lower.contains("/.next/") || lower.contains("/__pycache__/") || lower.contains("/node_modules/") {
+                            return None;
+                        }
+                        let mut score = 0;
+                        let filename = lower.rsplit(['/', '\\']).next().unwrap_or("");
+                        for token in &tokens {
+                            if filename.contains(token) {
+                                score += 5;
+                            } else if lower.contains(token) {
+                                score += 2;
+                            }
+                        }
+                        if score > 0 {
+                            Some((score, path))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // 3. Boost files that declare matching AST symbols
+                for s in &syms {
+                    if let Some((_, fpath)) = s.strategy.split_once(" in ") {
+                        let clean = fpath.trim().to_string();
+                        if let Some(entry) = scored_files.iter_mut().find(|(_, p)| p == &clean) {
+                            entry.0 += 6;
+                        } else if !clean.is_empty() {
+                            scored_files.push((6, clean));
+                        }
+                    }
+                }
+
+                scored_files.sort_by(|a, b| b.0.cmp(&a.0));
+                for (_, f) in scored_files.into_iter().take(8) {
+                    if !files_found.contains(&f) {
+                        files_found.push(f);
+                    }
+                }
+            }
+        }
 
         if syms.is_empty() && files_found.is_empty() {
             body.push_str("No matching memories, files, or symbols found.\n");
         } else {
-            body.push_str("(no explicit lessons found — falling back to indexed repository modules & AST symbols)\n\n");
+            if multi_token_fallback {
+                body.push_str("(no explicit lessons found — multi-token cascade activated: matched modules & AST symbols)\n\n");
+            } else {
+                body.push_str("(no explicit lessons found — falling back to indexed repository modules & AST symbols)\n\n");
+            }
             if !files_found.is_empty() {
                 body.push_str("[Matching Repository Files / Modules]\n");
                 for (i, f) in files_found.iter().enumerate() {
@@ -310,7 +392,7 @@ pub(crate) async fn build_ozy_task_context(
             }
             if !syms.is_empty() {
                 body.push_str("[AST Symbols matching query]\n");
-                for (i, s) in syms.iter().enumerate() {
+                for (i, s) in syms.iter().take(10).enumerate() {
                     body.push_str(&format!(
                         "{}. {} [{}] L{}-L{} ({})\n",
                         i + 1,
@@ -456,6 +538,47 @@ pub(crate) async fn build_ozy_task_context(
             }
         }
     }
+
+    // 4. Cascade Pipeline: Blast Radius & Topological Sequence preview
+    if !files.is_empty() {
+        body.push_str("\n[CASCADE_PIPELINE: Context -> Graph -> Blast Radius -> Plan]\n");
+        let mut leaf_contracts = Vec::new();
+        let mut domain_services = Vec::new();
+        let mut entrypoints = Vec::new();
+        let mut ui_components = Vec::new();
+
+        for fp in &files {
+            let lower = fp.to_lowercase();
+            if lower.contains("schema") || lower.contains("model") || lower.contains("type") || lower.contains("util") || lower.contains("constant") {
+                leaf_contracts.push(fp.as_str());
+            } else if lower.contains("service") || lower.contains("excel") || lower.contains("calculator") || lower.contains("engine") || lower.contains("core") {
+                domain_services.push(fp.as_str());
+            } else if lower.contains("router") || lower.contains("controller") || lower.contains("api") || lower.contains("endpoint") {
+                entrypoints.push(fp.as_str());
+            } else {
+                ui_components.push(fp.as_str());
+            }
+        }
+
+        let mut step = 1;
+        if !leaf_contracts.is_empty() {
+            body.push_str(&format!("{step}. [FASE 1: Leaf Contracts & Tipos]: {}\n", leaf_contracts.join(", ")));
+            step += 1;
+        }
+        if !domain_services.is_empty() {
+            body.push_str(&format!("{step}. [FASE 2: Domain Services & Business Logic]: {}\n", domain_services.join(", ")));
+            step += 1;
+        }
+        if !entrypoints.is_empty() {
+            body.push_str(&format!("{step}. [FASE 3: Routers & API Endpoints]: {}\n", entrypoints.join(", ")));
+            step += 1;
+        }
+        if !ui_components.is_empty() {
+            body.push_str(&format!("{step}. [FASE 4: UI Components & Consumers]: {}\n", ui_components.join(", ")));
+        }
+        body.push_str("-> Recomendación: Ejecuta 'ozy_plan(goal=\"...\")' para expandir la simulación MCTS o implementa en este orden topológico estricto.\n");
+    }
+
     Ok(body)
 }
 

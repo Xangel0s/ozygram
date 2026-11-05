@@ -3168,6 +3168,67 @@ export function handleReorderCard(a: number, b: number) {
     }
 
     #[tokio::test]
+    async fn test_tools_context_multi_token_cascade_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_cascade_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(tmp_root.join("app/modules/carga_puntual")).unwrap();
+        std::fs::create_dir_all(tmp_root.join("app/utils")).unwrap();
+        std::fs::create_dir_all(tmp_root.join("src/components")).unwrap();
+
+        std::fs::write(
+            tmp_root.join("app/modules/carga_puntual/excel.py"),
+            "def generate_carga_puntual_excel():\n    pass\n"
+        ).unwrap();
+        std::fs::write(
+            tmp_root.join("app/utils/export_filename.py"),
+            "def build_formato_filename():\n    pass\n"
+        ).unwrap();
+        std::fs::write(
+            tmp_root.join("src/components/CargaPuntualModule.tsx"),
+            "export const CargaPuntualForm = () => null;\n"
+        ).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        // Call ozy_context with natural language multi-word query
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_context",
+                "arguments": {
+                    "action": "task",
+                    "query": "carga puntual exportar excel filename"
+                }
+            })),
+        };
+
+        let resp = handle_request(&backend_ref, req, None, None).await.unwrap().unwrap();
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        println!("--- CONTEXT OUTPUT ---\n{}\n----------------------", text);
+
+        assert!(text.contains("no explicit lessons found"), "Must inform that explicit lessons were not found");
+        assert!(text.contains("excel.py") || text.contains("export_filename.py"), "Must discover matching files");
+        assert!(text.contains("CASCADE_PIPELINE"), "Must generate cascade pipeline preview");
+        assert!(text.contains("FASE"), "Must provide topological phases");
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
     async fn test_tools_ast_patch_indent_alignment_mcp() {
         let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_patch_{}", std::process::id()));
