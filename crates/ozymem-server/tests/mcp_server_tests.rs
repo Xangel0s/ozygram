@@ -3220,6 +3220,14 @@ export function handleReorderCard(a: number, b: number) {
         };
         handle_request(&backend_ref, init_req, None, None).await.unwrap();
 
+        // Ensure synchronous full_scan has completed indexing before querying context
+        {
+            let guard = backend_ref.lock().unwrap();
+            if let Some(ref gb) = *guard {
+                gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
+            }
+        }
+
         // Call ozy_context with natural language multi-word query
         let req = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -5069,6 +5077,14 @@ def build_formato_filename(muestra, codigo, nombre):
             })),
         };
         handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // Ensure synchronous full_scan has completed indexing before querying context
+        {
+            let guard = backend.lock().unwrap();
+            if let Some(ref gb) = *guard {
+                gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
+            }
+        }
 
         // 5. Test multi-token fuzzy search with ozy_context task query "carga puntual excel"
         let ctx_req = mcp_common::JsonRpcRequest {

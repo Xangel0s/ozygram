@@ -579,7 +579,37 @@ pub(crate) async fn build_ozy_task_context(
         body.push_str("-> Recomendación: Ejecuta 'ozy_plan(goal=\"...\")' para expandir la simulación MCTS o implementa en este orden topológico estricto.\n");
     }
 
+    inject_dream_insights_if_available(&mut body, backend.project_path().as_deref());
+
     Ok(body)
+}
+
+pub(crate) fn inject_dream_insights_if_available(body: &mut String, root_path: Option<&str>) {
+    let root = root_path.unwrap_or(".");
+    let dream_path = std::path::Path::new(root).join(".ozymem").join("dream_latest_insights.json");
+    if dream_path.exists() {
+        if let Ok(raw) = std::fs::read_to_string(&dream_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                body.push_str("\n[OZY_DREAM_RSI: Offline Neuro-Cognitive Insights]\n");
+                if let Some(scars) = val.get("amygdala_scars").and_then(|v| v.as_array()) {
+                    let files: Vec<&str> = scars
+                        .iter()
+                        .filter_map(|s| s.get("file_path").and_then(|f| f.as_str()))
+                        .take(5)
+                        .collect();
+                    if !files.is_empty() {
+                        body.push_str(&format!("- Amygdala Threat Scars (Fragile Files): {}\n", files.join(", ")));
+                    }
+                }
+                if let Some(habits) = val.get("procedural_habits").and_then(|v| v.as_array()) {
+                    body.push_str(&format!("- Basal Ganglia Procedural Habits: {} active playbooks\n", habits.len()));
+                }
+                if let Some(summary) = val.get("summary").and_then(|v| v.as_str()) {
+                    body.push_str(&format!("- Sleep Synthesis: {}\n", summary));
+                }
+            }
+        }
+    }
 }
 
 
@@ -643,6 +673,8 @@ pub(crate) async fn build_ozy_project_context(
         gb.recent_lessons(None, limit).await?
     };
     body.push_str(&format_lessons_list(&lessons));
+
+    inject_dream_insights_if_available(&mut body, Some(&project.path));
 
     Ok(truncate_chars(body, max_tokens.saturating_mul(4)))
 }

@@ -165,7 +165,7 @@ The wizard automatically discovers and writes verified JSON-RPC configurations f
 
 ## Consolidated MCP Meta-Tools
 
-Ozygram provides **25 unified native MCP tools** (and **57 optional legacy aliases** for comprehensive backward compatibility) consolidated into **5 high-level meta-tools**, reducing prompt schema overhead by over 1,500 tokens per turn:
+Ozygram provides **26 unified native MCP tools** (and **57 optional legacy aliases** for comprehensive backward compatibility) consolidated into **5 high-level meta-tools**, reducing prompt schema overhead by over 1,500 tokens per turn:
 
 ```text
 +-------------------+---------------------------------------------------------------------------------+

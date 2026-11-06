@@ -10,7 +10,7 @@ pub fn handle_tools_list(
             let tools = vec![
                 mcp_common::ToolDefinition {
                     name: "ozy_patch",
-                    description: "[MANDATORY PRE-FLIGHT PATCHER - ALWAYS SIMULATE BEFORE EDITING] Unified code modification tool. ALWAYS run action='simulate' BEFORE modifying any file on disk to verify caller signatures, arity parity, and prevent breaking changes via volatile RAM Copy-on-Write sandbox (< 400ms). Use action='apply' for fuzzy AST block patching with auto-indentation and Tree-Sitter syntax verification. Replaces ozy_ast_patch, ozy_simulate_patch, and ozy_replace_symbol.",
+                    description: "[MANDATORY CODE MODIFICATION TOOL - ALWAYS SIMULATE BEFORE EDITING] Replaces edit_file and python update scripts. ALWAYS run action='simulate' BEFORE modifying any file on disk to verify caller signatures, arity parity, and prevent breaking changes via volatile RAM Copy-on-Write sandbox (< 400ms). Only after receiving APPROVED status, run action='apply' for fuzzy AST block patching with auto-indentation and Tree-Sitter syntax verification. Replaces ozy_ast_patch, ozy_simulate_patch, and ozy_replace_symbol.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -37,7 +37,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_plan",
-                    description: "[PRIMARY ARCHITECTURAL PLANNER] Native Rust Active Inference EFE-MCTS planner: generates topological edit sequences, blast radius analysis, and Hippocampal Theta-Gamma working memory packing. ALWAYS invoke this before starting multi-file, cross-service, or full-stack refactoring tasks. Replaces ozy_brain(action='plan').",
+                    description: "[MANDATORY STEP 1 FOR ANY PLAN, AUDIT, NEW MODULE, OR REFACTORING] DO NOT write manual plans in markdown. ALWAYS invoke this tool on Turn 1 when asked to plan, audit, design, or implement any feature or module. Native Rust Active Inference EFE-MCTS planner: generates topological edit sequences in strict dependency order, reverse blast radius analysis, and caller arity verification in < 1 second. Replaces ozy_brain(action='plan').",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -57,7 +57,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_context",
-                    description: "[PRIMARY CODE EXPLORATION TOOL - INVOKE BEFORE read_file OR grep] Unified context engine: retrieves AST contracts, function signatures, dependency cones, and [ALERT: GOTCHA_PREVENTION] warnings in < 1ms without token bloat. Actions: 'task' (finds relevant files/symbols by task description in 1 turn), 'file' (extracts AST contracts with lod='contracts'), 'project' (dependency topology). Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
+                    description: "[MANDATORY PRIMARY CODE EXPLORATION & SEARCH TOOL] REPLACES raw read_file, grep, and terminal findstr/Get-ChildItem. Retrieves AST contracts, function signatures, dependency cones, Gotcha prevention alerts, and Ozydream offline insights in < 1ms without token bloat. Actions: 'task' (intelligent multi-token search finding files and symbols in 1 step), 'file' (extracts AST skeleton with lod='contracts'), 'project' (architecture topology and offline dream insights). Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -157,7 +157,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_doctor",
-                    description: "[SYSTEM & CODE HEALTH DOCTOR] Diagnostics and architectural smell analysis: action='status' (DB, WAL, watchers), action='code' (duplicate detection and static analysis), action='audit_migrations' (SQL migration idempotency linter), action='templates' (OpenXML .xlsx template corruption and undeclared namespace linter), action='excel_data' (Deep Excel data inspector: cell anomalies, unformatted float times e.g. 0.416666 exceeding VARCHAR(10), formula errors, string length overflows, and tabular row preview in <50ms without python scripts).",
+                    description: "[MANDATORY EXCEL INSPECTOR & CODE HEALTH DOCTOR] REPLACES python openpyxl and shell commands for Excel. ALWAYS invoke with action='excel_data' for ANY .xlsx / .xls file to inspect sheets, dimensions, headers, data anomalies (unformatted float timestamps e.g. 0.208333 exceeding VARCHAR(10)), and row preview in < 50ms. Also includes: action='templates' (OpenXML template corruption & undeclared mc:Ignorable namespaces), action='audit_migrations' (SQL migration idempotency linter), action='code' (AST duplicate detection and code smells), action='status' (DB, WAL, watchers health).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -165,7 +165,7 @@ pub fn handle_tools_list(
                                 "type": "string",
                                 "enum": ["status", "audit_migrations", "code", "templates", "excel_data"],
                                 "default": "status",
-                                "description": "Acción a ejecutar:\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)\n- 'templates': linter de plantillas OpenXML (.xlsx) para detectar corrupción de namespaces XML, prefijos no declarados en mc:Ignorable y archivos dañados sin scripts en Python\n- 'excel_data': inspector de datos Excel (.xlsx) para diagnosticar celdas anómalas, horas flotantes no formateadas (0.416666), longitudes de texto que rompen columnas de BD y errores de fórmula al instante sin Python"
+                                "description": "Acción a ejecutar:\n- 'excel_data': inspector de datos Excel (.xlsx/.xls) para diagnosticar celdas anómalas, horas flotantes no formateadas (0.416666), longitudes de texto que rompen columnas de BD y errores de fórmula al instante sin Python (REGLA MANDATORIA)\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)\n- 'templates': linter de plantillas OpenXML (.xlsx) para detectar corrupción de namespaces XML y prefijos no declarados en mc:Ignorable"
                             },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
                             "include_projects": { "type": "boolean", "default": true },
@@ -176,6 +176,23 @@ pub fn handle_tools_list(
                             "max_findings": { "type": "integer", "default": 20, "description": "Max findings to return for action='code'" },
                             "max_rows": { "type": "integer", "default": 10, "description": "Max sample rows to preview for action='excel_data'" },
                             "max_text_len": { "type": "integer", "default": 50, "description": "Length threshold to flag long strings for action='excel_data'" }
+                        },
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_dream",
+                    description: "[OFFLINE NEURO-COGNITIVE DREAM INSIGHTS & DREAMER RSI] Inspects consolidated background dream cycles: Amygdala threat scars (fragile files), Basal Ganglia procedural habits, STDP synaptic plasticity weights, and offline vaccines. Actions: 'insights' (read latest dream insights from .ozymem/dream_latest_insights.json), 'status' (check idle watcher and dream cycle state), 'run' (trigger one-shot offline dream consolidation immediately).",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["insights", "status", "run"],
+                                "default": "insights",
+                                "description": "Acción a ejecutar: 'insights' (leer reporte de sueño más reciente), 'status' (ver estado del watcher de inactividad de 30min), 'run' (ejecutar ciclo de sueño y consolidación en segundo plano ahora)"
+                            },
+                            "project_path": { "type": "string", "description": "Ruta opcional del proyecto" }
                         },
                         "additionalProperties": false
                     }),

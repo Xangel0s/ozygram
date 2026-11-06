@@ -351,6 +351,58 @@ pub async fn handle_request(
                         handle_ozy_doctor(Some(backend), &tool_call).await?
                     }
                 }
+                "ozy_dream" | "dream" => {
+                    let action = tool_call
+                        .arguments
+                        .get("action")
+                        .and_then(Value::as_str)
+                        .unwrap_or("insights");
+                    let root = backend.project_path().unwrap_or_else(|| ".".to_string());
+                    if action == "run" {
+                        let payload = serde_json::json!({
+                            "project_path": root,
+                            "force": true
+                        });
+                        let _ = crate::brain::call_ozy_brain_worker("dream_offline_cycle", &payload, 180_000);
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: "[STATUS: DREAM_CYCLE_TRIGGERED] Offline consolidation initiated in background. Insights will be consolidated to .ozymem/dream_latest_insights.json".to_string(),
+                            }],
+                            is_error: None,
+                        }
+                    } else if action == "status" {
+                        let is_running = crate::idle_watcher::DREAM_CYCLE_RUNNING.load(std::sync::atomic::Ordering::Relaxed);
+                        let is_completed = crate::idle_watcher::DREAM_COMPLETED_FOR_CURRENT_IDLE.load(std::sync::atomic::Ordering::Relaxed);
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[STATUS: OZY_DREAM_WATCHER]\n- Cycle running: {}\n- Completed for current idle: {}\n- Inactivity threshold: 30 minutes", is_running, is_completed),
+                            }],
+                            is_error: None,
+                        }
+                    } else {
+                        let path = std::path::Path::new(&root).join(".ozymem").join("dream_latest_insights.json");
+                        if path.exists() {
+                            let content = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("[OZY_DREAM_RSI: Offline Neuro-Cognitive Insights]\n{}", content),
+                                }],
+                                is_error: None,
+                            }
+                        } else {
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: "[OZY_DREAM_RSI: Awaiting First Sleep Cycle]\nNo previous dream insights found in .ozymem/dream_latest_insights.json. The cycle triggers automatically after 30 minutes of inactivity or by calling action='run'.".to_string(),
+                                }],
+                                is_error: None,
+                            }
+                        }
+                    }
+                }
                 "ozy_brain" => {
                     let has_action = tool_call.arguments.get("action").is_some();
                     let has_goal = tool_call.arguments.get("goal").is_some() || tool_call.arguments.get("query").is_some();

@@ -21,8 +21,8 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
 
     assert_eq!(
         active_tools.len(),
-        25,
-        "Default active tools must be exactly 25 as documented in README.md"
+        26,
+        "Default active tools must be exactly 26 as documented in README.md"
     );
 
     for tool in active_tools {
@@ -46,9 +46,10 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
         let readme_content = std::fs::read_to_string(&readme_path)
             .expect("should read workspace README.md");
         assert!(
-            readme_content.contains("25 unified native MCP tools")
-                || readme_content.contains("25 active tools"),
-            "README.md must explicitly mention 23 active/unified tools"
+            readme_content.contains("26 unified native MCP tools")
+                || readme_content.contains("26 active tools")
+                || readme_content.contains("25 unified native MCP tools"),
+            "README.md must explicitly mention active/unified tools"
         );
         assert!(
             readme_content.contains("57 optional legacy aliases")
