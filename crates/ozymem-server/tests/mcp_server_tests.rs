@@ -3224,6 +3224,19 @@ export function handleReorderCard(a: number, b: number) {
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
 
+        // Populate isolated hermetic mock workspaces for CI runners
+        let be_dir = tmp_root.join("api-geofal-crm").join("app").join("modules").join("ge_fino");
+        let fe_dir = tmp_root.join("crm-geofal").join("src").join("components").join("dashboard").join("ge-fino");
+        let fe_mod = tmp_root.join("crm-geofal").join("src").join("components").join("dashboard");
+        std::fs::create_dir_all(&be_dir).unwrap();
+        std::fs::create_dir_all(&fe_dir).unwrap();
+        std::fs::write(be_dir.join("models.py"), "# ge_fino models\nclass GeFino:\n    pass\n").unwrap();
+        std::fs::write(be_dir.join("schemas.py"), "# ge_fino schemas\nclass GeFinoSchema:\n    pass\n").unwrap();
+        std::fs::write(be_dir.join("excel.py"), "# ge_fino excel\ndef generate_ge_fino_excel():\n    pass\n").unwrap();
+        std::fs::write(be_dir.join("router.py"), "# ge_fino router\nrouter = APIRouter()\n").unwrap();
+        std::fs::write(fe_dir.join("GeFinoForm.tsx"), "// GeFinoForm\nexport default function GeFinoForm() { return null; }\n").unwrap();
+        std::fs::write(fe_mod.join("ge-fino-module.tsx"), "// ge-fino-module\nexport function GeFinoModule() { return null; }\n").unwrap();
+
         let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
         let init_req = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
