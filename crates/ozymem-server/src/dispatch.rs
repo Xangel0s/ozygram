@@ -347,6 +347,62 @@ pub async fn handle_request(
                             }],
                             is_error: None,
                         }
+                    } else if action == "scaffold_lab" || action == "scaffold_module" {
+                        let source_module = tool_call
+                            .arguments
+                            .get("source_module")
+                            .and_then(Value::as_str)
+                            .unwrap_or("carga_puntual");
+                        let target_module = tool_call
+                            .arguments
+                            .get("target_module")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| anyhow::anyhow!("target_module is required for action='scaffold_lab'"))?;
+                        let module_code = tool_call
+                            .arguments
+                            .get("module_code")
+                            .and_then(Value::as_str);
+                        let module_title = tool_call
+                            .arguments
+                            .get("module_title")
+                            .and_then(Value::as_str);
+                        let dry_run = tool_call
+                            .arguments
+                            .get("dry_run")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let force = tool_call
+                            .arguments
+                            .get("force")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let report = crate::scaffold::handle_scaffold_lab(
+                            Some(backend),
+                            source_module,
+                            target_module,
+                            module_code,
+                            module_title,
+                            dry_run,
+                            force,
+                        )?;
+                        ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: report,
+                            }],
+                            is_error: None,
+                        }
+                    } else if action == "syntax" || action == "syntax_check" {
+                        match crate::symbols::handle_diagnostics_quick(backend, &tool_call) {
+                            Ok(res) => res,
+                            Err(e) => ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("[ALERT: ERROR] {e}"),
+                                }],
+                                is_error: Some(true),
+                            },
+                        }
                     } else {
                         handle_ozy_doctor(Some(backend), &tool_call).await?
                     }

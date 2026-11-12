@@ -589,6 +589,134 @@ fn decode_xml_entities(s: &str) -> String {
         .replace("&apos;", "'")
 }
 
+fn col_to_letter(mut col: usize) -> String {
+    let mut s = String::new();
+    loop {
+        let rem = col % 26;
+        s.push((b'A' + rem as u8) as char);
+        if col < 26 {
+            break;
+        }
+        col = (col / 26) - 1;
+    }
+    s.chars().rev().collect()
+}
+
+fn anchor_coord_to_cell(col: usize, row: usize) -> String {
+    format!("{}{}", col_to_letter(col), row + 1)
+}
+
+fn extract_xml_tag_number(xml: &str, tag_suffix: &str) -> Option<usize> {
+    let mut pos = 0;
+    while let Some(open_idx) = xml[pos..].find('<') {
+        let abs_open = pos + open_idx;
+        let Some(close_idx) = xml[abs_open..].find('>') else { break };
+        let tag_name = &xml[abs_open + 1..abs_open + close_idx];
+        let base_tag = tag_name.split_whitespace().next().unwrap_or(tag_name);
+        if base_tag == tag_suffix || base_tag.ends_with(&format!(":{}", tag_suffix)) {
+            let content_start = abs_open + close_idx + 1;
+            if let Some(end_tag_idx) = xml[content_start..].find("</") {
+                let inner = &xml[content_start..content_start + end_tag_idx];
+                if let Ok(num) = inner.trim().parse::<usize>() {
+                    return Some(num);
+                }
+            }
+        }
+        pos = abs_open + close_idx + 1;
+    }
+    None
+}
+
+fn extract_sub_block<'a>(xml: &'a str, tag_suffix: &str) -> Option<&'a str> {
+    let mut pos = 0;
+    while let Some(open_idx) = xml[pos..].find('<') {
+        let abs_open = pos + open_idx;
+        let Some(close_idx) = xml[abs_open..].find('>') else { break };
+        let tag_header = &xml[abs_open + 1..abs_open + close_idx];
+        let tag_name = tag_header.split_whitespace().next().unwrap_or(tag_header);
+        let base = tag_name.split(':').last().unwrap_or(tag_name);
+        if base == tag_suffix && !tag_header.ends_with('/') {
+            let close_tag_1 = format!("</{}", tag_name);
+            let close_tag_2 = format!("</{}", base);
+            if let Some(end_idx) = xml[abs_open..].find(&close_tag_1).or_else(|| xml[abs_open..].find(&close_tag_2)) {
+                return Some(&xml[abs_open..abs_open + end_idx]);
+            }
+        }
+        pos = abs_open + close_idx + 1;
+    }
+    None
+}
+
+fn extract_all_text_runs(xml: &str) -> Vec<String> {
+    let mut runs = Vec::new();
+    let mut pos = 0;
+    while let Some(open_idx) = xml[pos..].find('<') {
+        let abs_open = pos + open_idx;
+        let Some(close_idx) = xml[abs_open..].find('>') else { break };
+        let tag_header = &xml[abs_open + 1..abs_open + close_idx];
+        let is_t_tag = tag_header == "t"
+            || tag_header.starts_with("t ")
+            || tag_header.ends_with(":t")
+            || tag_header.contains(":t ");
+        if is_t_tag && !tag_header.ends_with('/') {
+            let content_start = abs_open + close_idx + 1;
+            if let Some(end_idx) = xml[content_start..].find("</") {
+                let inner = &xml[content_start..content_start + end_idx];
+                let decoded = decode_xml_entities(inner.trim());
+                if !decoded.is_empty() {
+                    runs.push(decoded);
+                }
+                pos = content_start + end_idx;
+                continue;
+            }
+        }
+        pos = abs_open + close_idx + 1;
+    }
+    runs
+}
+
+#[derive(Debug, Clone)]
+struct RawAnchor {
+    anchor_type: String,
+    xml_block: String,
+}
+
+fn split_anchors(xml: &str) -> Vec<RawAnchor> {
+    let mut anchors = Vec::new();
+    let mut pos = 0;
+    while let Some(open_idx) = xml[pos..].find('<') {
+        let abs_open = pos + open_idx;
+        let Some(close_idx) = xml[abs_open..].find('>') else { break };
+        let tag_full = &xml[abs_open + 1..abs_open + close_idx];
+        let tag_name = tag_full.split_whitespace().next().unwrap_or(tag_full);
+        let base_tag = tag_name.split(':').last().unwrap_or(tag_name);
+
+        if matches!(base_tag, "twoCellAnchor" | "oneCellAnchor" | "absoluteAnchor") {
+            let closing_tag = format!("</{}", tag_name);
+            let closing_tag_alt = format!("</{}", base_tag);
+            let end_idx = xml[abs_open..]
+                .find(&closing_tag)
+                .or_else(|| xml[abs_open..].find(&closing_tag_alt));
+
+            if let Some(e) = end_idx {
+                let actual_end = xml[abs_open + e..]
+                    .find('>')
+                    .map(|gt| abs_open + e + gt + 1)
+                    .unwrap_or(abs_open + e + closing_tag.len());
+                let block = &xml[abs_open..actual_end];
+                anchors.push(RawAnchor {
+                    anchor_type: base_tag.to_string(),
+                    xml_block: block.to_string(),
+                });
+                pos = actual_end;
+                continue;
+            }
+        }
+        pos = abs_open + close_idx + 1;
+    }
+    anchors
+}
+
 /// Inspects an Excel (.xlsx) data file for cell anomalies: unformatted float times,
 /// string length overflows, formula errors, and provides a structured preview of worksheets.
 pub(crate) async fn inspect_excel_data(
@@ -709,12 +837,13 @@ pub(crate) async fn inspect_excel_data(
 
     // 3. Collect sheet entry names
     let sheet_entries: Vec<String> = all_names
-        .into_iter()
+        .iter()
         .filter(|n| {
             (n.starts_with("xl/worksheets/sheet") || n.starts_with("sheet") || n.contains("/sheet"))
                 && n.ends_with(".xml")
                 && !n.ends_with(".rels")
         })
+        .cloned()
         .collect();
 
     let mut body = format!(
@@ -1018,6 +1147,203 @@ pub(crate) async fn inspect_excel_data(
                 body.push('\n');
             }
             body.push('\n');
+        }
+    }
+
+    // 4. Extract Drawing Anchors & TextBoxes from xl/drawings/drawing*.xml
+    let drawing_entries: Vec<String> = all_names
+        .iter()
+        .filter(|n| {
+            (n.starts_with("xl/drawings/drawing") || n.starts_with("drawings/drawing"))
+                && n.ends_with(".xml")
+                && !n.ends_with(".rels")
+        })
+        .cloned()
+        .collect();
+
+    if !drawing_entries.is_empty() {
+        // Build mapping of drawing entry to worksheet display name
+        let mut drawing_to_sheet: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for entry_name in &all_names {
+            if entry_name.starts_with("xl/worksheets/_rels/") && entry_name.ends_with(".rels") {
+                let sheet_file = entry_name
+                    .trim_start_matches("xl/worksheets/_rels/")
+                    .trim_end_matches(".rels");
+                let sheet_key = format!("xl/worksheets/{}", sheet_file);
+                let sheet_display = sheet_names
+                    .get(&sheet_key)
+                    .or_else(|| sheet_names.get(sheet_file))
+                    .cloned()
+                    .unwrap_or_else(|| sheet_file.to_string());
+
+                if let Ok(mut rel_entry) = archive.by_name(entry_name) {
+                    let mut rel_xml = String::new();
+                    if rel_entry.read_to_string(&mut rel_xml).is_ok() {
+                        let rel_re = Regex::new(r#"<Relationship\s+[^>]*Type="[^"]*relationships/drawing"[^>]*Target="([^"]+)""#);
+                        if let Ok(re) = rel_re {
+                            for cap in re.captures_iter(&rel_xml) {
+                                if let Some(target) = cap.get(1) {
+                                    let t = target.as_str().trim_start_matches("../").trim_start_matches('/');
+                                    let norm_target = if t.starts_with("drawings/") {
+                                        format!("xl/{}", t)
+                                    } else {
+                                        t.to_string()
+                                    };
+                                    drawing_to_sheet.insert(norm_target, format!("`{}` (`{}`)", sheet_display, sheet_file));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        body.push_str("## Drawing Anchors & TextBoxes (OpenXML Drawings)\n\n");
+
+        for drawing_entry in &drawing_entries {
+            let mut draw_content = String::new();
+            if let Ok(mut entry) = archive.by_name(drawing_entry) {
+                let _ = entry.read_to_string(&mut draw_content);
+            }
+
+            let mapped_sheet = drawing_to_sheet
+                .get(drawing_entry)
+                .cloned()
+                .unwrap_or_else(|| "Unknown Worksheet".to_string());
+
+            let raw_anchors = split_anchors(&draw_content);
+
+            let mut total_shapes = 0usize;
+            let mut total_pics = 0usize;
+            let mut empty_input_boxes = 0usize;
+
+            struct FormattedAnchor {
+                index: usize,
+                anchor_type: String,
+                shape_name: String,
+                shape_id: String,
+                kind: String,
+                cell_range: String,
+                content_desc: String,
+            }
+
+            let mut formatted_anchors: Vec<FormattedAnchor> = Vec::new();
+
+            for (idx, raw) in raw_anchors.iter().enumerate() {
+                // Parse from
+                let from_cell = if let Some(from_block) = extract_sub_block(&raw.xml_block, "from") {
+                    let col = extract_xml_tag_number(from_block, "col").unwrap_or(0);
+                    let row = extract_xml_tag_number(from_block, "row").unwrap_or(0);
+                    anchor_coord_to_cell(col, row)
+                } else {
+                    "N/A".to_string()
+                };
+
+                // Parse to
+                let to_cell = if let Some(to_block) = extract_sub_block(&raw.xml_block, "to") {
+                    let col = extract_xml_tag_number(to_block, "col").unwrap_or(0);
+                    let row = extract_xml_tag_number(to_block, "row").unwrap_or(0);
+                    Some(anchor_coord_to_cell(col, row))
+                } else {
+                    None
+                };
+
+                let cell_range = match to_cell {
+                    Some(to) => format!("{} - {}", from_cell, to),
+                    None => from_cell,
+                };
+
+                // Parse shape kind
+                let kind = if raw.xml_block.contains(":sp ") || raw.xml_block.contains("<sp ") || raw.xml_block.contains(":sp>") || raw.xml_block.contains("<sp>") {
+                    total_shapes += 1;
+                    "Shape"
+                } else if raw.xml_block.contains(":pic ") || raw.xml_block.contains("<pic ") || raw.xml_block.contains(":pic>") || raw.xml_block.contains("<pic>") {
+                    total_pics += 1;
+                    "Picture"
+                } else if raw.xml_block.contains(":graphicFrame") || raw.xml_block.contains("<graphicFrame") {
+                    "GraphicFrame"
+                } else if raw.xml_block.contains(":grpSp") || raw.xml_block.contains("<grpSp") {
+                    "GroupShape"
+                } else {
+                    "Object"
+                };
+
+                // Parse cNvPr
+                let (shape_id, shape_name) = if let Some(c_nv_idx) = raw.xml_block.find("cNvPr") {
+                    let tag_start = raw.xml_block[..c_nv_idx].rfind('<').unwrap_or(c_nv_idx);
+                    let tag_end = raw.xml_block[c_nv_idx..].find('>').map(|gt| c_nv_idx + gt + 1).unwrap_or(raw.xml_block.len());
+                    let tag_str = &raw.xml_block[tag_start..tag_end];
+                    let id = extract_attr(tag_str, "id").unwrap_or("").to_string();
+                    let name = extract_attr(tag_str, "name").unwrap_or("").to_string();
+                    (id, name)
+                } else {
+                    ("".to_string(), "".to_string())
+                };
+
+                // Parse text
+                let text_runs = extract_all_text_runs(&raw.xml_block);
+                let full_text = text_runs.join(" ");
+
+                let content_desc = if kind == "Picture" {
+                    "[IMAGE / PICTURE]".to_string()
+                } else if full_text.trim().is_empty() {
+                    if kind == "Shape" {
+                        empty_input_boxes += 1;
+                        "[EMPTY / INPUT BOX]".to_string()
+                    } else {
+                        "[NO_TEXT]".to_string()
+                    }
+                } else {
+                    let preview = if full_text.len() > 65 {
+                        format!("{}...", &full_text[..62])
+                    } else {
+                        full_text
+                    };
+                    format!("\"{}\"", preview.replace('|', "\\|"))
+                };
+
+                formatted_anchors.push(FormattedAnchor {
+                    index: idx,
+                    anchor_type: raw.anchor_type.clone(),
+                    shape_name,
+                    shape_id,
+                    kind: kind.to_string(),
+                    cell_range,
+                    content_desc,
+                });
+            }
+
+            body.push_str(&format!(
+                "### Drawing: `{}`\n- Hoja Vinculada: {}\n- Total de Anchors: {} (Shapes: {}, Pictures: {}, Cuadros Vacíos/Entrada: {})\n\n",
+                drawing_entry,
+                mapped_sheet,
+                raw_anchors.len(),
+                total_shapes,
+                total_pics,
+                empty_input_boxes
+            ));
+
+            if !formatted_anchors.is_empty() {
+                body.push_str("| Anchor # | Nombre de Forma (ID) | Tipo | Rango de Celdas (From - To) | Contenido / Propósito |\n");
+                body.push_str("| --- | --- | --- | --- | --- |\n");
+                for a in &formatted_anchors {
+                    let name_disp = if !a.shape_id.is_empty() {
+                        format!("{} (id: {})", a.shape_name, a.shape_id)
+                    } else {
+                        a.shape_name.clone()
+                    };
+                    body.push_str(&format!(
+                        "| #{} | {} | {} ({}) | {} | {} |\n",
+                        a.index,
+                        name_disp.replace('|', "\\|"),
+                        a.kind,
+                        a.anchor_type,
+                        a.cell_range,
+                        a.content_desc
+                    ));
+                }
+                body.push('\n');
+            }
         }
     }
 

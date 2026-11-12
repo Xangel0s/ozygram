@@ -3109,6 +3109,77 @@ export function handleReorderCard(a: number, b: number) {
     </sheetData>
 </worksheet>"#).unwrap();
 
+        zip.start_file("xl/worksheets/_rels/sheet1.xml.rels", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>
+</Relationships>"#).unwrap();
+
+        zip.start_file("xl/drawings/drawing1.xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+    <xdr:twoCellAnchor editAs="oneCell">
+        <xdr:from>
+            <xdr:col>5</xdr:col>
+            <xdr:colOff>0</xdr:colOff>
+            <xdr:row>12</xdr:row>
+            <xdr:rowOff>0</xdr:rowOff>
+        </xdr:from>
+        <xdr:to>
+            <xdr:col>7</xdr:col>
+            <xdr:colOff>0</xdr:colOff>
+            <xdr:row>14</xdr:row>
+            <xdr:rowOff>0</xdr:rowOff>
+        </xdr:to>
+        <xdr:sp macro="" textlink="">
+            <xdr:nvSpPr>
+                <xdr:cNvPr id="2" name="TextBox 1"/>
+                <xdr:cNvSpPr/>
+            </xdr:nvSpPr>
+            <xdr:spPr/>
+            <xdr:txBody>
+                <a:bodyPr/>
+                <a:p>
+                    <a:r>
+                        <a:t>LABORATORIO DE ENSAYO</a:t>
+                    </a:r>
+                </a:p>
+            </xdr:txBody>
+        </xdr:sp>
+        <xdr:clientData/>
+    </xdr:twoCellAnchor>
+    <xdr:twoCellAnchor editAs="oneCell">
+        <xdr:from>
+            <xdr:col>2</xdr:col>
+            <xdr:colOff>0</xdr:colOff>
+            <xdr:row>40</xdr:row>
+            <xdr:rowOff>0</xdr:rowOff>
+        </xdr:from>
+        <xdr:to>
+            <xdr:col>9</xdr:col>
+            <xdr:colOff>0</xdr:colOff>
+            <xdr:row>44</xdr:row>
+            <xdr:rowOff>0</xdr:rowOff>
+        </xdr:to>
+        <xdr:sp macro="" textlink="">
+            <xdr:nvSpPr>
+                <xdr:cNvPr id="7" name="Rectangle 5"/>
+                <xdr:cNvSpPr/>
+            </xdr:nvSpPr>
+            <xdr:spPr/>
+            <xdr:txBody>
+                <a:bodyPr/>
+                <a:p>
+                    <a:r>
+                        <a:t></a:t>
+                    </a:r>
+                </a:p>
+            </xdr:txBody>
+        </xdr:sp>
+        <xdr:clientData/>
+    </xdr:twoCellAnchor>
+</xdr:wsDr>"#).unwrap();
+
         zip.finish().unwrap();
 
         // Call ozy_doctor with action="excel_data"
@@ -3133,6 +3204,63 @@ export function handleReorderCard(a: number, b: number) {
         assert!(text.contains("10:00:00"), "Must calculate equivalent time 10:00:00");
         assert!(text.contains("FORMULA_ERROR"), "Must flag formula error in B30");
         assert!(text.contains("ANOMALIES_FOUND"), "Summary must report anomalies");
+
+        // Verify DrawingML extraction
+        assert!(text.contains("Drawing Anchors & TextBoxes"), "Must contain drawing anchors section");
+        assert!(text.contains("TextBox 1 (id: 2)"), "Must list TextBox 1 with id 2");
+        assert!(text.contains("F13 - H15"), "Must translate from/to coords to F13 - H15");
+        assert!(text.contains("LABORATORIO DE ENSAYO"), "Must extract text from run");
+        assert!(text.contains("Rectangle 5 (id: 7)"), "Must list Rectangle 5 with id 7");
+        assert!(text.contains("C41 - J45"), "Must translate from/to coords to C41 - J45");
+        assert!(text.contains("[EMPTY / INPUT BOX]"), "Must identify empty input box");
+
+        std::fs::remove_dir_all(&tmp_root).ok();
+    }
+
+    #[tokio::test]
+    async fn test_tools_doctor_scaffold_lab_mcp() {
+        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_scaffold_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "rootUri": uri,
+                "capabilities": {}
+            })),
+        };
+        handle_request(&backend_ref, init_req, None, None).await.unwrap();
+
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(11)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "scaffold_lab",
+                    "source_module": "ge_fino",
+                    "target_module": "ge_solidos_test",
+                    "module_code": "SU32",
+                    "module_title": "Gravedad Específica de Sólidos",
+                    "dry_run": true
+                }
+            })),
+        };
+
+        let resp = handle_request(&backend_ref, req, None, None).await.unwrap().unwrap();
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(text.contains("Lab Module Scaffolding Preview"), "Must contain preview header: {}", text);
+        assert!(text.contains("ge_solidos_test"), "Must mention target module");
+        assert!(text.contains("SU32"), "Must mention test code SU32");
+        assert!(text.contains("api-geofal-crm/app/modules/ge_solidos_test"), "Must preview backend module path");
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }

@@ -157,21 +157,28 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_doctor",
-                    description: "[MANDATORY EXCEL INSPECTOR & CODE HEALTH DOCTOR] REPLACES python openpyxl and shell commands for Excel. ALWAYS invoke with action='excel_data' for ANY .xlsx / .xls file to inspect sheets, dimensions, headers, data anomalies (unformatted float timestamps e.g. 0.208333 exceeding VARCHAR(10)), and row preview in < 50ms. Also includes: action='templates' (OpenXML template corruption & undeclared mc:Ignorable namespaces), action='audit_migrations' (SQL migration idempotency linter), action='code' (AST duplicate detection and code smells), action='status' (DB, WAL, watchers health).",
+                    description: "[MANDATORY EXCEL INSPECTOR, CODE HEALTH & LAB SCAFFOLDER] REPLACES python openpyxl and shell commands for Excel. ALWAYS invoke with action='excel_data' for ANY .xlsx / .xls file to inspect sheets, dimensions, headers, data anomalies, and drawing anchors/textboxes (drawing1.xml) in < 50ms. Also includes: action='scaffold_lab' (rapid lab module archetype cloner), action='syntax' (sub-5ms Tree-Sitter AST syntax check), action='templates' (OpenXML template corruption & undeclared mc:Ignorable namespaces), action='audit_migrations' (SQL migration idempotency linter), action='code' (AST duplicate detection and code smells), action='status' (DB, WAL, watchers health).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["status", "audit_migrations", "code", "templates", "excel_data"],
+                                "enum": ["status", "audit_migrations", "code", "templates", "excel_data", "scaffold_lab", "syntax"],
                                 "default": "status",
-                                "description": "Acción a ejecutar:\n- 'excel_data': inspector de datos Excel (.xlsx/.xls) para diagnosticar celdas anómalas, horas flotantes no formateadas (0.416666), longitudes de texto que rompen columnas de BD y errores de fórmula al instante sin Python (REGLA MANDATORIA)\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells; unifica ozy_code_doctor)\n- 'templates': linter de plantillas OpenXML (.xlsx) para detectar corrupción de namespaces XML y prefijos no declarados en mc:Ignorable"
+                                "description": "Acción a ejecutar:\n- 'excel_data': inspector de datos Excel (.xlsx/.xls) y anclas de dibujos (drawing1.xml) para diagnosticar celdas anómalas, cuadros de texto flotantes, horas flotantes no formateadas y errores de fórmula al instante (REGLA MANDATORIA)\n- 'scaffold_lab': clonador rápido de arquetipos de módulos de laboratorio (backend FastAPI + frontend React 19 + test) para generar boilerplate completo en < 50ms\n- 'syntax': validación sintáctica ultrarrápida (< 5ms) con Tree-Sitter antes de correr type-checkers pesados\n- 'status': salud de SQLite DB, índices, outbox y watchers\n- 'audit_migrations': linter de idempotencia en archivos .sql\n- 'code': análisis de código estático (duplicaciones y smells)\n- 'templates': linter de plantillas OpenXML (.xlsx) para detectar corrupción de namespaces XML y prefijos no declarados en mc:Ignorable"
                             },
                             "format": { "type": "string", "enum": ["text", "json"], "default": "text" },
                             "include_projects": { "type": "boolean", "default": true },
                             "migrations_path": { "type": "string", "description": "Optional directory to scan for .sql files for action='audit_migrations' (default: project root)" },
                             "path": { "type": "string", "description": "Optional file or directory path (.xlsx for templates/excel_data, or directory for scan)" },
+                            "file_path": { "type": "string", "description": "Alias of path or file to check syntax for action='syntax'" },
                             "scope": { "type": "string", "description": "Optional file or directory scope for action='code'" },
+                            "source_module": { "type": "string", "description": "Brother lab module to clone from (e.g. 'carga_puntual', 'ge_fino', 'ge_solidos') for action='scaffold_lab'" },
+                            "target_module": { "type": "string", "description": "New lab module name to create (e.g. 'ge_solidos', 'corte_directo') for action='scaffold_lab'" },
+                            "module_code": { "type": "string", "description": "Optional lab test code (e.g. 'SU32', 'AG32') for action='scaffold_lab'" },
+                            "module_title": { "type": "string", "description": "Optional lab test title (e.g. 'Gravedad Específica de Sólidos ASTM D854') for action='scaffold_lab'" },
+                            "dry_run": { "type": "boolean", "default": false, "description": "Preview files without writing to disk for action='scaffold_lab'" },
+                            "force": { "type": "boolean", "default": false, "description": "Overwrite existing files if already present for action='scaffold_lab'" },
                             "min_duplicate_lines": { "type": "integer", "default": 6, "description": "Min duplicate lines threshold for action='code'" },
                             "max_findings": { "type": "integer", "default": 20, "description": "Max findings to return for action='code'" },
                             "max_rows": { "type": "integer", "default": 10, "description": "Max sample rows to preview for action='excel_data'" },

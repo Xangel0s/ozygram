@@ -16,8 +16,19 @@ Contains core system modules, memory engines, and CRM integrations:
 >    - ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo, `grep` recursivo, comandos de terminal (`Select-String`, `dir`) o scripts ad-hoc de Python (`python -c "..."`, `python scratch/*.py`) para buscar o leer líneas de código.
 >    - **Inspección de Archivos y Plantillas Excel (.xlsx / .xls)**:
 >      - ESTÁ TERMINANTEMENTE PROHIBIDO escribir scripts de Python con `openpyxl`, `pandas` o similares (`python -c "import openpyxl..."`) para inspeccionar hojas, dimensiones, headers, columnas o filas de Excel.
->      - Es OBLIGATORIO ejecutar directamente `ozy_doctor(action="excel_data", file_path="...")`. En < 50 ms extrae automáticamente todas las hojas, dimensiones, fila de encabezados, muestreo de datos y detecta anomalías de tipo/longitud.
+>      - Es OBLIGATORIO ejecutar directamente `ozy_doctor(action="excel_data", file_path="...")`. En < 50 ms extrae automáticamente todas las hojas, dimensiones, fila de encabezados, muestreo de datos, anomalías de tipo/longitud y **todas las anclas de dibujo y cuadros de texto (`xl/drawings/drawing*.xml`)**, reportando coordenadas traducidas (`C41 - J45`), nombres de forma, textos de runs y cuadros de entrada vacíos (`[EMPTY / INPUT BOX]`).
 >      - Para auditar reportes dañados o corrupción OpenXML (HRESULT 0x808c0002): ejecutar `ozy_doctor(action="templates")` para auditar la integridad OpenXML y namespaces de `mc:Ignorable`.
+>    - **Scaffolding Rápido de Módulos de Laboratorio (Lab Archetype Cloner)**:
+>      - ESTÁ TERMINANTEMENTE PROHIBIDO escribir módulos de laboratorio desde cero (+1,500 líneas a mano).
+>      - Es OBLIGATORIO usar `ozy_doctor(action="scaffold_lab", source_module="<hermano>", target_module="<nuevo>", module_code="<SUxx>", module_title="<titulo>")`. Clona en < 50 ms el arquetipo completo de backend FastAPI (`models.py`, `schemas.py`, `excel.py`, `router.py`), frontend React 19 (`<Module>Form.tsx`, `<module>-module.tsx`) y test de auditoría (`test_audit_<module>.py`).
+>    - **Diagnósticos Sintácticos Ultrarrápidos (< 5ms)**:
+>      - ESTÁ TERMINANTEMENTE PROHIBIDO ejecutar `npm run type-check` de forma repetitiva durante el desarrollo en bucles de prueba y error (cada corrida tarda 25-35s en monorepos grandes).
+>      - Es OBLIGATORIO ejecutar `ozy_doctor(action="syntax", file_path="...")` o `ozy_diagnostics_quick(file_path="...")` de Tree-Sitter en Rust (< 5 ms) para validar la sintaxis y tipos del archivo modificado antes de seguir.
+>      - `npm run type-check` se ejecuta **UNA SOLA VEZ AL FINAL** como prueba de humo antes de entregar.
+>    - **Partición de Tareas por Subagentes Especializados (Backend vs Frontend)**:
+>      - Para nuevos módulos de laboratorio, se recomienda particionar la ejecución en 2 subagentes coordinados mediante contratos compartidos:
+>        - **Subagente Backend & OpenXML**: backend FastAPI (`app/modules/<module>/`) + Pytest.
+>        - **Subagente Frontend & UI**: frontend React 19 (`src/components/dashboard/<module>/`) + Types + Sidebar.
 >    - SIEMPRE invocar primero `ozy_context(action="task", query="<requisito o error>")` para localizar archivos y funciones relevantes en < 5 ms. Soporta búsqueda difusa multitoken inteligente (e.g. `"carga puntual excel"` localiza automáticamente `carga_puntual/excel.py`, componentes frontend y contratos AST).
 >    - Usar `ozy_get_symbol(file_path="...", symbol_name="...")` para extraer funciones, componentes o enums directamente por AST sin adivinar números de línea.
 >    - Usar `ozy_context(action="file", file_path="...", lod="contracts")` para extraer contratos AST sin volcar cientos de líneas de código al contexto.
