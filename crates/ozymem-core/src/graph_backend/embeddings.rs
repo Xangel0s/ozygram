@@ -61,10 +61,14 @@ impl GraphBackend {
     }
 
     pub fn start_background_embedder_download(&self) {
-        let in_test = cfg!(test) || std::env::current_exe().map(|p| {
-            let s = p.to_string_lossy().to_lowercase();
-            s.contains("\\deps\\") || s.contains("/deps/")
-        }).unwrap_or(false);
+        let in_test = cfg!(test)
+            || std::env::var_os("CARGO_TARGET_TMPDIR").is_some()
+            || std::env::var_os("RUST_TEST_THREADS").is_some()
+            || std::env::args().any(|a| a == "--test" || a == "--nocapture" || a == "--exact" || a.starts_with("--test-threads"))
+            || std::env::current_exe().map(|p| {
+                let s = p.to_string_lossy().to_lowercase();
+                s.contains("deps") || s.contains("test") || s.contains("build") || s.contains("target")
+            }).unwrap_or(false);
 
         if in_test && std::env::var_os("OZYMEM_ENABLE_AUTO_DOWNLOAD_IN_TESTS").is_none() {
             return;

@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   PYTHONPATH: python/ozy-brain
+  OZYMEM_DISABLE_AUTO_DOWNLOAD: "1"
 
 jobs:
   python-tests:
@@ -37,6 +38,7 @@ jobs:
     name: Rust Check & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
