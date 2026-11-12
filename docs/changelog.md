@@ -2,6 +2,33 @@
 
 This document tracks the chronological evolution, architectural milestones, and key improvements in **Ozygram**.
 
+## Version v0.2.5 — Cognitive Precedence, Autonomous OpenXML Repair & Fast Laboratory Scaffolding
+
+### 1. Protocolo de Precedencia Estricta: Grafo + AST Combinado
+- **Veto Estricto a Busquedas Ciegas**: Se veta formalmente el uso de `ozy_search_literal` como herramienta de descubrimiento o exploracion inicial en agentes, erradicando bucles desorientados de 20+ minutos.
+- **Flujo Mandatorio en 3 Pasos**:
+  1. `ozy_context(action="task", query="...")`: Busqueda difusa multitoken (< 5 ms) que ubica los archivos y contratos exactos.
+  2. `ozy_graph(action="endpoint_dependents")` / `ozy_graph(action="incoming_dependencies")`: Trazabilidad bidireccional entre routers de FastAPI y componentes de Next.js.
+  3. `ozy_get_symbol` / `ozy_view_skeleton`: Extraccion sintactica precisa por AST sin inundar el contexto.
+- **Veto al Anti-patron de Lectura en Rodajas**: Prohibicion explicita de lecturas sucesivas fraccionadas (`read_file` en bloques de 30-50 lineas).
+
+### 2. Reparacion Autonoma OpenXML y Prevencion de Corrupcion (HRESULT 0x808c0002)
+- **Reparacion Autonoma en < 50 ms**: `ozy_doctor(action="templates", path="...", auto_fix=true)` (y alias `action="repair_template"` / `fix_template`) audita y reescribe plantillas `.xlsx` danadas, inyectando declaraciones estandar OpenXML ISO/IEC 29500 (`xmlns:x14ac`, `xmlns:xr`, `xmlns:xr2`, `xmlns:xr3`, `xmlns:r`, `xmlns:mc`) y generando copia de seguridad automatica `.xlsx.bak`.
+- **Saneamiento de Prefijos**: Deteccion y eliminacion automatica de prefijos anomalos (`ns0:worksheet`, `xmlns:ns0=`, `ns1:Ignorable`).
+- **Auditoria Compacta de Plantillas**: Proteccion de presupuesto de tokens resumiendo plantillas saludables en una sola linea informativa cuando se auditan mas de 5 archivos, evitando desbordamientos de contexto.
+
+### 3. Extraccion de Anclas de Dibujo y Textos en Plantillas Excel (DrawingML Inspector)
+- **Extraccion de Coordenadas y Formas**: `ozy_doctor(action="excel_data")` extrae y mapea anclas de dibujo (`xl/drawings/drawing*.xml`), reportando coordenadas traducidas (`C41 - J45`), nombres de forma y textos asociados.
+- **Deteccion de Cuadros de Entrada**: Identificacion precisa de cuadros de texto vacios (`[EMPTY / INPUT BOX]`) para facilitar la inyeccion de datos de laboratorio.
+
+### 4. Scaffolding Rapido de Modulos de Laboratorio (Lab Archetype Cloner)
+- **Clonacion Instantanea**: `ozy_doctor(action="scaffold_lab")` genera el arquetipo completo de backend FastAPI (`models.py`, `schemas.py`, `excel.py`, `router.py`), frontend React 19 (`<Module>Form.tsx`, `<module>-module.tsx`) y tests de auditoria (`test_audit_<module>.py`) aplicando 4 transformaciones tipograficas (`snake_case`, `kebab-case`, `PascalCase`, `SCREAMING_SNAKE_CASE`) en < 50 ms.
+
+### 5. Diagnosticos Sintacticos Ultrarrapidos (< 5 ms)
+- **Tree-Sitter Quick Diagnostics**: `ozy_doctor(action="syntax")` y `ozy_diagnostics_quick` ofrecen validacion sintactica instantanea (< 5 ms) en Rust para TSX y Python, sustituyendo ciclos lentos de `npm run type-check` durante el desarrollo iterativo.
+
+---
+
 ## Version v0.2.4 — Scientific Grounding, Etapas 0-5 Audit & Master Documentation
 
 ### 1. Desacoplamiento de Recompensas y Verdad Objetiva (Etapa 1)

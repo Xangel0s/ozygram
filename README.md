@@ -4,7 +4,7 @@
 
 ### *Persistent Cognitive Memory, AST Code Graph & Autonomous Self-Improvement for AI Coding Agents*
 
-[![Release](https://img.shields.io/badge/Release-v0.2.4-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
+[![Release](https://img.shields.io/badge/Release-v0.2.5-blueviolet?style=for-the-badge&logo=github)](https://github.com/Xangel0s/ozygram/releases)
 [![Rust Native](https://img.shields.io/badge/Engine-Rust_Native-orange?style=for-the-badge&logo=rust)](crates/ozymem-core)
 [![Tests Passing](https://img.shields.io/badge/Tests-439_Passing_(100%25)-brightgreen?style=for-the-badge)](docs/changelog.md)
 [![Token Optimization](https://img.shields.io/badge/Token_Optimization->85%25-blue?style=for-the-badge)](docs/herramientas-casos-de-uso.md)
