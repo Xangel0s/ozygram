@@ -5278,6 +5278,44 @@ def build_formato_filename(muestra, codigo, nombre):
         assert!(healthy_text.contains("[PASS]"));
         assert!(healthy_text.contains("Status: HEALTHY"));
 
+        // 8. Test ozy_doctor with auto_fix=true repairing the corrupted template
+        let fix_doc_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(5)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "templates",
+                    "path": corrupted_xlsx_path.to_string_lossy().to_string(),
+                    "auto_fix": true
+                }
+            })),
+        };
+        let fix_doc_resp = handle_request(&backend, fix_doc_req, None, None).await.unwrap().unwrap();
+        assert!(fix_doc_resp.error.is_none());
+        let fix_text = fix_doc_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(fix_text.contains("[AUTO_FIX: REPAIRED]"));
+
+        // Verify the template is now healthy when audited again
+        let audit_again_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(6)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_doctor",
+                "arguments": {
+                    "action": "templates",
+                    "path": corrupted_xlsx_path.to_string_lossy().to_string()
+                }
+            })),
+        };
+        let audit_again_resp = handle_request(&backend, audit_again_req, None, None).await.unwrap().unwrap();
+        assert!(audit_again_resp.error.is_none());
+        let audit_again_text = audit_again_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(audit_again_text.contains("[PASS]"));
+        assert!(audit_again_text.contains("Status: HEALTHY"));
+
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
 

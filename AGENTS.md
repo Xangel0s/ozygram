@@ -12,12 +12,29 @@ Contains core system modules, memory engines, and CRM integrations:
 > **REGLA DE PRECEDENCIA ESTRICTA PARA AGENTES**:
 > El espacio de trabajo está indexado en Ozygram. Para evitar exploraciones lentas de 20+ minutos y consumo excesivo de tokens:
 >
-> 1. **Exploración y Localización Inicial (Ozygram First)**:
->    - ESTÁ TERMINANTEMENTE PROHIBIDO usar `read_file` masivo, `grep` recursivo, comandos de terminal (`Select-String`, `dir`) o scripts ad-hoc de Python (`python -c "..."`, `python scratch/*.py`) para buscar o leer líneas de código.
+> 1. **Exploración y Localización Inicial (Ozygram First & Grafo + AST Combinado)**:
+>    - **Regla de Oro: Precedencia Estricta de Grafo + AST Combinado**:
+>      - Para explorar, entender relaciones entre frontend y backend, o descubrir arquitectura, es OBLIGATORIO seguir el flujo en 3 pasos:
+>        1. **Paso 1 (Contexto Multitoken Fuzzy & Módulos)**: `ozy_context(action="task", query="<requisito o nombre de módulo>")`. Localiza en < 5 ms los archivos exactos, contratos relevantes y modelos tanto en FastAPI (`app/modules/`) como en Next.js (`src/components/`).
+>        2. **Paso 2 (Trazabilidad de Contratos y Grafo Bidireccional)**: `ozy_graph(action="endpoint_dependents", endpoint="<ruta>")` o `ozy_graph(action="incoming_dependencies", file_path="...")`. Mapea de forma bidireccional qué componentes de frontend consumen un endpoint o qué módulos dependen de un archivo sin búsquedas a ciegas.
+>        3. **Paso 3 (Extracción Quirúrgica por AST sin ruido)**:
+>           - `ozy_get_symbol(file_path="...", symbol_name="...")` para extraer componentes, routers, modelos o funciones completas con sus tipos y firmas.
+>           - `ozy_context(action="file", file_path="...", lod="contracts")` o `ozy_view_skeleton(file_path="...")` para obtener contratos y esqueletos podados de AST sin volcar cientos de líneas de código al contexto.
+>    - **Veto Estricto a `ozy_search_literal` como Herramienta de Exploración Inicial**:
+>      - `ozy_search_literal` busca texto plano carácter por carácter en el índice; NO comprende relaciones de grafo, dependencias de AST, contratos de endpoint ni jerarquías de componentes. Usarlo para "explorar" el código desorienta al agente y provoca búsquedas caóticas.
+>      - ESTÁ TERMINANTEMENTE PROHIBIDO usar `ozy_search_literal` como paso inicial de exploración o descubrimiento.
+>      - Su uso queda RESTRINGIDO EXCLUSIVAMENTE a validar cadenas literales fijas (como nombres exactos de tablas SQL, claves de rutas de API o nombres de roles específicos) DESPUÉS de haber localizado los módulos con AST.
+>    - **Protocolo Inmediato OpenXML (HRESULT 0x808c0002) en < 50 ms**:
+>      - **Causa Raíz Documentada**: Cuando Microsoft Excel muestra `"Parte reemplazada: /xl/worksheets/sheet*.xml parte con error de XML. HRESULT 0x808c0002 Línea 2, columna 0."`, ocurre porque:
+>        1. El atributo `mc:Ignorable="x14ac xr xr2 xr3"` en `<worksheet>` referencia prefijos de Microsoft cuyas declaraciones `xmlns:x14ac="..."`, `xmlns:xr="..."`, etc., no están declaradas en el elemento raíz.
+>        2. Herramientas como `openpyxl` o `xml.etree` serializan con prefijos anómalos (`<ns0:worksheet>` o `xmlns:ns0=`), corrompiendo el estándar OpenXML ISO/IEC 29500.
+>      - **Protocolo de Acción Obligatorio en 2 Pasos**:
+>        1. **Auditoría y Reparación Autónoma Inmediata**: Ejecutar `ozy_doctor(action="templates", path="<ruta_plantilla_o_carpeta>", auto_fix=true)`. Detecta y repara instantáneamente en el archivo ZIP en disco todas las declaraciones de namespace faltantes (`xmlns:x14ac`, `xmlns:xr`, `xmlns:xr2`, `xmlns:xr3`, `xmlns:r`, `xmlns:mc`), elimina prefijos espurios `ns0:`, valida la integridad del archivo y crea un respaldo `.xlsx.bak` automático en < 50 ms.
+>        2. **Sanitización en Backend (`excel.py`)**: En los endpoints de FastAPI generadores de reportes, asegurar que el XML de las hojas pase por la función de sanitización de namespaces (`sanitize_openxml_worksheet_text` o el helper `clean_xml_namespaces`) antes de escribir al stream de respuesta o guardar en disco, previniendo que `openpyxl` inserte `ns0:`.
+>      - **Veto Absoluto a Scripts Ad-Hoc de Python**: ESTÁ TERMINANTEMENTE PROHIBIDO redactar o ejecutar scripts ad-hoc de python (`check_s3.py`, `test_fix.py`, etc.) para inspeccionar o parchar el XML de los Excels. Eso provocó pérdidas de más de 14 minutos en tareas anteriores. Todo se resuelve en una sola llamada a `ozy_doctor(action="templates", auto_fix=true)`.
 >    - **Inspección de Archivos y Plantillas Excel (.xlsx / .xls)**:
 >      - ESTÁ TERMINANTEMENTE PROHIBIDO escribir scripts de Python con `openpyxl`, `pandas` o similares (`python -c "import openpyxl..."`) para inspeccionar hojas, dimensiones, headers, columnas o filas de Excel.
 >      - Es OBLIGATORIO ejecutar directamente `ozy_doctor(action="excel_data", file_path="...")`. En < 50 ms extrae automáticamente todas las hojas, dimensiones, fila de encabezados, muestreo de datos, anomalías de tipo/longitud y **todas las anclas de dibujo y cuadros de texto (`xl/drawings/drawing*.xml`)**, reportando coordenadas traducidas (`C41 - J45`), nombres de forma, textos de runs y cuadros de entrada vacíos (`[EMPTY / INPUT BOX]`).
->      - Para auditar reportes dañados o corrupción OpenXML (HRESULT 0x808c0002): ejecutar `ozy_doctor(action="templates")` para auditar la integridad OpenXML y namespaces de `mc:Ignorable`.
 >    - **Scaffolding Rápido de Módulos de Laboratorio (Lab Archetype Cloner)**:
 >      - ESTÁ TERMINANTEMENTE PROHIBIDO escribir módulos de laboratorio desde cero (+1,500 líneas a mano).
 >      - Es OBLIGATORIO usar `ozy_doctor(action="scaffold_lab", source_module="<hermano>", target_module="<nuevo>", module_code="<SUxx>", module_title="<titulo>")`. Clona en < 50 ms el arquetipo completo de backend FastAPI (`models.py`, `schemas.py`, `excel.py`, `router.py`), frontend React 19 (`<Module>Form.tsx`, `<module>-module.tsx`) y test de auditoría (`test_audit_<module>.py`).
@@ -29,12 +46,8 @@ Contains core system modules, memory engines, and CRM integrations:
 >      - Para nuevos módulos de laboratorio, se recomienda particionar la ejecución en 2 subagentes coordinados mediante contratos compartidos:
 >        - **Subagente Backend & OpenXML**: backend FastAPI (`app/modules/<module>/`) + Pytest.
 >        - **Subagente Frontend & UI**: frontend React 19 (`src/components/dashboard/<module>/`) + Types + Sidebar.
->    - SIEMPRE invocar primero `ozy_context(action="task", query="<requisito o error>")` para localizar archivos y funciones relevantes en < 5 ms. Soporta búsqueda difusa multitoken inteligente (e.g. `"carga puntual excel"` localiza automáticamente `carga_puntual/excel.py`, componentes frontend y contratos AST).
->    - Usar `ozy_get_symbol(file_path="...", symbol_name="...")` para extraer funciones, componentes o enums directamente por AST sin adivinar números de línea.
->    - Usar `ozy_context(action="file", file_path="...", lod="contracts")` para extraer contratos AST sin volcar cientos de líneas de código al contexto.
->    - Usar `ozy_search_literal(query="<texto>")` para coincidencias exactas o de palabras clave de rutas, roles o constantes (cuenta con auto-tolerancia de comillas y reintento multitoken si la query original contiene escapes).
 >    - **Veto al Anti-patrón de Lectura en Rodajas ("Chunk Sliding")**: ESTÁ TERMINANTEMENTE PROHIBIDO encadenar lecturas sucesivas de `read_file` sobre el mismo archivo (e.g. `L1-100`, `L100-140`, `L200-260`, etc.). Si un archivo tiene más de 150 líneas (como `role-matrix.ts` o `use-auth.ts`), es OBLIGATORIO invocar `ozy_context(action="file", file_path="...", lod="contracts")` o `ozy_get_symbol` para ubicar en 1 solo paso (< 5 ms) la función, hook o bloque y su número exacto de línea antes de leer.
->    - **Veto Absoluto a `Select-String` y `Get-ChildItem -Recurse`**: ESTÁ TERMINANTEMENTE PROHIBIDO ejecutar comandos de terminal de PowerShell (`Get-ChildItem -Recurse | Select-String`, `findstr`, `dir /s`) para buscar archivos o texto en el código. Esto colapsa y congela la terminal en Windows al recorrer carpetas como `node_modules` o `.venv`. Toda búsqueda debe canalizarse exclusivamente a través de `ozy_search_literal` u `ozy_context(action="task")`.
+>    - **Veto Absoluto a `Select-String` y `Get-ChildItem -Recurse`**: ESTÁ TERMINANTEMENTE PROHIBIDO ejecutar comandos de terminal de PowerShell (`Get-ChildItem -Recurse | Select-String`, `findstr`, `dir /s`) para buscar archivos o texto en el código. Esto colapsa y congela la terminal en Windows al recorrer carpetas como `node_modules` o `.venv`. Toda búsqueda debe canalizarse exclusivamente a través de `ozy_context(action="task")` u `ozy_graph`.
 >    - Si solo necesitas leer un rango puntual de líneas, usa `read_file` con `StartLine` y `EndLine`. Jamás abras Python para hacer `open().readlines()`, ya que colapsa con `UnicodeEncodeError: 'charmap' (cp1252)` en Windows.
 > 2. **Modificación y Edición de Código (Ghost Patching en RAM)**:
 >    - ESTÁ TERMINANTEMENTE PROHIBIDO crear o ejecutar scripts ad-hoc de Python (`scratch/update_*.py`) para reemplazar texto o regex a ciegas. Esto rompe tipos de TypeScript y provoca fallos de compilación (`type-check Exited with code 1`).

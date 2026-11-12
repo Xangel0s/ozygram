@@ -305,15 +305,21 @@ pub async fn handle_request(
                             }],
                             is_error: None,
                         }
-                    } else if action == "templates" || action == "excel_doctor" || action == "template_linter" {
+                    } else if action == "templates" || action == "excel_doctor" || action == "template_linter" || action == "repair_template" || action == "fix_template" {
                         let path_arg = tool_call
                             .arguments
                             .get("path")
                             .or_else(|| tool_call.arguments.get("target_path"))
                             .or_else(|| tool_call.arguments.get("file_path"))
                             .and_then(Value::as_str);
+                        let auto_fix = action == "repair_template" || action == "fix_template" || tool_call
+                            .arguments
+                            .get("auto_fix")
+                            .or_else(|| tool_call.arguments.get("fix"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
                         let report =
-                            crate::doctor::audit_excel_templates(Some(backend), path_arg).await?;
+                            crate::doctor::audit_excel_templates(Some(backend), path_arg, auto_fix).await?;
                         ToolCallResult {
                             content: vec![ContentBlock {
                                 kind: "text",

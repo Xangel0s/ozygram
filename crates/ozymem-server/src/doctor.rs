@@ -369,10 +369,100 @@ pub(crate) fn format_doctor_payload(payload: &Value) -> String {
     body
 }
 
+/// Sanitize an OpenXML worksheet's XML text to ensure standard namespace declarations
+/// and fix HRESULT 0x808c0002 errors caused by undeclared prefixes in mc:Ignorable or ns0: aliases.
+fn sanitize_openxml_worksheet_text(mut content: String) -> (String, bool) {
+    let mut modified = false;
+
+    if content.contains("<ns0:worksheet") || content.contains("xmlns:ns0=") {
+        content = content.replace("xmlns:ns0=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"", "");
+        content = content.replace("</ns0:", "</");
+        content = content.replace("<ns0:", "<");
+        if content.contains("<worksheet ") && !content.contains("xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"") {
+            content = content.replacen("<worksheet ", "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" ", 1);
+        }
+        modified = true;
+    }
+
+    if content.contains("ns1:Ignorable") {
+        content = content.replace("ns1:Ignorable", "mc:Ignorable");
+        modified = true;
+    }
+
+    if content.contains("ns2:uid=") {
+        content = content.replace("ns2:uid=", "xr:uid=");
+        modified = true;
+    }
+
+    if content.contains("ns3:dyDescent=") {
+        content = content.replace("ns3:dyDescent=", "x14ac:dyDescent=");
+        modified = true;
+    }
+
+    if content.contains("ns4:id=") {
+        content = content.replace("ns4:id=", "r:id=");
+        modified = true;
+    }
+
+    // Check Ignorable prefixes and inject missing declarations
+    let ignorable_regex = Regex::new(r#"(?:mc:Ignorable|ns\d+:Ignorable|Ignorable)\s*=\s*"([^"]+)""#).ok();
+    let prefixes: Vec<String> = if let Some(ref re) = ignorable_regex {
+        if let Some(caps) = re.captures(&content) {
+            if let Some(val) = caps.get(1) {
+                val.as_str().split_whitespace().map(|s| s.to_string()).collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    for prefix in prefixes {
+        let decl_pattern_1 = format!("xmlns:{}=", prefix);
+        let decl_pattern_2 = format!("xmlns:{} =", prefix);
+        if !content.contains(&decl_pattern_1) && !content.contains(&decl_pattern_2) {
+            let xmlns_uri = match prefix.as_str() {
+                "x14ac" => "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac",
+                "xr" => "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
+                "xr2" => "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2",
+                "xr3" => "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
+                "r" => "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                "mc" => "http://schemas.openxmlformats.org/markup-compatibility/2006",
+                _ => "",
+            };
+            if !xmlns_uri.is_empty() {
+                let decl = format!(" xmlns:{}=\"{}\"", prefix, xmlns_uri);
+                if let Some(ws_idx) = content.find("<worksheet") {
+                    if let Some(close_idx) = content[ws_idx..].find('>') {
+                        content.insert_str(ws_idx + close_idx, &decl);
+                        modified = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if content.contains("mc:Ignorable=") && !content.contains("xmlns:mc=") {
+        let decl = " xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"";
+        if let Some(ws_idx) = content.find("<worksheet") {
+            if let Some(close_idx) = content[ws_idx..].find('>') {
+                content.insert_str(ws_idx + close_idx, decl);
+                modified = true;
+            }
+        }
+    }
+
+    (content, modified)
+}
+
 /// Audit OpenXML (.xlsx) templates for XML namespace corruption, undeclared mc:Ignorable prefixes, and archive integrity.
 pub(crate) async fn audit_excel_templates(
     backend: Option<&GraphBackend>,
     target_path: Option<&str>,
+    auto_fix: bool,
 ) -> anyhow::Result<String> {
     let mut files_to_check: Vec<PathBuf> = Vec::new();
 
@@ -473,6 +563,7 @@ pub(crate) async fn audit_excel_templates(
 
         let mut issues = Vec::new();
         let mut sheet_count = 0usize;
+        let mut entries_to_rewrite: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
 
         for i in 0..archive.len() {
             let mut entry = match archive.by_index(i) {
@@ -495,6 +586,24 @@ pub(crate) async fn audit_excel_templates(
                     continue;
                 }
 
+                let mut sheet_has_issues = false;
+
+                if content.contains("<ns0:worksheet") || content.contains("xmlns:ns0=") {
+                    sheet_has_issues = true;
+                    issues.push(format!(
+                        "[CRITICAL: NS0_NAMESPACE_ALIAS] {}: contains non-standard '<ns0:worksheet>' or 'xmlns:ns0' alias.\n    Causes Excel repair error 0x808c0002 on file open.\n    Remediation: Strip 'ns0:' prefix and restore standard xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\".",
+                        name
+                    ));
+                }
+
+                if content.contains("ns1:Ignorable") {
+                    sheet_has_issues = true;
+                    issues.push(format!(
+                        "[CRITICAL: NS1_IGNORABLE_ALIAS] {}: uses non-standard 'ns1:Ignorable' instead of 'mc:Ignorable'.",
+                        name
+                    ));
+                }
+
                 if let Some(caps) = ignorable_regex.captures(&content) {
                     if let Some(val) = caps.get(1) {
                         let prefixes: Vec<&str> = val.as_str().split_whitespace().collect();
@@ -502,6 +611,7 @@ pub(crate) async fn audit_excel_templates(
                             let decl_pattern_1 = format!("xmlns:{}=", prefix);
                             let decl_pattern_2 = format!("xmlns:{} =", prefix);
                             if !content.contains(&decl_pattern_1) && !content.contains(&decl_pattern_2) {
+                                sheet_has_issues = true;
                                 issues.push(format!(
                                     "[CRITICAL: UNDECLARED_NAMESPACE] {}: undeclared prefix '{}' referenced in Ignorable attribute.\n    Explanation: Violates ISO/IEC 29500 (OpenXML). Causes Excel repair error 0x808c0002 on file open.\n    Remediation: Declare xmlns:{} in root <worksheet> element or strip '{}' from Ignorable.",
                                     name, prefix, prefix, prefix
@@ -516,6 +626,13 @@ pub(crate) async fn audit_excel_templates(
                         "[CRITICAL: MALFORMED_XML] {}: missing closing </worksheet> root tag.",
                         name
                     ));
+                }
+
+                if auto_fix && sheet_has_issues {
+                    let (sanitized, modified) = sanitize_openxml_worksheet_text(content);
+                    if modified {
+                        entries_to_rewrite.insert(name, sanitized.into_bytes());
+                    }
                 }
             } else if name == "xl/workbook.xml" {
                 let mut content = String::new();
@@ -533,11 +650,79 @@ pub(crate) async fn audit_excel_templates(
             }
         }
 
+        let mut was_repaired = false;
+        if auto_fix && !entries_to_rewrite.is_empty() {
+            drop(archive);
+            if let Ok(file_for_read) = std::fs::File::open(file_path) {
+                if let Ok(mut src_archive) = zip::ZipArchive::new(std::io::BufReader::new(file_for_read)) {
+                    let bak_path = file_path.with_extension("xlsx.bak");
+                    if !bak_path.exists() {
+                        let _ = std::fs::copy(file_path, &bak_path);
+                    }
+
+                    let tmp_repaired = file_path.with_extension("xlsx.tmp_repair");
+                    if let Ok(tmp_file) = std::fs::File::create(&tmp_repaired) {
+                        let mut zip_writer = zip::ZipWriter::new(tmp_file);
+                        let mut write_success = true;
+
+                        for idx in 0..src_archive.len() {
+                            if let Ok(mut src_entry) = src_archive.by_index(idx) {
+                                let entry_name = src_entry.name().to_string();
+                                let options = zip::write::SimpleFileOptions::default()
+                                    .compression_method(zip::CompressionMethod::Deflated);
+                                if zip_writer.start_file(&entry_name, options).is_err() {
+                                    write_success = false;
+                                    break;
+                                }
+                                if let Some(new_bytes) = entries_to_rewrite.get(&entry_name) {
+                                    use std::io::Write;
+                                    if zip_writer.write_all(new_bytes).is_err() {
+                                        write_success = false;
+                                        break;
+                                    }
+                                } else {
+                                    let mut buf = Vec::new();
+                                    if src_entry.read_to_end(&mut buf).is_ok() {
+                                        use std::io::Write;
+                                        if zip_writer.write_all(&buf).is_err() {
+                                            write_success = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if write_success && zip_writer.finish().is_ok() {
+                            drop(src_archive);
+                            let _ = std::fs::remove_file(file_path);
+                            if std::fs::rename(&tmp_repaired, file_path).is_ok() {
+                                was_repaired = true;
+                            } else if std::fs::copy(&tmp_repaired, file_path).is_ok() {
+                                let _ = std::fs::remove_file(&tmp_repaired);
+                                was_repaired = true;
+                            }
+                        } else {
+                            let _ = std::fs::remove_file(&tmp_repaired);
+                        }
+                    }
+                }
+            }
+        }
+
         if issues.is_empty() {
             healthy_count += 1;
+            if files_to_check.len() <= 5 {
+                body.push_str(&format!(
+                    "[PASS] {} (valid OpenXML structure, {} worksheet(s) verified)\n",
+                    display_path, sheet_count
+                ));
+            }
+        } else if was_repaired {
+            healthy_count += 1;
             body.push_str(&format!(
-                "[PASS] {} (valid OpenXML structure, {} worksheet(s) verified)\n",
-                display_path, sheet_count
+                "[AUTO_FIX: REPAIRED] {} (repaired namespace corruption in {} worksheet(s); backup saved to {}.bak)\n",
+                display_path, entries_to_rewrite.len(), display_path
             ));
         } else {
             corrupted_count += 1;
@@ -549,13 +734,23 @@ pub(crate) async fn audit_excel_templates(
         }
     }
 
-    body.push_str(&format!(
-        "\nSummary: {} file(s) checked - {} healthy, {} corrupted.\nStatus: {}\n",
-        files_to_check.len(),
-        healthy_count,
-        corrupted_count,
-        if corrupted_count == 0 { "HEALTHY" } else { "ACTION_REQUIRED" }
-    ));
+    if files_to_check.len() > 5 {
+        body.push_str(&format!(
+            "Summary: {} templates audited ({} healthy OpenXML verified, {} with issues).\nStatus: {}\n",
+            files_to_check.len(),
+            healthy_count,
+            corrupted_count,
+            if corrupted_count == 0 { "HEALTHY" } else { "ACTION_REQUIRED" }
+        ));
+    } else {
+        body.push_str(&format!(
+            "\nSummary: {} file(s) checked - {} healthy, {} corrupted.\nStatus: {}\n",
+            files_to_check.len(),
+            healthy_count,
+            corrupted_count,
+            if corrupted_count == 0 { "HEALTHY" } else { "ACTION_REQUIRED" }
+        ));
+    }
 
     Ok(body)
 }
