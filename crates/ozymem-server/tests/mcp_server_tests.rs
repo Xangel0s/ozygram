@@ -5153,3 +5153,110 @@ def build_formato_filename(muestra, codigo, nombre):
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
 
+    #[tokio::test]
+    async fn test_ozy_dream_replay_sweep_mcp() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "ozymem_test_dream_replay_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+
+        // 1. Initialize
+        let init_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test-client", "version": "1.0.0" },
+                "rootUri": format!("file://{}", tmp_root.to_string_lossy().replace('\\', "/"))
+            })),
+        };
+        handle_request(&backend, init_req, None, None).await.unwrap();
+
+        // 2. Start trajectory and record nodes
+        let traj_id = {
+            let guard = backend.lock().unwrap();
+            let gb = guard.as_ref().unwrap();
+            let id = gb.start_trajectory(&tmp_root.to_string_lossy(), "Task to optimize via Dream-RSI", Some("v1.0")).unwrap();
+            gb.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+                trajectory_id: id.clone(),
+                parent_id: None,
+                action_type: "command".to_string(),
+                action_payload: "init setup".to_string(),
+                observation: "ok".to_string(),
+                cost_tokens: Some(200),
+                latency_ms: Some(50),
+                reward_score: Some(0.1),
+                is_solution: Some(false),
+                is_pruned: Some(false),
+                rollback_snapshot: None,
+                execution_receipt: None,
+            }).unwrap();
+            gb.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+                trajectory_id: id.clone(),
+                parent_id: None,
+                action_type: "command".to_string(),
+                action_payload: "cargo build failed with compile error".to_string(),
+                observation: "error[E0432]: unresolved import".to_string(),
+                cost_tokens: Some(3000),
+                latency_ms: Some(500),
+                reward_score: Some(-0.9),
+                is_solution: Some(false),
+                is_pruned: Some(false),
+                rollback_snapshot: None,
+                execution_receipt: None,
+            }).unwrap();
+            gb.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+                trajectory_id: id.clone(),
+                parent_id: None,
+                action_type: "patch".to_string(),
+                action_payload: "import fixed, cargo test passed".to_string(),
+                observation: "test result: ok. 10 passed; 0 failed".to_string(),
+                cost_tokens: Some(400),
+                latency_ms: Some(100),
+                reward_score: Some(1.0),
+                is_solution: Some(true),
+                is_pruned: Some(false),
+                rollback_snapshot: None,
+                execution_receipt: None,
+            }).unwrap();
+            id
+        };
+
+        // 3. Call ozy_dream with action="replay_sweep"
+        let dream_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_dream",
+                "arguments": {
+                    "action": "replay_sweep"
+                }
+            })),
+        };
+
+        let dream_resp = handle_request(&backend, dream_req, None, None).await.unwrap().unwrap();
+        assert!(dream_resp.error.is_none());
+        let text = dream_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(text.contains("[OZY_DREAM_RSI: Counterfactual Replay Simulation Results]"));
+        assert!(text.contains("Google Dream-RSI"));
+        assert!(text.contains("Candidate Policy"));
+        assert!(text.contains(&traj_id));
+
+        // 4. Verify that simulations are persisted to SQLite table dream_counterfactual_simulations
+        {
+            let guard = backend.lock().unwrap();
+            let gb = guard.as_ref().unwrap();
+            let sims = gb.get_counterfactual_simulations(&traj_id).unwrap();
+            assert!(!sims.is_empty(), "Must persist counterfactual simulations to SQLite");
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+

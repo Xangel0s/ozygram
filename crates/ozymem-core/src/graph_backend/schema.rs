@@ -349,8 +349,43 @@ impl GraphBackend {
             );
             CREATE INDEX IF NOT EXISTS idx_habits_trigger ON procedural_habits(trigger_file, tenant_id);
 
+            CREATE TABLE IF NOT EXISTS dream_counterfactual_simulations (
+                id TEXT PRIMARY KEY,
+                trajectory_id TEXT NOT NULL,
+                baseline_policy TEXT NOT NULL,
+                candidate_policy TEXT NOT NULL,
+                baseline_metrics TEXT NOT NULL,
+                candidate_metrics TEXT NOT NULL,
+                efficiency_gain_pct REAL NOT NULL,
+                is_optimal INTEGER NOT NULL DEFAULT 0,
+                recommendation TEXT NOT NULL,
+                simulated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(trajectory_id) REFERENCES exploration_trajectories(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_sim_traj ON dream_counterfactual_simulations(trajectory_id);
+            CREATE INDEX IF NOT EXISTS idx_sim_optimal ON dream_counterfactual_simulations(is_optimal);
+
             INSERT OR IGNORE INTO tenants (id, name) VALUES ('local', 'Local Tenant');"
         )?;
+
+        // Ensure dream_counterfactual_simulations exists on existing DBs
+        let _ = inner.sqlite.execute_batch(
+            "CREATE TABLE IF NOT EXISTS dream_counterfactual_simulations (
+                id TEXT PRIMARY KEY,
+                trajectory_id TEXT NOT NULL,
+                baseline_policy TEXT NOT NULL,
+                candidate_policy TEXT NOT NULL,
+                baseline_metrics TEXT NOT NULL,
+                candidate_metrics TEXT NOT NULL,
+                efficiency_gain_pct REAL NOT NULL,
+                is_optimal INTEGER NOT NULL DEFAULT 0,
+                recommendation TEXT NOT NULL,
+                simulated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(trajectory_id) REFERENCES exploration_trajectories(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_sim_traj ON dream_counterfactual_simulations(trajectory_id);
+            CREATE INDEX IF NOT EXISTS idx_sim_optimal ON dream_counterfactual_simulations(is_optimal);"
+        );
 
         // Migrate exploration_nodes: add rollback_snapshot if table existed without it
         let _ = inner.sqlite.execute("ALTER TABLE exploration_nodes ADD COLUMN rollback_snapshot TEXT NULL", []);

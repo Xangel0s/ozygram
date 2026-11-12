@@ -550,6 +550,30 @@ pub fn handle_exploration(
             })
         }
 
+        "replay_sweep" | "simulate_replay" | "counterfactual" => {
+            let project_path = args
+                .get("project_path")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| backend.project_path());
+
+            let results = backend.run_offline_counterfactual_dream_sweep(project_path.as_deref())?;
+
+            let res = json!({
+                "status": "ok",
+                "simulations_count": results.len(),
+                "simulations": results
+            });
+
+            Ok(ToolCallResult {
+                content: vec![ContentBlock {
+                    kind: "text",
+                    text: serde_json::to_string_pretty(&res)?,
+                }],
+                is_error: None,
+            })
+        }
+
         other => Err(anyhow!("Acción de exploración desconocida: '{other}'")),
     }
 }

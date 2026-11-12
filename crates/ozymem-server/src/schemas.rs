@@ -182,15 +182,15 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_dream",
-                    description: "[OFFLINE NEURO-COGNITIVE DREAM INSIGHTS & DREAMER RSI] Inspects consolidated background dream cycles: Amygdala threat scars (fragile files), Basal Ganglia procedural habits, STDP synaptic plasticity weights, and offline vaccines. Actions: 'insights' (read latest dream insights from .ozymem/dream_latest_insights.json), 'status' (check idle watcher and dream cycle state), 'run' (trigger one-shot offline dream consolidation immediately).",
+                    description: "[OFFLINE NEURO-COGNITIVE DREAM INSIGHTS & GOOGLE DREAM-RSI] Inspects consolidated background dream cycles and runs counterfactual MCTS replay sweeps (Google Dream-RSI in Rust at $0 compute cost). Actions: 'insights' (read latest dream insights and calibrated exploration policy), 'status' (check idle watcher and dream cycle state), 'run' (trigger one-shot offline dream consolidation immediately), 'replay_sweep' (run counterfactual replay simulation across past 24h trajectories to discover optimal exploration policies).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["insights", "status", "run"],
+                                "enum": ["insights", "status", "run", "replay_sweep", "simulate_replay"],
                                 "default": "insights",
-                                "description": "Acción a ejecutar: 'insights' (leer reporte de sueño más reciente), 'status' (ver estado del watcher de inactividad de 30min), 'run' (ejecutar ciclo de sueño y consolidación en segundo plano ahora)"
+                                "description": "Acción a ejecutar: 'insights' (leer reporte de sueño más reciente), 'status' (ver estado del watcher de inactividad de 30min), 'run' (ejecutar ciclo de sueño y consolidación en segundo plano ahora), 'replay_sweep' (ejecutar simulación de replay contrafáctico de políticas MCTS sin coste LLM)"
                             },
                             "project_path": { "type": "string", "description": "Ruta opcional del proyecto" }
                         },

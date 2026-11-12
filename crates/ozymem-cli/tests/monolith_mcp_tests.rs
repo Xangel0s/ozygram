@@ -24,6 +24,7 @@ async fn test_monolith_cli_has_embedded_mcp_server() {
     assert!(active_tools.iter().any(|t| t["name"] == "ozy_context"));
     assert!(active_tools.iter().any(|t| t["name"] == "ozy_memory"));
     assert!(active_tools.iter().any(|t| t["name"] == "ozy_doctor"));
-    assert_eq!(active_tools.len(), 25);
+    assert!(active_tools.iter().any(|t| t["name"] == "ozy_dream"));
+    assert_eq!(active_tools.len(), 26);
 }
 

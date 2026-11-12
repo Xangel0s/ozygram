@@ -305,6 +305,8 @@ pub(crate) async fn handle_ozy_brain(
         }));
     }
 
+    let optimal_policy_opt = backend.get_latest_optimal_policy(None).ok().flatten();
+
     let payload = json!({
         "project": project,
         "goal": goal,
@@ -326,6 +328,7 @@ pub(crate) async fn handle_ozy_brain(
         "trajectory_id": trajectory_id_opt,
         "trajectory_diagnosis": trajectory_diagnosis,
         "recommended_resume_node": recommended_resume_node,
+        "optimal_exploration_policy": optimal_policy_opt,
         "proposed_action": tool_call.arguments.get("proposed_action").cloned().unwrap_or_else(|| {
             tool_call.arguments.get("action_payload").cloned().unwrap_or(Value::Null)
         }),
@@ -746,7 +749,17 @@ pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
             .and_then(Value::as_str)
             .unwrap_or("workspace");
 
-        let mut mcts = ozymem_core::mcts::MctsTree::new(std::f64::consts::SQRT_2, 0.35, 6, 20);
+        let (c_puct, max_depth, branching_factor, policy_name) = if let Some(opt_policy) = payload.get("optimal_exploration_policy").and_then(|v| v.as_object()) {
+            let c = opt_policy.get("c_puct").and_then(Value::as_f64).unwrap_or(std::f64::consts::SQRT_2);
+            let d = opt_policy.get("max_depth").and_then(Value::as_u64).unwrap_or(6) as usize;
+            let b = opt_policy.get("branching_factor").and_then(Value::as_u64).unwrap_or(20) as usize;
+            let name = opt_policy.get("name").and_then(Value::as_str).unwrap_or("calibrated").to_string();
+            (c, d, b, name)
+        } else {
+            (std::f64::consts::SQRT_2, 6, 20, "default".to_string())
+        };
+
+        let mut mcts = ozymem_core::mcts::MctsTree::new(c_puct, 0.35, max_depth, branching_factor);
         let root_state = ozymem_core::mcts::MctsState {
             file_path: target_file.to_string(),
             symbol: goal.split_whitespace().next().unwrap_or("target").to_string(),
@@ -762,7 +775,7 @@ pub fn build_deterministic_fallback(action: &str, payload: &Value) -> Value {
         let (phase_name, phase_idx) = ozymem_core::theta_gamma::ThetaGammaBuffer::classify_file_phase(target_file);
 
         let mut plan_items = vec![
-            format!("[OPTIMIZED_BY_DREAM_RSI] Native Rust MCTS Phase {} ({}): target '{}'.", phase_idx, phase_name, target_file),
+            format!("[OPTIMIZED_BY_DREAM_RSI] Native Rust MCTS Phase {} ({}) via policy '{}' (c_puct={:.2}): target '{}'.", phase_idx, phase_name, policy_name, c_puct, target_file),
             format!("MCTS Mutation: {}", best_action.as_ref().map(|a| a.description.as_str()).unwrap_or("Apply non-breaking shim")),
             "Verificar invariantes de compatibilidad hacia atrás en memoria volátil.".to_string(),
             "Ejecutar suite de pruebas local.".to_string(),

@@ -381,6 +381,55 @@ pub async fn handle_request(
                             }],
                             is_error: None,
                         }
+                    } else if action == "replay_sweep" || action == "simulate_replay" {
+                        match backend.run_offline_counterfactual_dream_sweep(Some(&root)) {
+                            Ok(results) => {
+                                if results.is_empty() {
+                                    ToolCallResult {
+                                        content: vec![ContentBlock {
+                                            kind: "text",
+                                            text: "[OZY_DREAM_RSI: Counterfactual Replay Simulator]\nNo hay trayectorias con al menos 2 nodos registradas en la base de datos para simular. Registra una con ozy_exploration.".to_string(),
+                                        }],
+                                        is_error: None,
+                                    }
+                                } else {
+                                    let mut table = String::from(
+                                        "[OZY_DREAM_RSI: Counterfactual Replay Simulation Results]\n\
+                                         Simulaciones MCTS contrafácticas en Rust (Google Dream-RSI sin coste LLM):\n\n\
+                                         | Trajectory ID | Candidate Policy | Steps (Base vs Cand) | Tokens (Base vs Cand) | Efficiency Gain | Optimal? | Recommendation |\n\
+                                         |---|---|---|---|---|---|---|\n"
+                                    );
+                                    for r in &results {
+                                        table.push_str(&format!(
+                                            "| `{}` | `{}` | {} vs {} | {} vs {} | {:+.1}% | {} | {} |\n",
+                                            r.trajectory_id,
+                                            r.candidate_policy.name,
+                                            r.baseline_metrics.steps_to_solution,
+                                            r.candidate_metrics.steps_to_solution,
+                                            r.baseline_metrics.total_tokens,
+                                            r.candidate_metrics.total_tokens,
+                                            r.efficiency_gain_pct,
+                                            if r.is_optimal { "[YES]" } else { "[NO]" },
+                                            r.recommendation
+                                        ));
+                                    }
+                                    ToolCallResult {
+                                        content: vec![ContentBlock {
+                                            kind: "text",
+                                            text: table,
+                                        }],
+                                        is_error: None,
+                                    }
+                                }
+                            }
+                            Err(e) => ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("[ALERT: REPLAY_SIMULATION_ERROR] {e}"),
+                                }],
+                                is_error: Some(true),
+                            },
+                        }
                     } else {
                         let path = std::path::Path::new(&root).join(".ozymem").join("dream_latest_insights.json");
                         if path.exists() {

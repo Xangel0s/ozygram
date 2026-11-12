@@ -112,6 +112,51 @@ pub fn start_idle_watcher(backend: Arc<Mutex<Option<GraphBackend>>>) -> tokio::t
                         }
                     }
 
+                    // Execute offline counterfactual replay sweep over recorded trajectories (Google Dream-RSI in Rust)
+                    let backend_replay = backend.clone();
+                    let proj_path_for_sweep = project_path.clone();
+                    let replay_task = tokio::task::spawn_blocking(move || {
+                        let guard = backend_replay.lock().unwrap();
+                        if let Some(ref gb) = *guard {
+                            gb.run_offline_counterfactual_dream_sweep(Some(&proj_path_for_sweep))
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    })
+                    .await;
+
+                    if let Ok(Ok(ref sim_results)) = replay_task {
+                        if let Some(optimal) = sim_results.iter().find(|r| r.is_optimal) {
+                            eprintln!(
+                                "[STATUS: COUNTERFACTUAL_OPTIMAL_POLICY_DISCOVERED] '{}' gained {:.1}% efficiency.",
+                                optimal.candidate_policy.name, optimal.efficiency_gain_pct
+                            );
+                            let dream_json_path = std::path::Path::new(&project_path)
+                                .join(".ozymem")
+                                .join("dream_latest_insights.json");
+                            let mut val: serde_json::Value = if dream_json_path.exists() {
+                                std::fs::read_to_string(&dream_json_path)
+                                    .ok()
+                                    .and_then(|s| serde_json::from_str(&s).ok())
+                                    .unwrap_or_else(|| json!({}))
+                            } else {
+                                json!({})
+                            };
+                            val["optimal_exploration_policy"] = json!({
+                                "name": optimal.candidate_policy.name,
+                                "c_puct": optimal.candidate_policy.c_puct,
+                                "prune_cost_threshold": optimal.candidate_policy.prune_cost_threshold,
+                                "max_depth": optimal.candidate_policy.max_depth,
+                                "branching_factor": optimal.candidate_policy.branching_factor,
+                                "efficiency_gain_pct": optimal.efficiency_gain_pct,
+                                "recommendation": optimal.recommendation
+                            });
+                            if let Ok(updated_raw) = serde_json::to_string_pretty(&val) {
+                                let _ = std::fs::write(&dream_json_path, updated_raw);
+                            }
+                        }
+                    }
+
                     // Mark as completed for this idle stretch so we don't repeat every poll interval
                     DREAM_COMPLETED_FOR_CURRENT_IDLE.store(true, Ordering::Relaxed);
                 }

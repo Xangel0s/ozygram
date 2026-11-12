@@ -599,8 +599,8 @@ impl GraphBackend {
         Ok(())
     }
 
-    /// Obtiene el árbol completo de exploración estructurado jerárquicamente con scores UCT / UCB1 para MCTS
-    pub fn get_trajectory_tree(&self, trajectory_id: &str) -> Result<Vec<ExplorationTreeNode>> {
+    /// Obtiene la lista plana de todos los nodos de una trayectoria ordenados por profundidad y creación
+    pub fn get_exploration_nodes(&self, trajectory_id: &str) -> Result<Vec<ExplorationNode>> {
         let inner = self.inner.lock().unwrap();
 
         let mut stmt = inner.sqlite.prepare(
@@ -638,6 +638,12 @@ impl GraphBackend {
         for r in rows {
             all_nodes.push(r?);
         }
+        Ok(all_nodes)
+    }
+
+    /// Obtiene el árbol completo de exploración estructurado jerárquicamente con scores UCT / UCB1 para MCTS
+    pub fn get_trajectory_tree(&self, trajectory_id: &str) -> Result<Vec<ExplorationTreeNode>> {
+        let all_nodes = self.get_exploration_nodes(trajectory_id)?;
 
         // Agrupar por parent_id
         let mut children_by_parent: HashMap<Option<String>, Vec<ExplorationNode>> = HashMap::new();

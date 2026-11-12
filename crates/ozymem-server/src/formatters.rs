@@ -604,6 +604,13 @@ pub(crate) fn inject_dream_insights_if_available(body: &mut String, root_path: O
                 if let Some(habits) = val.get("procedural_habits").and_then(|v| v.as_array()) {
                     body.push_str(&format!("- Basal Ganglia Procedural Habits: {} active playbooks\n", habits.len()));
                 }
+                if let Some(opt_policy) = val.get("optimal_exploration_policy") {
+                    if let Some(p_name) = opt_policy.get("name").and_then(|v| v.as_str()) {
+                        let gain = opt_policy.get("efficiency_gain_pct").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let c_puct = opt_policy.get("c_puct").and_then(|v| v.as_f64()).unwrap_or(1.414);
+                        body.push_str(&format!("- Calibrated Exploration Policy: '{}' (c_puct: {:.2}, +{:.1}% efficiency gain)\n", p_name, c_puct, gain));
+                    }
+                }
                 if let Some(summary) = val.get("summary").and_then(|v| v.as_str()) {
                     body.push_str(&format!("- Sleep Synthesis: {}\n", summary));
                 }
