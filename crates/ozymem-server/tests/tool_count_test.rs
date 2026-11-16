@@ -1,12 +1,13 @@
 use ozymem_server::handle_request;
 use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_mcp_tool_count_matches_docs_and_schemas() {
     // 1. By default, only active unified tools starting with 'ozy_' are visible (25 tools)
-    let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+    let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
     let request = mcp_common::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         id: Some(serde_json::json!(1)),
@@ -21,8 +22,8 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
 
     assert_eq!(
         active_tools.len(),
-        26,
-        "Default active tools must be exactly 26 as documented in README.md"
+        27,
+        "Default active tools must be exactly 27 as documented in README.md"
     );
 
     for tool in active_tools {
@@ -46,9 +47,9 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
         let readme_content = std::fs::read_to_string(&readme_path)
             .expect("should read workspace README.md");
         assert!(
-            readme_content.contains("26 unified native MCP tools")
-                || readme_content.contains("26 active tools")
-                || readme_content.contains("25 unified native MCP tools"),
+            readme_content.contains("27 unified native MCP tools")
+                || readme_content.contains("27 active tools")
+                || readme_content.contains("26 unified native MCP tools"),
             "README.md must explicitly mention active/unified tools"
         );
         assert!(

@@ -1,8 +1,9 @@
 use ozymem_core::graph_backend::GraphBackend;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::RwLock;
 
 /// Global epoch seconds of the last recorded MCP tool or resource interaction.
 pub static LAST_MCP_ACTIVITY_EPOCH_SECS: AtomicU64 = AtomicU64::new(0);
@@ -51,7 +52,7 @@ pub fn resolve_idle_timeout_secs() -> u64 {
 
 /// Spawns the low-overhead background inactivity daemon.
 /// Runs at zero CPU overhead during normal agent coding sessions.
-pub fn start_idle_watcher(backend: Arc<Mutex<Option<GraphBackend>>>) -> tokio::task::JoinHandle<()> {
+pub fn start_idle_watcher(backend: Arc<RwLock<Option<GraphBackend>>>) -> tokio::task::JoinHandle<()> {
     touch_activity();
 
     tokio::spawn(async move {
@@ -73,7 +74,7 @@ pub fn start_idle_watcher(backend: Arc<Mutex<Option<GraphBackend>>>) -> tokio::t
                 && !DREAM_CYCLE_RUNNING.swap(true, Ordering::SeqCst)
             {
                 let project_path_opt = {
-                    let guard = backend.lock().unwrap();
+                    let guard = backend.read().await;
                     guard.as_ref().and_then(|gb| gb.project_path())
                 };
 
@@ -116,7 +117,7 @@ pub fn start_idle_watcher(backend: Arc<Mutex<Option<GraphBackend>>>) -> tokio::t
                     let backend_replay = backend.clone();
                     let proj_path_for_sweep = project_path.clone();
                     let replay_task = tokio::task::spawn_blocking(move || {
-                        let guard = backend_replay.lock().unwrap();
+                        let guard = backend_replay.blocking_read();
                         if let Some(ref gb) = *guard {
                             gb.run_offline_counterfactual_dream_sweep(Some(&proj_path_for_sweep))
                         } else {

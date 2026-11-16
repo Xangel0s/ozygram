@@ -72,3 +72,98 @@ pub(crate) fn handle_lookup_engram(
     })
 }
 
+pub(crate) fn handle_read_blob(
+    backend: &ozymem_core::graph_backend::GraphBackend,
+    tool_call: &ozymem_core::mcp_common::ToolCallParams,
+) -> anyhow::Result<ozymem_core::mcp_common::ToolCallResult> {
+    use ozymem_core::mcp_common::{ContentBlock, ToolCallResult};
+    use std::path::Path;
+
+    let blob_id = tool_call
+        .arguments
+        .get("blob_id")
+        .or_else(|| tool_call.arguments.get("uri"))
+        .or_else(|| tool_call.arguments.get("path"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required parameter 'blob_id'"))?;
+
+    let offset = tool_call
+        .arguments
+        .get("offset")
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+        .unwrap_or(0) as usize;
+
+    let limit = tool_call
+        .arguments
+        .get("limit")
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+        .unwrap_or(200) as usize;
+
+    let hash = if let Some(stripped) = blob_id.strip_prefix("blob://") {
+        stripped.trim_start_matches(".ozymem/blobs/").trim_start_matches(".ozymem\\blobs\\").trim_end_matches(".txt")
+    } else if let Some(stripped) = blob_id.strip_prefix("ozymem://blob/") {
+        stripped.trim_end_matches(".txt")
+    } else {
+        blob_id.trim_start_matches(".ozymem/blobs/").trim_start_matches(".ozymem\\blobs\\").trim_end_matches(".txt")
+    };
+
+    let blob_dir = match backend.project_path() {
+        Some(root) => Path::new(&root).join(".ozymem").join("blobs"),
+        None => Path::new(".ozymem").join("blobs"),
+    };
+
+    let target_file = blob_dir.join(format!("{hash}.txt"));
+    let target_file = if target_file.exists() {
+        target_file
+    } else {
+        blob_dir.join(blob_id)
+    };
+
+    if !target_file.exists() {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock {
+                kind: "text",
+                text: format!("[ALERT: BLOB_NOT_FOUND] Blob '{blob_id}' not found in {}", blob_dir.display()),
+            }],
+            is_error: Some(true),
+        });
+    }
+
+    let full_text = std::fs::read_to_string(&target_file)?;
+    let lines: Vec<&str> = full_text.lines().collect();
+    let total_lines = lines.len();
+
+    let start = offset.min(total_lines);
+    let end = (offset + limit).min(total_lines);
+    let slice = &lines[start..end];
+    let has_more = end < total_lines;
+
+    let mut body = format!(
+        "[OZY_BLOB: {}] (Lines {}-{} of {}, has_more: {})\n\n",
+        hash,
+        if total_lines == 0 { 0 } else { start + 1 },
+        end,
+        total_lines,
+        has_more
+    );
+    body.push_str(&slice.join("\n"));
+
+    if has_more {
+        body.push_str(&format!(
+            "\n\n[NOTE: Use ozy_read_blob(blob_id=\"{}\", offset={}, limit={}) to continue reading.]",
+            hash,
+            end,
+            limit
+        ));
+    }
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: body,
+        }],
+        is_error: None,
+    })
+}
+
+

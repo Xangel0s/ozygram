@@ -5,12 +5,13 @@ use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common;
 use ozymem_core::McpBackend;
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 
     #[tokio::test]
     async fn test_tool_call_before_initialize_returns_error() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -46,7 +47,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_initialize_sets_backend_and_returns_ok() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         // Create a temp dir manually (avoid tempfile dev-dep)
         let tmp_root =
@@ -82,7 +83,7 @@ use std::sync::{Arc, Mutex};
         );
 
         // Verify backend was set
-        let guard = backend.lock().unwrap();
+        let guard = backend.read().await;
         assert!(guard.is_some(), "backend should be set after initialize");
 
         // Cleanup
@@ -119,7 +120,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_initialize_with_root_uri() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_rooturi_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -142,14 +143,14 @@ use std::sync::{Arc, Mutex};
         assert!(response.is_some());
         let resp = response.unwrap();
         assert!(resp.error.is_none(), "initialize with rootUri should succeed: {:?}", resp.error);
-        assert!(backend.lock().unwrap().is_some());
+        assert!(backend.read().await.is_some());
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
 
     #[tokio::test]
     async fn test_initialize_with_root_path() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_rootpath_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -171,7 +172,7 @@ use std::sync::{Arc, Mutex};
         assert!(response.is_some());
         let resp = response.unwrap();
         assert!(resp.error.is_none(), "initialize with rootPath should succeed: {:?}", resp.error);
-        assert!(backend.lock().unwrap().is_some());
+        assert!(backend.read().await.is_some());
 
         std::fs::remove_dir_all(&tmp_root).ok();
     }
@@ -204,7 +205,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_context_for_task_empty_results() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_cft_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -235,7 +236,7 @@ use std::sync::{Arc, Mutex};
 
         // Run a quick scan before calling context_for_task
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             if let Some(ref gb) = *guard {
                 gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
             }
@@ -283,7 +284,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_context_for_task_stale_lessons_excluded() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_cft_stale_{}", std::process::id()));
@@ -316,7 +317,7 @@ use std::sync::{Arc, Mutex};
 
         // Run scan, then record two lessons on the same file with overlapping query keywords
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
 
@@ -394,7 +395,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_context_for_task_truncation_boundary() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_cft_trunc_{}", std::process::id()));
@@ -429,7 +430,7 @@ use std::sync::{Arc, Mutex};
         // sections at the token boundary.  We keep lesson content short enough
         // to fit in the budget so the File context section triggers the cut.
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
 
@@ -448,7 +449,7 @@ use std::sync::{Arc, Mutex};
         // Also write a second source file to generate more file-context output
         std::fs::write(tmp_root.join("utils.rs"), "fn helper() {} fn compute() {}").unwrap();
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
         }
@@ -503,7 +504,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_initialize_includes_resources_and_prompts_capabilities() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_init_caps_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -560,7 +561,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resources_list_before_initialize_returns_error() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -575,7 +576,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resources_list_returns_resources() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_res_list_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -625,7 +626,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resources_read_summary() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_res_sum_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -674,7 +675,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resources_read_dream_insights() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_dream_insights_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -759,7 +760,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resources_read_blob_spillover() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_blob_read_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -823,7 +824,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resources_read_file_context() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_res_ctx_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -848,7 +849,7 @@ use std::sync::{Arc, Mutex};
 
         // Run scan
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
         }
@@ -885,7 +886,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resources_read_unknown_uri_returns_error() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_res_bad_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -925,7 +926,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_resource_templates_list() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -952,7 +953,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_prompts_list_returns_prompts() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -980,7 +981,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_prompts_get_before_initialize_returns_error() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -997,7 +998,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_prompts_get_analyze_file() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_prompt_af_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -1020,7 +1021,7 @@ use std::sync::{Arc, Mutex};
             .await
             .unwrap();
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
         }
@@ -1059,7 +1060,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_prompts_get_review_lessons() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_prompt_rl_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -1084,7 +1085,7 @@ use std::sync::{Arc, Mutex};
         let main_abs = tmp_root.join("main.rs").to_string_lossy().to_string();
 
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
             gb.record_lesson(&main_abs, Some("main"), "test error", "test solution")
@@ -1127,7 +1128,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_prompts_get_unknown_prompt_returns_error() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_prompt_unk_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -1201,7 +1202,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_initialize_includes_sampling_and_completions_capabilities() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join("ozymem_test_sampling_caps");
         std::fs::create_dir_all(&tmp_root).ok();
         let proj_uri = format!("file://{}", tmp_root.to_string_lossy().replace('\\', "/"));
@@ -1237,7 +1238,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_tools_list_pagination_no_cursor() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -1268,7 +1269,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_tools_list_pagination_with_cursor() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -1287,7 +1288,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_completions_unknown_prompt_returns_empty() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -1306,7 +1307,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_completions_invalid_params_returns_error() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -1356,7 +1357,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_tools_list_exposes_unified_tools_and_hides_legacy() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -1403,7 +1404,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_ozy_skills_lists_official_metadata_without_backend() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
@@ -1667,7 +1668,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_ozy_code_doctor_detects_duplicate_blocks() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root =
             std::env::temp_dir().join(format!("ozymem_test_code_doctor_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -1688,7 +1689,7 @@ use std::sync::{Arc, Mutex};
             .await
             .unwrap();
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             guard
                 .as_ref()
                 .unwrap()
@@ -1718,7 +1719,7 @@ use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_tool_lookup_engram() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_engram_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -1742,7 +1743,7 @@ pub fn authenticate(user: &str, token: &str) -> bool {
             .await
             .unwrap();
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             guard
                 .as_ref()
                 .unwrap()
@@ -1775,7 +1776,7 @@ pub fn authenticate(user: &str, token: &str) -> bool {
 
     #[tokio::test]
     async fn test_task_context_injects_engram_prefill() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_task_engram_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -1799,7 +1800,7 @@ pub fn process_payment(amount: f64) -> Result<(), String> {
             .await
             .unwrap();
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).unwrap();
             gb.record_lesson("payment.rs", Some("process_payment"), "error amount negative", "validate amount > 0").await.unwrap();
@@ -1830,7 +1831,7 @@ pub fn process_payment(amount: f64) -> Result<(), String> {
 
     #[tokio::test]
     async fn test_speculative_engrams_prefetching() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_speculative_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -1867,7 +1868,7 @@ pub fn get_user_by_id(id: u64) -> Option<String> {
             .unwrap();
 
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).unwrap();
             gb.record_lesson("order.rs", Some("create_order"), "invalid total", "validate total > 0").await.unwrap();
@@ -1906,7 +1907,7 @@ pub fn get_user_by_id(id: u64) -> Option<String> {
 
     #[tokio::test]
     async fn test_tool_verify_diff_sandboxed_and_guidance() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_verify_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -1976,7 +1977,7 @@ fn main() {
 
     #[tokio::test]
     async fn test_git_notes_export_and_import_roundtrip() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_git_notes_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -2008,7 +2009,7 @@ pub fn audit_log(event: &str) -> bool {
         handle_request(&backend_ref, init, None, None).await.unwrap();
 
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let gb = guard.as_ref().unwrap();
             gb.full_scan(&tmp_root.to_string_lossy(), None).unwrap();
             gb.record_lesson("audit.rs", Some("audit_log"), "event empty error", "validate event len > 0").await.unwrap();
@@ -2038,7 +2039,7 @@ pub fn audit_log(event: &str) -> bool {
 
         // 3. Clear local SQLite memory by removing .ozymem and reinitializing
         {
-            let mut guard = backend_ref.lock().unwrap();
+            let mut guard = backend_ref.write().await;
             *guard = None;
         }
         let _ = std::fs::remove_dir_all(tmp_root.join(".ozymem"));
@@ -2054,7 +2055,7 @@ pub fn audit_log(event: &str) -> bool {
         handle_request(&backend_ref, reinit, None, None).await.unwrap();
 
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let gb = guard.as_ref().unwrap();
             let lessons = gb.recent_lessons(None, 10).await.unwrap();
             assert_eq!(lessons.len(), 0, "Lessons should be empty on fresh DB");
@@ -2081,7 +2082,7 @@ pub fn audit_log(event: &str) -> bool {
 
         // 5. Verify restored lessons
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let gb = guard.as_ref().unwrap();
             let lessons = gb.recent_lessons(None, 10).await.unwrap();
             assert_eq!(lessons.len(), 1, "Lesson must be restored from git note");
@@ -2093,13 +2094,13 @@ pub fn audit_log(event: &str) -> bool {
 
     #[tokio::test]
     async fn test_doctor_reports_embedding_status() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_doc_emb_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
 
         let gb = GraphBackend::open_for_project(&tmp_root).unwrap();
-        *backend.lock().unwrap() = Some(gb);
+        *backend.write().await = Some(gb);
 
         let request = mcp_common::JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -2126,13 +2127,13 @@ pub fn audit_log(event: &str) -> bool {
 
     #[tokio::test]
     async fn test_install_git_hook_tool_and_doctor_check() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_git_hook_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(tmp_root.join(".git")).unwrap();
 
         let gb = GraphBackend::open_for_project(&tmp_root).unwrap();
-        *backend.lock().unwrap() = Some(gb);
+        *backend.write().await = Some(gb);
 
         // 1. Initial doctor check: git_hook warning
         let doc_req = mcp_common::JsonRpcRequest {
@@ -2191,7 +2192,7 @@ pub fn audit_log(event: &str) -> bool {
 
     #[tokio::test]
     async fn test_exploration_mcp_lifecycle_and_tree() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mcp_exploration_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -2336,7 +2337,7 @@ pub fn audit_log(event: &str) -> bool {
 
     #[tokio::test]
     async fn test_exploration_mcp_batch_and_diagnose() {
-        let backend = Arc::new(Mutex::new(None));
+        let backend = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mcp_batch_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -2441,7 +2442,7 @@ pub fn audit_log(event: &str) -> bool {
 
     #[tokio::test]
     async fn test_simulate_action_mcp_with_exploration_trajectory() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mcp_simulate_action_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -2532,7 +2533,7 @@ pub fn audit_log(event: &str) -> bool {
 
     #[tokio::test]
     async fn test_ozy_graph_memory_neighborhood_and_task_context_mcp() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_graph_mcp_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -2553,7 +2554,7 @@ pub fn audit_log(event: &str) -> bool {
         let file_path = "crates/ozymem-core/src/graph_backend/schema.rs";
         let coupled_file = "crates/ozymem-server/src/unified.rs";
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             gb.record_lesson(
                 file_path,
@@ -2631,7 +2632,7 @@ pub fn audit_log(event: &str) -> bool {
 
     #[tokio::test]
     async fn test_tools_symbol_extraction_file_tree_and_ast_replace() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_symbols_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -2808,7 +2809,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_diagnostics_quick_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_diag_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -2917,7 +2918,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_search_literal_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_search_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3051,7 +3052,7 @@ export function handleReorderCard(a: number, b: number) {
     #[tokio::test]
     async fn test_tools_doctor_excel_data_mcp() {
         use std::io::Write;
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_excel_data_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3219,7 +3220,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_doctor_scaffold_lab_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_scaffold_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3285,7 +3286,7 @@ export function handleReorderCard(a: number, b: number) {
             return;
         }
 
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_real_large_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp_root);
         let uri = format!("file:///{}", tmp_root.to_string_lossy().replace('\\', "/"));
@@ -3328,7 +3329,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_context_multi_token_cascade_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_cascade_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(tmp_root.join("app/modules/carga_puntual")).unwrap();
@@ -3363,7 +3364,7 @@ export function handleReorderCard(a: number, b: number) {
 
         // Ensure synchronous full_scan has completed indexing before querying context
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             if let Some(ref gb) = *guard {
                 gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
             }
@@ -3397,7 +3398,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_ast_patch_indent_alignment_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_patch_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3452,7 +3453,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_ozy_patch_meta_tool_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_meta_patch_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3503,7 +3504,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_ozy_plan_meta_tool_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_meta_plan_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3558,7 +3559,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_ast_patch_fuzzy_block_tolerance_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_fuzzy_patch_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3614,7 +3615,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_ozy_graph_incoming_dependencies_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_incoming_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3642,7 +3643,7 @@ export function handleReorderCard(a: number, b: number) {
 
         // Ensure full_scan has completed synchronously for this test
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             if let Some(ref gb) = *guard {
                 let _ = gb.full_scan(&tmp_root.to_string_lossy(), None);
             }
@@ -3676,7 +3677,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_find_references_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_find_refs_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3703,7 +3704,7 @@ export function handleReorderCard(a: number, b: number) {
         handle_request(&backend_ref, init_req, None, None).await.unwrap();
 
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             if let Some(ref gb) = *guard {
                 let _ = gb.full_scan(&tmp_root.to_string_lossy(), None);
             }
@@ -3738,7 +3739,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_ozy_doctor_audit_migrations_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_doctor_sql_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3784,7 +3785,7 @@ export function handleReorderCard(a: number, b: number) {
 
     #[tokio::test]
     async fn test_tools_view_skeleton_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_skel_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -3848,7 +3849,7 @@ export class RecepcionService extends BaseService {
 
     #[tokio::test]
     async fn test_tools_context_and_exploration_lod_levels() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_lod_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -3999,7 +4000,7 @@ export class RecepcionService extends BaseService {
 
     #[tokio::test]
     async fn test_tools_get_symbol_session_deduplicator() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_dedup_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
@@ -4026,7 +4027,7 @@ export class RecepcionService extends BaseService {
         std::fs::write(&ts_file, ts_content).unwrap();
 
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let b = guard.as_ref().unwrap();
             b.full_scan(&tmp_root.to_string_lossy(), None).unwrap();
         }
@@ -4092,7 +4093,7 @@ export class RecepcionService extends BaseService {
 
     #[tokio::test]
     async fn test_ozy_graph_endpoint_dependents_mcp() {
-        let backend_ref = Arc::new(Mutex::new(None));
+        let backend_ref = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_endpoint_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&tmp_root).unwrap();
 
@@ -4145,7 +4146,7 @@ export function ControlSig() {
 
         // 2. Index files
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let backend = guard.as_ref().unwrap();
             backend.index_file_delta(&py_file, &tmp_root).unwrap();
             backend.index_file_delta(&tsx_file, &tmp_root).unwrap();
@@ -4200,7 +4201,7 @@ export function ControlSig() {
 
     #[tokio::test]
     async fn test_ozy_graph_table_lineage_mcp() {
-        let backend_ref = Arc::new(Mutex::new(None));
+        let backend_ref = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_mcp_tbl_lineage_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&tmp_root).unwrap();
 
@@ -4248,7 +4249,7 @@ class ControlProbeta(SQLModel, table=True):
 
         // 2. Index files
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let backend = guard.as_ref().unwrap();
             backend.index_file_delta(&sql_file, &tmp_root).unwrap();
             backend.index_file_delta(&py_model, &tmp_root).unwrap();
@@ -4303,7 +4304,7 @@ class ControlProbeta(SQLModel, table=True):
 
     #[tokio::test]
     async fn test_ozy_simulate_patch_mcp() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_ghost_mcp_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -4331,7 +4332,7 @@ class ControlProbeta(SQLModel, table=True):
         handle_request(&backend_ref, init_req, None, None).await.unwrap();
 
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let backend = guard.as_ref().unwrap();
             backend.index_file_delta(&calcs_file, &tmp_root).unwrap();
             backend.index_file_delta(&service_file, &tmp_root).unwrap();
@@ -4394,7 +4395,7 @@ class ControlProbeta(SQLModel, table=True):
 
     #[tokio::test]
     async fn test_ozy_doctor_code_action_consolidation() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_doctor_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -4468,7 +4469,7 @@ class ControlProbeta(SQLModel, table=True):
 
     #[tokio::test]
     async fn test_git_first_markdown_memories_mcp_flow() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_git_mem_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -4592,7 +4593,7 @@ Always use context manager with SessionLocal() as db.
 
     #[tokio::test]
     async fn test_ozy_brain_fails_fast_when_goal_is_missing() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_brain_failfast_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -4654,7 +4655,7 @@ Always use context manager with SessionLocal() as db.
         let tmp_root = std::env::temp_dir().join(format!("test_expl_auto_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&tmp_root).unwrap();
 
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         // 1. Initialize
         let init_req = mcp_common::JsonRpcRequest {
@@ -4814,7 +4815,7 @@ Always use context manager with SessionLocal() as db.
 
     #[tokio::test]
     async fn test_consolidated_mcp_actions_exploration_and_git_notes() {
-        let backend_ref: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend_ref: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_consolidated_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -4902,7 +4903,7 @@ Always use context manager with SessionLocal() as db.
 
         // 5. Test ozy_memory with consolidated action: "export_git_notes" and "import_git_notes"
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let gb = guard.as_ref().unwrap();
             gb.record_lesson("pool.rs", Some("check_pool"), "lock timeout", "use non-blocking pool acquire").await.unwrap();
         }
@@ -4944,7 +4945,7 @@ Always use context manager with SessionLocal() as db.
 
     #[tokio::test]
     async fn test_ozy_context_amygdala_reflex_interception() {
-        let backend_ref = Arc::new(Mutex::new(None));
+        let backend_ref = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_amygdala_mcp_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(tmp_root.join("src")).unwrap();
@@ -4974,7 +4975,7 @@ Always use context manager with SessionLocal() as db.
 
         // Insert Amygdala reflex directly into backend
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let b = guard.as_ref().unwrap();
             let reflex = ozymem_core::graph_backend::types::AmygdalaReflexEntry {
                 id: String::new(),
@@ -5025,7 +5026,7 @@ Always use context manager with SessionLocal() as db.
 
     #[tokio::test]
     async fn test_ozy_context_procedural_playbook_interception() {
-        let backend_ref = Arc::new(Mutex::new(None));
+        let backend_ref = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_habits_mcp_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(tmp_root.join("src")).unwrap();
@@ -5054,7 +5055,7 @@ Always use context manager with SessionLocal() as db.
 
         // Insert procedural habit
         {
-            let guard = backend_ref.lock().unwrap();
+            let guard = backend_ref.read().await;
             let b = guard.as_ref().unwrap();
             let habit = ozymem_core::graph_backend::types::ProceduralHabitEntry {
                 id: String::new(),
@@ -5104,7 +5105,7 @@ Always use context manager with SessionLocal() as db.
 
     #[tokio::test]
     async fn test_ozy_memory_save_with_data_fallback_and_auto_title() {
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_mem_fallback_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -5154,7 +5155,7 @@ Always use context manager with SessionLocal() as db.
     async fn test_fuzzy_task_context_and_excel_template_doctor() {
         use std::io::Write;
 
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
         let tmp_root = std::env::temp_dir().join(format!("ozymem_test_fuzzy_excel_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp_root);
         std::fs::create_dir_all(&tmp_root).unwrap();
@@ -5221,7 +5222,7 @@ def build_formato_filename(muestra, codigo, nombre):
 
         // Ensure synchronous full_scan has completed indexing before querying context
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             if let Some(ref gb) = *guard {
                 gb.full_scan(&tmp_root.to_string_lossy(), None).ok();
             }
@@ -5340,7 +5341,7 @@ def build_formato_filename(muestra, codigo, nombre):
         ));
         std::fs::create_dir_all(&tmp_root).unwrap();
 
-        let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
 
         // 1. Initialize
         let init_req = mcp_common::JsonRpcRequest {
@@ -5358,7 +5359,7 @@ def build_formato_filename(muestra, codigo, nombre):
 
         // 2. Start trajectory and record nodes
         let traj_id = {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             let id = gb.start_trajectory(&tmp_root.to_string_lossy(), "Task to optimize via Dream-RSI", Some("v1.0")).unwrap();
             gb.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
@@ -5430,10 +5431,184 @@ def build_formato_filename(muestra, codigo, nombre):
 
         // 4. Verify that simulations are persisted to SQLite table dream_counterfactual_simulations
         {
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let gb = guard.as_ref().unwrap();
             let sims = gb.get_counterfactual_simulations(&traj_id).unwrap();
             assert!(!sims.is_empty(), "Must persist counterfactual simulations to SQLite");
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_ozy_read_blob_paginated() {
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_blob_{}_{}", std::process::id(), 101));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        let blobs_dir = tmp_root.join(".ozymem").join("blobs");
+        std::fs::create_dir_all(&blobs_dir).unwrap();
+
+        let blob_content = (1..=10).map(|i| format!("Line {i}")).collect::<Vec<_>>().join("\n");
+        std::fs::write(blobs_dir.join("test_hash_456.txt"), &blob_content).unwrap();
+
+        let gb = GraphBackend::open_for_project(&tmp_root).unwrap();
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(Some(gb)));
+
+        // Test valid read with pagination offset=2, limit=3
+        let req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_read_blob",
+                "arguments": {
+                    "blob_id": "test_hash_456",
+                    "offset": 2,
+                    "limit": 3
+                }
+            })),
+        };
+        let resp = handle_request(&backend, req, None, None).await.unwrap().unwrap();
+        assert!(resp.error.is_none());
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(text.contains("[OZY_BLOB: test_hash_456]"));
+        assert!(text.contains("Lines 3-5 of 10, has_more: true"));
+        assert!(text.contains("Line 3\nLine 4\nLine 5"));
+        assert!(text.contains("ozy_read_blob(blob_id=\"test_hash_456\", offset=5, limit=3)"));
+
+        // Test reading with string offset and limit
+        let str_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(2)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_read_blob",
+                "arguments": {
+                    "blob_id": "test_hash_456",
+                    "offset": "2",
+                    "limit": "3"
+                }
+            })),
+        };
+        let str_resp = handle_request(&backend, str_req, None, None).await.unwrap().unwrap();
+        assert!(str_resp.error.is_none());
+        let str_text = str_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(str_text.contains("Lines 3-5 of 10"));
+
+        // Test nonexistent blob returns alert
+        let bad_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(3)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_read_blob",
+                "arguments": {
+                    "blob_id": "nonexistent_hash"
+                }
+            })),
+        };
+        let bad_resp = handle_request(&backend, bad_req, None, None).await.unwrap().unwrap();
+        let bad_text = bad_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(bad_text.contains("[ALERT: BLOB_NOT_FOUND]"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[test]
+    fn test_extract_domain_with_root_various_architectures() {
+        use ozymem_server::formatters::extract_domain_with_root;
+
+        // 1. Rust crate monorepo
+        let c1 = extract_domain_with_root("C:/projects/ozygram/crates/ozymem-core/src/lib.rs", Some("C:/projects/ozygram"));
+        assert_eq!(c1, "crates/ozymem-core");
+
+        // 2. Fullstack mixed monorepo (e.g. crmnew)
+        let c2 = extract_domain_with_root("C:/workspace/crmnew/api-geofal-crm/routes/orders.py", Some("C:/workspace/crmnew"));
+        assert_eq!(c2, "api-geofal-crm");
+
+        let c3 = extract_domain_with_root("C:/workspace/crmnew/crm-geofal/src/App.tsx", Some("C:/workspace/crmnew"));
+        assert_eq!(c3, "crm-geofal");
+
+        // 3. Linux path with apps/
+        let c4 = extract_domain_with_root("/repo/apps/web/main.ts", Some("/repo"));
+        assert_eq!(c4, "apps/web");
+
+        // 4. Relative paths without root
+        let c5 = extract_domain_with_root("packages/client/index.js", None);
+        assert_eq!(c5, "packages/client");
+
+        let c6 = extract_domain_with_root("main.rs", None);
+        assert_eq!(c6, "root");
+    }
+
+    #[tokio::test]
+    async fn test_ozy_plan_dynamic_subagent_partition() {
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_plan_{}_{}", std::process::id(), 202));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        let core_dir = tmp_root.join("crates").join("core");
+        let web_dir = tmp_root.join("apps").join("web");
+        std::fs::create_dir_all(&core_dir).unwrap();
+        std::fs::create_dir_all(&web_dir).unwrap();
+
+        std::fs::write(core_dir.join("lib.rs"), "pub fn compute() {}").unwrap();
+        std::fs::write(web_dir.join("main.ts"), "export function render() {}").unwrap();
+
+        let gb = GraphBackend::open_for_project(&tmp_root).unwrap();
+        gb.full_scan(tmp_root.to_str().unwrap(), None).unwrap();
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(Some(gb)));
+
+        let plan_req = mcp_common::JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": "ozy_plan",
+                "arguments": {
+                    "goal": "Refactor compute algorithm and update web UI"
+                }
+            })),
+        };
+
+        let resp = handle_request(&backend, plan_req, None, None).await.unwrap().unwrap();
+        assert!(resp.error.is_none());
+        let text = resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+
+        assert!(text.contains("=== OZY MULTI-AGENT DOMAIN PARTITION ==="));
+        assert!(text.contains("\"domains_detected\""));
+        assert!(text.contains("\"domains_affected\""));
+        assert!(text.contains("\"subagent_tasks\""));
+        assert!(text.contains("crates/core"));
+        assert!(text.contains("apps/web"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_reads_tokio_rwlock() {
+        let tmp_root = std::env::temp_dir().join(format!("ozymem_test_concurrent_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_root);
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        let gb = GraphBackend::open_for_project(&tmp_root).unwrap();
+        let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(Some(gb)));
+
+        // Spawn 10 concurrent requests to tools/list
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let b = backend.clone();
+            handles.push(tokio::spawn(async move {
+                let req = mcp_common::JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: Some(json!(i)),
+                    method: "tools/list".to_string(),
+                    params: None,
+                };
+                let resp = handle_request(&b, req, None, None).await.unwrap().unwrap();
+                assert!(resp.error.is_none());
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
         }
 
         let _ = std::fs::remove_dir_all(&tmp_root);

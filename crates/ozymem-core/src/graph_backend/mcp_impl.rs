@@ -94,23 +94,44 @@ impl McpBackend for GraphBackend {
 
     async fn get_file_context(&self, file_path: &str) -> Result<Option<FileGraphContext>> {
         let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
-        let norm_path = crate::normalize_path(file_path);
+        let (raw, norm, clean) = crate::graph_backend::sqlite_backend::normalize_query_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = inner
             .sqlite
-            .prepare("SELECT language, path FROM files WHERE (path = ?1 OR path = ?2 OR path = ?3) AND tenant_id = ?4 LIMIT 1")?;
+            .prepare(
+                "SELECT language, path FROM files 
+                 WHERE (path = ?1 
+                    OR path = ?2 
+                    OR path = ?3 
+                    OR replace(path, '\\', '/') = ?2 
+                    OR replace(path, '\\', '/') LIKE '%/' || ?4 
+                    OR ?2 LIKE '%/' || replace(path, '\\', '/')) 
+                   AND tenant_id = ?5 
+                 ORDER BY CASE 
+                   WHEN path = ?1 THEN 0 
+                   WHEN path = ?3 THEN 1 
+                   WHEN path = ?2 THEN 2 
+                   WHEN replace(path, '\\', '/') = ?2 THEN 3 
+                   WHEN replace(path, '\\', '/') LIKE '%/' || ?4 THEN 4 
+                   ELSE 5 
+                 END, length(path) ASC 
+                 LIMIT 1",
+            )?;
         let (language, actual_path): (String, String) =
-            match stmt.query_row(params![file_path, norm_path, resolved, self.tenant_id], |row| Ok((row.get(0)?, row.get(1)?))) {
+            match stmt.query_row(params![raw, norm, resolved, clean, self.tenant_id], |row| Ok((row.get(0)?, row.get(1)?))) {
                 Ok(v) => v,
                 Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
                 Err(e) => return Err(e.into()),
             };
 
         let mut func_stmt = inner.sqlite.prepare(
-            "SELECT name, kind, start_line, end_line, strategy FROM functions WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3 ORDER BY start_line, name"
+            "SELECT name, kind, start_line, end_line, strategy FROM functions 
+             WHERE (file_path = ?1 OR file_path = ?2 OR replace(file_path, '\\', '/') = ?3) 
+               AND tenant_id = ?4 
+             ORDER BY start_line, name"
         )?;
         let funcs: Vec<StoredFunction> = func_stmt
-            .query_map(params![file_path, actual_path, self.tenant_id], |row| {
+            .query_map(params![raw, actual_path, norm, self.tenant_id], |row| {
                 Ok(StoredFunction {
                     name: row.get(0)?,
                     kind: row.get(1)?,
@@ -143,7 +164,9 @@ impl McpBackend for GraphBackend {
         let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
         let mut stmt = match inner.sqlite.prepare(
-            "SELECT DISTINCT solution FROM lessons WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND tenant_id = ?4 AND solution != ''"
+            "SELECT DISTINCT solution FROM lessons 
+             WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3 OR file_path LIKE '%' || ?2 OR replace(file_path, '\\', '/') LIKE '%' || replace(?2, '\\', '/')) 
+               AND tenant_id = ?4 AND solution != ''"
         ) {
             Ok(s) => s,
             Err(_) => return Ok(vec![]),
@@ -338,7 +361,7 @@ impl McpBackend for GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
-             WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND tenant_id = ?4 AND (workspace_root = ?5 OR workspace_root = '')
+             WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3 OR file_path LIKE '%' || ?2 OR replace(file_path, '\\', '/') LIKE '%' || replace(?2, '\\', '/')) AND tenant_id = ?4 AND (workspace_root = ?5 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
         let rows = stmt.query_map(
@@ -363,7 +386,7 @@ impl McpBackend for GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT id, file_path, symbol_name, error_context, solution, kind, created_at, COALESCE(stale,0), stale_reason, COALESCE(confidence_score, 1.0), COALESCE(touch_count, 0), COALESCE(last_verified_at, '')
              FROM lessons
-             WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3) AND symbol_name = ?4 AND tenant_id = ?5 AND (workspace_root = ?6 OR workspace_root = '')
+             WHERE (file_path = ?1 OR file_path = ?2 OR file_path = ?3 OR file_path LIKE '%' || ?2 OR replace(file_path, '\\', '/') LIKE '%' || replace(?2, '\\', '/')) AND symbol_name = ?4 AND tenant_id = ?5 AND (workspace_root = ?6 OR workspace_root = '')
              ORDER BY id DESC"
         )?;
         let rows = stmt.query_map(
@@ -436,17 +459,20 @@ impl McpBackend for GraphBackend {
     }
 
     async fn find_symbol(&self, symbol_name: &str, project_path: &str) -> Result<Vec<String>> {
+        let norm_proj = crate::normalize_path(project_path);
         let inner = self.inner.lock().unwrap();
-        let like = format!("{}%", project_path);
+        let like1 = format!("{}%", project_path);
+        let like2 = format!("{}%", norm_proj);
         // Use LIKE for partial matching (supports % wildcards in symbol_name)
         let mut stmt = inner.sqlite.prepare(
             "SELECT f.path, fn.start_line, fn.kind FROM functions fn
              JOIN files f ON f.path = fn.file_path AND f.tenant_id = fn.tenant_id
-             WHERE fn.name LIKE ?1 AND fn.tenant_id = ?2 AND f.path LIKE ?3
+             WHERE fn.name LIKE ?1 AND fn.tenant_id = ?2 
+               AND (f.path LIKE ?3 OR f.path LIKE ?4 OR replace(f.path, '\\', '/') LIKE ?4)
              ORDER BY fn.name LIMIT 100",
         )?;
         let results: Vec<String> = stmt
-            .query_map(params![symbol_name, self.tenant_id, like], |row| {
+            .query_map(params![symbol_name, self.tenant_id, like1, like2], |row| {
                 let path: String = row.get(0)?;
                 let line: i64 = row.get(1)?;
                 let kind: String = row.get(2)?;

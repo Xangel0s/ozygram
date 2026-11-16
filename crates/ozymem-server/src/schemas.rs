@@ -57,7 +57,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_context",
-                    description: "[MANDATORY PRIMARY CODE EXPLORATION & SEARCH TOOL] REPLACES raw read_file, grep, and terminal findstr/Get-ChildItem. Retrieves AST contracts, function signatures, dependency cones, Gotcha prevention alerts, and Ozydream offline insights in < 1ms without token bloat. Actions: 'task' (intelligent multi-token search finding files and symbols in 1 step), 'file' (extracts AST skeleton with lod='contracts'), 'project' (architecture topology and offline dream insights). Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
+                    description: "[MANDATORY STEP 2: AST CONTRACTS & SYMBOLS EXTRACTOR] [MANDATORY PRIMARY CODE EXPLORATION & SEARCH TOOL] REPLACES raw read_file, grep, and terminal findstr/Get-ChildItem. Retrieves AST contracts, function signatures, dependency cones, Gotcha prevention alerts, and Ozydream offline insights in < 1ms without token bloat. Actions: 'task' (intelligent multi-token search finding files and symbols in 1 step), 'file' (extracts AST skeleton with lod='contracts'), 'project' (architecture topology and offline dream insights). Replaces context_for_task, file_context, graph_summary, list_files, recent_lessons.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -79,7 +79,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_memory",
-                    description: "[PERSISTENT TEAM MEMORY ENGINE] Git-first team memories and lessons learned: search, save, and sync gotchas, architectural decisions, and bugfixes. Prevents repeating past mistakes and preserves institutional knowledge merge-conflict-free.",
+                    description: "[MANDATORY STEP 3: POST-BUGFIX & GOTCHA PERSISTENCE] [PERSISTENT TEAM MEMORY ENGINE] Git-first team memories and lessons learned: search, save, and sync gotchas, architectural decisions, and bugfixes. Prevents repeating past mistakes and preserves institutional knowledge merge-conflict-free.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -114,7 +114,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_graph",
-                    description: "Unified architecture graph tool: summary, neighbors, incoming (reverse dependencies), impact, paths, impact_mermaid (dependency impact diagram in Mermaid), architecture report, endpoint_dependents (cross-language FastAPI to Next.js), and table_lineage (SQL DDL and ORM model lineage).",
+                    description: "[MANDATORY STEP 1: ARCHITECTURE DISCOVERY & BLAST RADIUS ENGINE] Unified architecture graph tool: summary, neighbors, incoming (reverse dependencies), impact, paths, impact_mermaid (dependency impact diagram in Mermaid), architecture report, endpoint_dependents (cross-language FastAPI to Next.js), and table_lineage (SQL DDL and ORM model lineage).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -1175,7 +1175,7 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_search_literal",
-                    description: "[RECOMMENDED] Búsqueda literal o regex ultrarrápida (< 15 ms) en Rust con Token Budgeting, normalización nativa de rutas Windows y filtrado automático de ruido. Evita saturar el contexto del agente.",
+                    description: "[SECONDARY UTILITY: EXACT LITERAL STRING VALIDATOR] Búsqueda literal o regex ultrarrápida (< 15 ms) en Rust con Token Budgeting, normalización nativa de rutas Windows y filtrado automático de ruido. Evita saturar el contexto del agente.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -1190,6 +1190,31 @@ pub fn handle_tools_list(
                             "context_lines": { "type": "integer", "default": 0, "description": "Líneas de contexto antes y después del match" }
                         },
                         "required": ["query"],
+                        "additionalProperties": false
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_read_blob",
+                    description: "Read paginated text slices from large outputs stored in .ozymem/blobs/<short_hash>.txt. Allows lossless pagination through oversized MCP results without blowing context windows.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "blob_id": {
+                                "type": "string",
+                                "description": "Short hash, URI (ozymem://blob/<hash>), or filename (.ozymem/blobs/<hash>.txt)"
+                            },
+                            "offset": {
+                                "type": "integer",
+                                "default": 0,
+                                "description": "Zero-indexed line offset to start reading from"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "default": 200,
+                                "description": "Maximum number of lines to return (default 200)"
+                            }
+                        },
+                        "required": ["blob_id"],
                         "additionalProperties": false
                     }),
                 },

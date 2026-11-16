@@ -4,14 +4,15 @@ use ozymem_core::McpBackend;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 use crate::state::{error_response, ok_response};
 
 pub async fn handle_resources_list(
-    backend: &Arc<Mutex<Option<GraphBackend>>>,
+    backend: &Arc<RwLock<Option<GraphBackend>>>,
     id: Value,
     request: &mcp_common::JsonRpcRequest,
 ) -> anyhow::Result<Option<mcp_common::JsonRpcResponse>> {
-    let guard = backend.lock().unwrap();
+    let guard = backend.read().await;
             let Some(ref gb) = *guard else {
                 return Ok(Some(error_response(
                     id,
@@ -70,13 +71,12 @@ pub async fn handle_resources_list(
             Ok(Some(ok_response(id, serde_json::to_value(result)?)))
 }
 
-#[allow(clippy::await_holding_lock)]
 pub async fn handle_resources_read(
-    backend: &Arc<Mutex<Option<GraphBackend>>>,
+    backend: &Arc<RwLock<Option<GraphBackend>>>,
     id: Value,
     request: &mcp_common::JsonRpcRequest,
 ) -> anyhow::Result<Option<mcp_common::JsonRpcResponse>> {
-    let guard = backend.lock().unwrap();
+    let guard = backend.read().await;
             let Some(ref gb) = *guard else {
                 return Ok(Some(error_response(id, -32000, "Server not initialized")));
             };

@@ -1,11 +1,12 @@
 use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common;
 use ozymem_server::handle_request;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_monolith_cli_has_embedded_mcp_server() {
-    let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+    let backend: Arc<RwLock<Option<GraphBackend>>> = Arc::new(RwLock::new(None));
     let request = mcp_common::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         id: Some(serde_json::json!(1)),
@@ -25,6 +26,6 @@ async fn test_monolith_cli_has_embedded_mcp_server() {
     assert!(active_tools.iter().any(|t| t["name"] == "ozy_memory"));
     assert!(active_tools.iter().any(|t| t["name"] == "ozy_doctor"));
     assert!(active_tools.iter().any(|t| t["name"] == "ozy_dream"));
-    assert_eq!(active_tools.len(), 26);
+    assert_eq!(active_tools.len(), 27);
 }
 

@@ -3281,3 +3281,122 @@ fn test_shadow_mode_tracks_branching_and_resume_adherence() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].trajectory_id, traj_id);
 }
+
+#[tokio::test]
+async fn test_universal_path_normalization_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test_norm.db");
+    let sqlite = ozymem_core::graph_backend::SqliteBackend::open(Some(&db_path.to_string_lossy())).unwrap();
+
+    let tenant = "local";
+    let stored_abs_win = r"C:\workspace\crmnew\api-geofal-crm\routes\orders.py";
+
+    // 1. Save file and function with Windows backslash path
+    let file_map = ozymem_parser::FileDefinitionMap {
+        file_path: stored_abs_win.to_string(),
+        language: "Python".to_string(),
+        strategy: ozymem_parser::ParseStrategy::NativeAst,
+        functions: vec![
+            ozymem_parser::ExtractedFunction {
+                name: "get_orders".to_string(),
+                kind: ozymem_parser::SymbolKind::Function,
+                start_line: 10,
+                end_line: 25,
+            },
+        ],
+    };
+    sqlite.save_file_definition(tenant, &file_map, r"C:\workspace\crmnew").unwrap();
+
+    // 2. Save dependency with Windows path
+    let dest_win = r"C:\workspace\crmnew\api-geofal-crm\models\order.py";
+    sqlite.save_dependency_relation(tenant, stored_abs_win, dest_win, r"C:\workspace\crmnew").unwrap();
+
+    // 3. Save lesson
+    sqlite.record_lesson(tenant, stored_abs_win, Some("get_orders"), "timeout", "increase timeout to 30s", r"C:\workspace\crmnew").unwrap();
+
+    // Test A: get_file_context with relative unix path
+    let ctx_rel = sqlite.get_file_context(tenant, "api-geofal-crm/routes/orders.py").unwrap();
+    assert!(ctx_rel.is_some(), "Relative path query must find file context");
+    let c = ctx_rel.unwrap();
+    assert_eq!(c.language, "Python");
+    assert_eq!(c.functions.len(), 1);
+    assert_eq!(c.functions[0].name, "get_orders");
+
+    // Test B: get_file_context with forward slashes absolute path
+    let ctx_fwd = sqlite.get_file_context(tenant, "C:/workspace/crmnew/api-geofal-crm/routes/orders.py").unwrap();
+    assert!(ctx_fwd.is_some(), "Forward slash query must find file context");
+
+    // Test C: get_symbols with relative path
+    let syms = sqlite.get_symbols(tenant, "api-geofal-crm/routes/orders.py").unwrap();
+    assert_eq!(syms.len(), 1);
+    assert_eq!(syms[0].name, "get_orders");
+
+    // Test D: get_dependencies and incoming_dependencies with relative path
+    let outgoing = sqlite.get_dependencies(tenant, "api-geofal-crm/routes/orders.py").unwrap();
+    assert_eq!(outgoing.len(), 1);
+    assert_eq!(outgoing[0], dest_win);
+
+    let incoming = sqlite.incoming_dependencies(tenant, "api-geofal-crm/models/order.py").unwrap();
+    assert_eq!(incoming.len(), 1);
+    assert_eq!(incoming[0], stored_abs_win);
+
+    // Test E: find_symbol with normalized project path
+    let found = sqlite.find_symbol(tenant, "get_orders", "C:/workspace/crmnew").unwrap();
+    assert_eq!(found.len(), 1);
+    assert!(found[0].contains("orders.py"));
+
+    // Test F: get_historical_engram_solutions with relative path
+    let solutions = sqlite.get_historical_engram_solutions(tenant, "api-geofal-crm/routes/orders.py").unwrap();
+    assert_eq!(solutions.len(), 1);
+    assert_eq!(solutions[0], "increase timeout to 30s");
+
+    // Test G: Boundary isolation - add another file whose name ends with orders.py (e.g. record_orders.py)
+    let other_file = r"C:\workspace\crmnew\api-geofal-crm\routes\record_orders.py";
+    let other_map = ozymem_parser::FileDefinitionMap {
+        file_path: other_file.to_string(),
+        language: "Python".to_string(),
+        strategy: ozymem_parser::ParseStrategy::NativeAst,
+        functions: vec![
+            ozymem_parser::ExtractedFunction {
+                name: "record_orders".to_string(),
+                kind: ozymem_parser::SymbolKind::Function,
+                start_line: 5,
+                end_line: 15,
+            },
+        ],
+    };
+    sqlite.save_file_definition(tenant, &other_map, r"C:\workspace\crmnew").unwrap();
+
+    // Querying for orders.py must NOT match record_orders.py
+    let ctx_orders = sqlite.get_file_context(tenant, "orders.py").unwrap();
+    assert!(ctx_orders.is_some());
+    let c_orders = ctx_orders.unwrap();
+    assert!(c_orders.file_path.ends_with("orders.py"));
+    assert!(!c_orders.file_path.ends_with("record_orders.py"));
+    assert_eq!(c_orders.functions.len(), 1);
+    assert_eq!(c_orders.functions[0].name, "get_orders");
+
+    // Test H: Backslash relative query
+    let ctx_bslash = sqlite.get_file_context(tenant, r"api-geofal-crm\routes\orders.py").unwrap();
+    assert!(ctx_bslash.is_some());
+
+    // Test I: Bidirectional matching - store relative path in DB, query with absolute path
+    let rel_file = "packages/frontend/src/index.ts";
+    let rel_map = ozymem_parser::FileDefinitionMap {
+        file_path: rel_file.to_string(),
+        language: "TypeScript".to_string(),
+        strategy: ozymem_parser::ParseStrategy::NativeAst,
+        functions: vec![
+            ozymem_parser::ExtractedFunction {
+                name: "mountApp".to_string(),
+                kind: ozymem_parser::SymbolKind::Function,
+                start_line: 1,
+                end_line: 10,
+            },
+        ],
+    };
+    sqlite.save_file_definition(tenant, &rel_map, "/app").unwrap();
+    let ctx_abs_query = sqlite.get_file_context(tenant, "C:/projects/myapp/packages/frontend/src/index.ts").unwrap();
+    assert!(ctx_abs_query.is_some(), "Absolute query must resolve stored relative path");
+    assert_eq!(ctx_abs_query.unwrap().language, "TypeScript");
+}

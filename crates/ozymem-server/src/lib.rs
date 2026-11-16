@@ -23,16 +23,20 @@ pub mod idle_watcher;
 
 use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::RwLock;
 
 pub use dispatch::handle_request;
 pub use state::Notifier;
 
+pub type SharedBackend = Arc<RwLock<Option<GraphBackend>>>;
+
 pub async fn run_mcp_server() -> anyhow::Result<()> {
-    let backend: Arc<Mutex<Option<GraphBackend>>> = Arc::new(Mutex::new(None));
+    let backend: SharedBackend = Arc::new(RwLock::new(None));
     let (notifier, rx) = Notifier::new();
     let subscribed: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
@@ -88,15 +92,18 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    if let Some(id) = req_id {
-                        let err_resp = state::error_response(id, -32603, &e.to_string());
-                        if let Ok(payload) = serde_json::to_string(&err_resp) {
-                            let _ = stdout_tx.send(payload);
-                        }
+                    let id = req_id.unwrap_or(Value::Null);
+                    let err_resp = state::error_response(id, -32603, &e.to_string());
+                    if let Ok(payload) = serde_json::to_string(&err_resp) {
+                        let _ = stdout_tx.send(payload);
                     }
                 }
             }
         } else {
+            let err_resp = state::error_response(Value::Null, -32700, "Parse error: invalid JSON-RPC payload");
+            if let Ok(payload) = serde_json::to_string(&err_resp) {
+                let _ = stdout_tx.send(payload);
+            }
             eprintln!("[ozymem-server] invalid JSON-RPC: {trimmed}");
         }
     }

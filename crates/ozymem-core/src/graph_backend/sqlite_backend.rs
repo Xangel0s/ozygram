@@ -9,6 +9,14 @@ pub struct SqliteBackend {
     conn: std::sync::Arc<std::sync::Mutex<Connection>>,
 }
 
+/// Helper to extract normalized query parameters for SQL path matching.
+/// Returns (raw_query, norm_query, clean_query_without_leading_slash)
+pub fn normalize_query_path(file_path: &str) -> (String, String, String) {
+    let norm = crate::normalize_path(file_path);
+    let trimmed = norm.trim_start_matches('/').trim_start_matches('\\').to_string();
+    (file_path.to_string(), norm, trimmed)
+}
+
 impl SqliteBackend {
     /// Open (or create) the shared SQLite database at the standard path.
     ///
@@ -319,22 +327,33 @@ impl SqliteBackend {
         Ok(paths)
     }
 
+    /// Helper method to normalize a file path query for cross-platform SQLite lookups.
+    pub fn normalize_query_path(&self, file_path: &str) -> (String, String, String) {
+        normalize_query_path(file_path)
+    }
+
     /// Get distinct lesson solutions for a file.
     pub fn get_historical_engram_solutions(
         &self,
         tenant_id: &str,
         file_path: &str,
     ) -> Result<Vec<String>> {
-        let norm_path = crate::normalize_path(file_path);
+        let (raw, norm, clean) = normalize_query_path(file_path);
         let conn = self.conn.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT DISTINCT solution FROM lessons WHERE (file_path = ?1 OR file_path = ?2) AND tenant_id = ?3 AND solution != ''"
+            "SELECT DISTINCT solution FROM lessons 
+             WHERE (file_path = ?1 
+                OR file_path = ?2 
+                OR replace(file_path, '\\', '/') = ?2 
+                OR replace(file_path, '\\', '/') LIKE '%/' || ?3 
+                OR ?2 LIKE '%/' || replace(file_path, '\\', '/')) 
+               AND tenant_id = ?4 AND solution != ''"
         ) {
             Ok(s) => s,
             Err(_) => return Ok(vec![]),
         };
         let solutions = stmt
-            .query_map(params![file_path, norm_path, tenant_id], |row| row.get::<_, String>(0))?
+            .query_map(params![raw, norm, clean, tenant_id], |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
             .collect();
         Ok(solutions)
@@ -391,15 +410,32 @@ impl SqliteBackend {
         tenant_id: &str,
         file_path: &str,
     ) -> Result<Vec<String>> {
+        let (raw, norm, clean) = normalize_query_path(file_path);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT destination_path FROM file_dependencies WHERE origin_path = ?1 AND tenant_id = ?2 ORDER BY destination_path"
+            "SELECT DISTINCT destination_path FROM file_dependencies 
+             WHERE (origin_path = ?1 
+                OR origin_path = ?2 
+                OR replace(origin_path, '\\', '/') = ?2 
+                OR replace(origin_path, '\\', '/') LIKE '%/' || ?3 
+                OR ?2 LIKE '%/' || replace(origin_path, '\\', '/')) 
+               AND tenant_id = ?4 
+             ORDER BY destination_path"
         )?;
         let deps = stmt
-            .query_map(params![file_path, tenant_id], |row| row.get::<_, String>(0))?
+            .query_map(params![raw, norm, clean, tenant_id], |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
             .collect();
         Ok(deps)
+    }
+
+    /// Alias for get_outgoing_dependencies
+    pub fn get_dependencies(
+        &self,
+        tenant_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<String>> {
+        self.get_outgoing_dependencies(tenant_id, file_path)
     }
 
     /// Get incoming dependencies (what files depend on this one).
@@ -408,15 +444,32 @@ impl SqliteBackend {
         tenant_id: &str,
         file_path: &str,
     ) -> Result<Vec<String>> {
+        let (raw, norm, clean) = normalize_query_path(file_path);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT origin_path FROM file_dependencies WHERE destination_path = ?1 AND tenant_id = ?2 ORDER BY origin_path"
+            "SELECT DISTINCT origin_path FROM file_dependencies 
+             WHERE (destination_path = ?1 
+                OR destination_path = ?2 
+                OR replace(destination_path, '\\', '/') = ?2 
+                OR replace(destination_path, '\\', '/') LIKE '%/' || ?3 
+                OR ?2 LIKE '%/' || replace(destination_path, '\\', '/')) 
+               AND tenant_id = ?4 
+             ORDER BY origin_path"
         )?;
         let deps = stmt
-            .query_map(params![file_path, tenant_id], |row| row.get::<_, String>(0))?
+            .query_map(params![raw, norm, clean, tenant_id], |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
             .collect();
         Ok(deps)
+    }
+
+    /// Alias for get_incoming_dependencies
+    pub fn incoming_dependencies(
+        &self,
+        tenant_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<String>> {
+        self.get_incoming_dependencies(tenant_id, file_path)
     }
 
     /// Get file context (language + functions) for a file.
@@ -425,11 +478,27 @@ impl SqliteBackend {
         tenant_id: &str,
         file_path: &str,
     ) -> Result<Option<crate::FileGraphContext>> {
+        let (raw, norm, clean) = normalize_query_path(file_path);
         let conn = self.conn.lock().unwrap();
-        let language: String = match conn.query_row(
-            "SELECT language FROM files WHERE path = ?1 AND tenant_id = ?2",
-            params![file_path, tenant_id],
-            |row| row.get(0),
+        let (resolved_path, language): (String, String) = match conn.query_row(
+            "SELECT path, language FROM files 
+             WHERE (path = ?1 
+                OR path = ?2 
+                OR replace(path, '\\', '/') = ?2 
+                OR replace(path, '\\', '/') LIKE '%/' || ?3 
+                OR ?2 LIKE '%/' || replace(path, '\\', '/')) 
+               AND tenant_id = ?4 
+             ORDER BY CASE 
+               WHEN path = ?1 THEN 0 
+               WHEN path = ?2 THEN 1 
+               WHEN replace(path, '\\', '/') = ?2 THEN 2 
+               WHEN replace(path, '\\', '/') LIKE '%/' || ?3 THEN 3 
+               WHEN ?2 LIKE '%/' || replace(path, '\\', '/') THEN 4 
+               ELSE 5 
+             END, length(path) ASC 
+             LIMIT 1",
+            params![raw, norm, clean, tenant_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         ) {
             Ok(v) => v,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
@@ -437,10 +506,13 @@ impl SqliteBackend {
         };
 
         let mut func_stmt = conn.prepare(
-            "SELECT name, kind, start_line, end_line, strategy FROM functions WHERE file_path = ?1 AND tenant_id = ?2 ORDER BY start_line, name"
+            "SELECT name, kind, start_line, end_line, strategy FROM functions 
+             WHERE (file_path = ?1 OR file_path = ?2 OR replace(file_path, '\\', '/') = ?3) 
+               AND tenant_id = ?4 
+             ORDER BY start_line, name"
         )?;
         let functions = func_stmt
-            .query_map(params![file_path, tenant_id], |row| {
+            .query_map(params![raw, resolved_path, norm, tenant_id], |row| {
                 Ok(crate::StoredFunction {
                     name: row.get(0)?,
                     kind: row.get(1)?,
@@ -453,12 +525,92 @@ impl SqliteBackend {
             .collect();
 
         Ok(Some(crate::FileGraphContext {
-            file_path: file_path.to_string(),
+            file_path: resolved_path,
             language,
             functions,
             engram_contracts: Vec::new(),
         }))
     }
+
+    /// Get functions/symbols for a specific file path (supports relative/absolute/cross-platform path matching).
+    pub fn get_symbols(
+        &self,
+        tenant_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<crate::StoredFunction>> {
+        let (raw, norm, clean) = normalize_query_path(file_path);
+        let conn = self.conn.lock().unwrap();
+
+        // 1. Resolve exact file path from files if available to avoid symbol cross-contamination
+        let resolved_path: Option<String> = conn.query_row(
+            "SELECT path FROM files 
+             WHERE (path = ?1 
+                OR path = ?2 
+                OR replace(path, '\\', '/') = ?2 
+                OR replace(path, '\\', '/') LIKE '%/' || ?3 
+                OR ?2 LIKE '%/' || replace(path, '\\', '/')) 
+               AND tenant_id = ?4 
+             ORDER BY CASE 
+               WHEN path = ?1 THEN 0 
+               WHEN path = ?2 THEN 1 
+               WHEN replace(path, '\\', '/') = ?2 THEN 2 
+               WHEN replace(path, '\\', '/') LIKE '%/' || ?3 THEN 3 
+               WHEN ?2 LIKE '%/' || replace(path, '\\', '/') THEN 4 
+               ELSE 5 
+             END, length(path) ASC 
+             LIMIT 1",
+            params![raw, norm, clean, tenant_id],
+            |row| row.get(0),
+        ).ok();
+
+        if let Some(ref res_path) = resolved_path {
+            let mut func_stmt = conn.prepare(
+                "SELECT name, kind, start_line, end_line, strategy FROM functions 
+                 WHERE (file_path = ?1 OR file_path = ?2 OR replace(file_path, '\\', '/') = ?3) 
+                   AND tenant_id = ?4 
+                 ORDER BY start_line, name"
+            )?;
+            let functions = func_stmt
+                .query_map(params![raw, res_path, norm, tenant_id], |row| {
+                    Ok(crate::StoredFunction {
+                        name: row.get(0)?,
+                        kind: row.get(1)?,
+                        start_line: row.get(2)?,
+                        end_line: row.get(3)?,
+                        strategy: row.get(4)?,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            return Ok(functions);
+        }
+
+        // Fallback if file is not in files table
+        let mut func_stmt = conn.prepare(
+            "SELECT name, kind, start_line, end_line, strategy FROM functions 
+             WHERE (file_path = ?1 
+                OR file_path = ?2 
+                OR replace(file_path, '\\', '/') = ?2 
+                OR replace(file_path, '\\', '/') LIKE '%/' || ?3 
+                OR ?2 LIKE '%/' || replace(file_path, '\\', '/')) 
+               AND tenant_id = ?4 
+             ORDER BY start_line, name"
+        )?;
+        let functions = func_stmt
+            .query_map(params![raw, norm, clean, tenant_id], |row| {
+                Ok(crate::StoredFunction {
+                    name: row.get(0)?,
+                    kind: row.get(1)?,
+                    start_line: row.get(2)?,
+                    end_line: row.get(3)?,
+                    strategy: row.get(4)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(functions)
+    }
+
 
     /// Get a summary of the graph for a tenant.
     pub fn get_graph_summary(&self, tenant_id: &str) -> Result<crate::GraphSummary> {
@@ -541,16 +693,19 @@ impl SqliteBackend {
         symbol_name: &str,
         project_path: &str,
     ) -> Result<Vec<String>> {
+        let norm_proj = crate::normalize_path(project_path);
         let conn = self.conn.lock().unwrap();
-        let like = format!("{}%", project_path);
+        let like1 = format!("{}%", project_path);
+        let like2 = format!("{}%", norm_proj);
         let mut stmt = conn.prepare(
             "SELECT f.path, fn.start_line, fn.kind FROM functions fn
              JOIN files f ON f.path = fn.file_path AND f.tenant_id = fn.tenant_id
-             WHERE fn.name LIKE ?1 AND fn.tenant_id = ?2 AND f.path LIKE ?3
+             WHERE fn.name LIKE ?1 AND fn.tenant_id = ?2 
+               AND (f.path LIKE ?3 OR f.path LIKE ?4 OR replace(f.path, '\\', '/') LIKE ?4)
              ORDER BY fn.name LIMIT 100",
         )?;
         let results: Vec<String> = stmt
-            .query_map(params![symbol_name, tenant_id, like], |row| {
+            .query_map(params![symbol_name, tenant_id, like1, like2], |row| {
                 let path: String = row.get(0)?;
                 let line: i64 = row.get(1)?;
                 let kind: String = row.get(2)?;

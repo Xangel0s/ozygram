@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 
 use crate::brain::handle_ozy_brain;
 use crate::doctor::handle_ozy_doctor;
@@ -26,9 +27,8 @@ use crate::resources::{
 use crate::schemas::handle_tools_list;
 use crate::unified::handle_unified_tool;
 
-#[allow(clippy::await_holding_lock)]
 pub async fn handle_request(
-    backend: &Arc<Mutex<Option<GraphBackend>>>,
+    backend: &Arc<RwLock<Option<GraphBackend>>>,
     request: mcp_common::JsonRpcRequest,
     notifier: Option<&Notifier>,
     subscribed: Option<&Arc<Mutex<HashSet<String>>>>,
@@ -70,7 +70,7 @@ pub async fn handle_request(
                 })
                 .unwrap_or_else(|| PathBuf::from("."));
 
-            let mut guard = backend.lock().unwrap();
+            let mut guard = backend.write().await;
             let gb = match GraphBackend::open_for_project(&project_path) {
                 Ok(b) => b,
                 Err(e) => {
@@ -118,6 +118,14 @@ pub async fn handle_request(
                     name: "ozymem-server",
                     version: env!("CARGO_PKG_VERSION"),
                 },
+                instructions: Some(
+                    "Ozygram Universal Three-Dimensional Protocol:\n\
+                     1. Pre-Flight Blast Radius: ALWAYS invoke ozy_graph(action=\"impact\", file_path=\"...\") before proposing or applying code changes.\n\
+                     2. AST Contracts: Query ozy_context(file_path=\"...\", lod=\"contracts\") or ozy_get_symbol to extract signatures without token bloat.\n\
+                     3. Ephemeral RAM Simulation: Verify diffs with ozy_patch(action=\"simulate\") before applying.\n\
+                     4. Mandatory Closing Gotcha Loop: Upon resolving any bug, edge case, or tricky issue, invoke ozy_memory(action=\"save\", kind=\"gotcha\", topic_key=\"...\", title=\"...\", content=\"...\") to persist institutional knowledge into Git.\n\
+                     5. Lossless Paging: If tool output is compacted, fetch slices via ozy_read_blob(blob_id=\"...\").".to_string()
+                ),
             };
 
             let init_msg = format!(
@@ -131,8 +139,8 @@ pub async fn handle_request(
             }
 
             let gb_warm = backend.clone();
-            tokio::task::spawn_blocking(move || {
-                let guard = gb_warm.lock().unwrap();
+            tokio::spawn(async move {
+                let guard = gb_warm.read().await;
                 if let Some(ref gb) = *guard {
                     let status = gb.get_embedding_status();
                     if status != ozymem_core::graph_backend::EmbeddingModelStatus::Ready {
@@ -145,7 +153,7 @@ pub async fn handle_request(
             let notifier_clone = notifier.cloned();
             let project_path_scan = project_path.to_string_lossy().to_string();
             tokio::task::spawn_blocking(move || {
-                let guard = backend_clone.lock().unwrap();
+                let guard = backend_clone.blocking_read();
                 if let Some(ref gb) = *guard {
                     let progress_cb = notifier_clone.as_ref().map(|n| {
                         let n = n.clone();
@@ -177,17 +185,19 @@ pub async fn handle_request(
                                     match event {
                                         ozymem_core::DeltaFileEvent::Modified(p) => {
                                             if !ozymem_core::graph_backend::helpers::is_noise_path(&p) {
-                                                let guard = backend_arc.lock().unwrap();
-                                                if let Some(ref gb) = *guard {
-                                                    let _ = gb.index_file_delta(&p, &watcher_root);
+                                                if let Ok(guard) = backend_arc.try_read() {
+                                                    if let Some(ref gb) = *guard {
+                                                        let _ = gb.index_file_delta(&p, &watcher_root);
+                                                    }
                                                 }
                                             }
                                         }
                                         ozymem_core::DeltaFileEvent::Removed(p) => {
                                             if !ozymem_core::graph_backend::helpers::is_noise_path(&p) {
-                                                let guard = backend_arc.lock().unwrap();
-                                                if let Some(ref gb) = *guard {
-                                                    let _ = gb.remove_file_delta(&p, &watcher_root);
+                                                if let Ok(guard) = backend_arc.try_read() {
+                                                    if let Some(ref gb) = *guard {
+                                                        let _ = gb.remove_file_delta(&p, &watcher_root);
+                                                    }
                                                 }
                                             }
                                         }
@@ -208,7 +218,16 @@ pub async fn handle_request(
         "tools/list" => return handle_tools_list(id, &request),
         "tools/call" => {
             let params: mcp_common::ToolCallParams = match request.params {
-                Some(p) => serde_json::from_value(p)?,
+                Some(p) => match serde_json::from_value(p) {
+                    Ok(parsed) => parsed,
+                    Err(e) => {
+                        return Ok(Some(error_response(
+                            id,
+                            -32602,
+                            &format!("Invalid tool call params: {e}"),
+                        )));
+                    }
+                },
                 None => {
                     return Ok(Some(error_response(
                         id,
@@ -247,7 +266,7 @@ pub async fn handle_request(
                 return Ok(Some(ok_response(id, serde_json::to_value(res)?)));
             }
 
-            let guard = backend.lock().unwrap();
+            let guard = backend.read().await;
             let Some(ref backend_guard) = *guard else {
                 return Ok(Some(error_response(
                     id,
@@ -647,32 +666,27 @@ pub async fn handle_request(
                     }
                 }
                 "ozy_plan" | "plan" => {
-                    let goal_opt = tool_call.arguments.get("goal").and_then(Value::as_str);
-                    if goal_opt.is_none() {
-                        ToolCallResult {
+                    match crate::unified::handle_ozy_plan(backend, &tool_call).await {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
                             content: vec![ContentBlock {
                                 kind: "text",
-                                text: "[ALERT: BAD_REQUEST] 'goal' es requerido para ozy_plan.".to_string(),
+                                text: format!("[ALERT: ERROR] {e}"),
                             }],
                             is_error: Some(true),
-                        }
-                    } else {
-                        match handle_ozy_brain(backend, &tool_call, "plan").await {
-                            Ok(report_str) => ToolCallResult {
-                                content: vec![ContentBlock {
-                                    kind: "text",
-                                    text: report_str,
-                                }],
-                                is_error: None,
-                            },
-                            Err(e) => ToolCallResult {
-                                content: vec![ContentBlock {
-                                    kind: "text",
-                                    text: format!("[ALERT: ERROR] {e}"),
-                                }],
-                                is_error: Some(true),
-                            },
-                        }
+                        },
+                    }
+                }
+                "ozy_read_blob" | "read_blob" => {
+                    match crate::tools::handle_read_blob(backend, &tool_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
                     }
                 }
                 "ozy_ast_patch" | "ast_patch" => {

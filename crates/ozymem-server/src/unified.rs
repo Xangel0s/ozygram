@@ -677,3 +677,121 @@ pub async fn handle_unified_tool(
     crate::formatters::compact_tool_output(&mut res.content, backend.project_path().as_deref());
     Ok(Some(ok_response(id, serde_json::to_value(res)?)))
 }
+
+pub async fn handle_ozy_plan(
+    backend: &GraphBackend,
+    tool_call: &mcp_common::ToolCallParams,
+) -> anyhow::Result<ToolCallResult> {
+    let goal = tool_call
+        .arguments
+        .get("goal")
+        .or_else(|| tool_call.arguments.get("query"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("[ALERT: BAD_REQUEST] 'goal' es requerido para ozy_plan."))?;
+
+    let brain_report = match crate::brain::handle_ozy_brain(backend, tool_call, "plan").await {
+        Ok(r) => r,
+        Err(e) => format!("[ALERT: BRAIN_FALLBACK] Could not execute brain planner: {e}"),
+    };
+
+    // Detect domains across repository files
+    let root_opt = backend.project_path();
+    let all_files = backend.list_all_files().unwrap_or_default();
+    let mut detected_set = std::collections::BTreeSet::new();
+    for f in &all_files {
+        let dom = crate::formatters::extract_domain_with_root(f, root_opt.as_deref());
+        detected_set.insert(dom);
+    }
+    let domains_detected: Vec<String> = detected_set.into_iter().collect();
+
+    // Determine target/affected files
+    let mut affected_files = Vec::new();
+    if let Some(fp) = tool_call.arguments.get("file_path").and_then(Value::as_str) {
+        affected_files.push(fp.to_string());
+    }
+    if let Some(files_arr) = tool_call.arguments.get("files").and_then(Value::as_array) {
+        for f in files_arr.iter().filter_map(Value::as_str) {
+            if !affected_files.contains(&f.to_string()) {
+                affected_files.push(f.to_string());
+            }
+        }
+    }
+
+    // Expand blast radius using analyze_impact
+    let mut all_affected = affected_files.clone();
+    for f in &affected_files {
+        let impacts = backend.analyze_impact(f, 2);
+        for imp in impacts {
+            if !all_affected.contains(&imp.file_path) {
+                all_affected.push(imp.file_path);
+            }
+        }
+    }
+
+    // Fallback: search unified search if no affected files specified
+    if all_affected.is_empty() {
+        if let Ok(search_res) = backend.unified_search(goal, None, None, 10).await {
+            for res in search_res {
+                if !all_affected.contains(&res.path) {
+                    all_affected.push(res.path);
+                }
+            }
+        }
+    }
+
+    // Group affected files by domain
+    let mut domain_to_files: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for f in &all_affected {
+        let dom = crate::formatters::extract_domain_with_root(f, root_opt.as_deref());
+        domain_to_files.entry(dom).or_default().push(f.clone());
+    }
+
+    // If still empty, create tasks for detected domains or a default domain
+    if domain_to_files.is_empty() {
+        if !domains_detected.is_empty() {
+            for d in &domains_detected {
+                domain_to_files.insert(d.clone(), Vec::new());
+            }
+        } else {
+            domain_to_files.insert("root".to_string(), Vec::new());
+        }
+    }
+
+    let domains_affected: Vec<String> = domain_to_files.keys().cloned().collect();
+
+    let subagent_tasks: Vec<Value> = domain_to_files
+        .into_iter()
+        .map(|(domain, files)| {
+            serde_json::json!({
+                "domain": domain,
+                "files": files,
+                "prompt": format!(
+                    "Orchestrate implementation in domain '{}' for goal: '{}'. Follow Three-Dimensional Protocol: inspect AST contracts via ozy_context, apply atomic patches via ozy_patch, and run domain tests.",
+                    domain, goal
+                )
+            })
+        })
+        .collect();
+
+    let partition_json = serde_json::json!({
+        "domains_detected": domains_detected,
+        "domains_affected": domains_affected,
+        "subagent_tasks": subagent_tasks
+    });
+
+    let mut final_text = brain_report;
+    final_text.push_str("\n\n=== OZY MULTI-AGENT DOMAIN PARTITION ===\n```json\n");
+    final_text.push_str(&serde_json::to_string_pretty(&partition_json)?);
+    final_text.push_str("\n```\n");
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            kind: "text",
+            text: final_text,
+        }],
+        is_error: None,
+    })
+}
+

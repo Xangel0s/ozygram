@@ -108,15 +108,136 @@ pub(crate) fn format_observations_list(results: &[ozymem_core::graph_backend::Ob
     }
     body
 }
-pub(crate) fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
-    if impacts.is_empty() {
-        return format!("No impact found for {}", file_path);
+/// Extracts high-level domain or module from a file path, optionally relative to project root.
+pub fn extract_domain_with_root(path: &str, project_root: Option<&str>) -> String {
+    let normalized = path.replace('\\', "/");
+    let relative = if let Some(root) = project_root {
+        let norm_root = root.replace('\\', "/");
+        let norm_root_trimmed = norm_root.trim_end_matches('/');
+        if let Some(stripped) = normalized.strip_prefix(norm_root_trimmed) {
+            stripped.trim_start_matches('/')
+        } else {
+            &normalized
+        }
+    } else {
+        &normalized
+    };
+
+    let parts: Vec<&str> = relative.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return "root".to_string();
     }
 
-    let mut text = format!("Impact analysis for {}:\n", file_path);
-    let mut current_depth = 0u32;
+    // 1. Look for known workspace / monorepo cluster keywords anywhere in path
+    for (i, &p) in parts.iter().enumerate() {
+        if matches!(p, "crates" | "packages" | "apps" | "modules" | "services" | "libs" | "plugins") {
+            if i + 1 < parts.len() {
+                return format!("{}/{}", p, parts[i + 1]);
+            } else {
+                return p.to_string();
+            }
+        }
+    }
 
-    // Count by severity
+    // 2. If it's a relative path inside a multi-folder project (e.g. api-geofal-crm, crm-geofal)
+    let first = parts[0];
+    if !first.ends_with(':') && first != "home" && first != "Users" && first != "var" && first != "tmp" {
+        if parts.len() > 1 {
+            return first.to_string();
+        }
+    } else if parts.len() >= 3 {
+        // Fallback for unstripped absolute path: examine parent segment
+        if parts.len() >= 4 {
+            return parts[parts.len() - 3].to_string();
+        }
+    }
+
+    if parts.len() > 1 && !parts[0].ends_with(':') {
+        parts[0].to_string()
+    } else {
+        "root".to_string()
+    }
+}
+
+/// Extracts high-level domain or module from a file path.
+pub fn extract_domain_from_path(path: &str) -> String {
+    extract_domain_with_root(path, None)
+}
+
+/// Generates a Mermaid graph TD diagram for blast radius visualization.
+pub fn build_impact_mermaid(impacts: &[ImpactEntry], file_path: &str) -> String {
+    let mut out = String::from("graph TD\n");
+    out.push_str("    classDef target fill:#2b6cb0,stroke:#1a365d,stroke-width:2px,color:#fff;\n");
+    out.push_str("    classDef breaking fill:#e53e3e,stroke:#9b2c2c,color:#fff;\n");
+    out.push_str("    classDef warning fill:#dd6b20,stroke:#9c4221,color:#fff;\n");
+    out.push_str("    classDef info fill:#319795,stroke:#234e52,color:#fff;\n\n");
+
+    let clean_target = file_path.replace('\\', "/").replace('"', "'");
+    out.push_str(&format!("    Target[\"{clean_target}\"]:::target\n"));
+
+    let mut prev_by_depth: std::collections::HashMap<u32, Vec<String>> = std::collections::HashMap::new();
+
+    for (idx, entry) in impacts.iter().enumerate() {
+        let node_id = format!("N{idx}");
+        let clean_path = entry.file_path.replace('\\', "/").replace('"', "'");
+        let class_name = match entry.severity.as_str() {
+            "breaking" => "breaking",
+            "warning" => "warning",
+            _ => "info",
+        };
+        out.push_str(&format!("    {}[\"{}\"]:::{}\n", node_id, clean_path, class_name));
+
+        if entry.depth <= 1 {
+            out.push_str(&format!("    Target --> {}\n", node_id));
+        } else if let Some(parents) = prev_by_depth.get(&(entry.depth - 1)) {
+            if let Some(p) = parents.first() {
+                out.push_str(&format!("    {} --> {}\n", p, node_id));
+            } else {
+                out.push_str(&format!("    Target --> {}\n", node_id));
+            }
+        } else {
+            out.push_str(&format!("    Target --> {}\n", node_id));
+        }
+
+        prev_by_depth.entry(entry.depth).or_default().push(node_id);
+    }
+
+    out
+}
+
+pub(crate) fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String {
+    let risk_tier = if impacts.len() > 5 {
+        "[ALERT: HIGH_BLAST_RADIUS]"
+    } else if impacts.len() >= 3 {
+        "[ALERT: MEDIUM_BLAST_RADIUS]"
+    } else if impacts.is_empty() {
+        "[INFO: ZERO_BLAST_RADIUS]"
+    } else {
+        "[INFO: LOW_BLAST_RADIUS]"
+    };
+
+    if impacts.is_empty() {
+        return format!("{risk_tier} No impact found for {file_path}");
+    }
+
+    let mut domains = std::collections::BTreeSet::new();
+    domains.insert(extract_domain_from_path(file_path));
+    for entry in impacts {
+        domains.insert(extract_domain_from_path(&entry.file_path));
+    }
+    let domain_list: Vec<_> = domains.into_iter().collect();
+    let is_cross_domain = domain_list.len() > 1;
+
+    let mut text = format!("{risk_tier} Impact analysis for {file_path}:\n");
+    text.push_str(&format!(
+        "Risk Level: {} | Total Files: {} | Domains: [{}] ({})\n",
+        if impacts.len() > 5 { "HIGH" } else if impacts.len() >= 3 { "MEDIUM" } else { "LOW" },
+        impacts.len(),
+        domain_list.join(", "),
+        if is_cross_domain { "CROSS-DOMAIN COUPLING" } else { "ISOLATED DOMAIN" }
+    ));
+
+    let mut current_depth = 0u32;
     let mut breaking = 0usize;
     let mut warnings = 0usize;
     let mut infos = 0usize;
@@ -177,9 +298,14 @@ pub(crate) fn format_impact(impacts: &[ImpactEntry], file_path: &str) -> String 
 
     // Summary bar
     text.push_str(&format!(
-        "Severity: {} [BREAKING] | {} [WARN] | {} [INFO]",
+        "Severity: {} [BREAKING] | {} [WARN] | {} [INFO]\n",
         breaking, warnings, infos
     ));
+
+    // Mermaid dependency diagram
+    text.push_str("\n```mermaid\n");
+    text.push_str(&build_impact_mermaid(impacts, file_path));
+    text.push_str("```\n");
 
     text
 }

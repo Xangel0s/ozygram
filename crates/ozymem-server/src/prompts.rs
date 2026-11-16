@@ -2,11 +2,12 @@ use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common;
 use ozymem_core::McpBackend;
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use crate::state::{error_response, ok_response};
 
 pub fn handle_completion_complete(
-    backend: &Arc<Mutex<Option<GraphBackend>>>,
+    backend: &Arc<RwLock<Option<GraphBackend>>>,
     id: Value,
     request: &mcp_common::JsonRpcRequest,
 ) -> anyhow::Result<Option<mcp_common::JsonRpcResponse>> {
@@ -31,7 +32,7 @@ pub fn handle_completion_complete(
                         "analyze-file" => {
                             if params.argument.name == "path" {
                                 // Try to find files that match the partial path
-                                let guard = backend.lock().unwrap();
+                                let guard = backend.blocking_read();
                                 if let Some(ref gb) = *guard {
                                     match gb.complete_file_path(&params.argument.value, 10) {
                                         Ok(values) => mcp_common::CompletionResult {
@@ -66,7 +67,7 @@ pub fn handle_completion_complete(
                         }
                         "review-lessons" => {
                             if params.argument.name == "file_path" {
-                                let guard = backend.lock().unwrap();
+                                let guard = backend.blocking_read();
                                 if let Some(ref gb) = *guard {
                                     match gb.complete_file_path(&params.argument.value, 10) {
                                         Ok(values) => mcp_common::CompletionResult {
@@ -110,7 +111,7 @@ pub fn handle_completion_complete(
                 mcp_common::CompletionRef::Resource { uri } => {
                     // For resources, try to complete the URI path
                     if uri == "ozymem://file/{path}" && params.argument.name == "path" {
-                        let guard = backend.lock().unwrap();
+                        let guard = backend.blocking_read();
                         if let Some(ref gb) = *guard {
                             match gb.complete_file_path(&params.argument.value, 10) {
                                 Ok(values) => mcp_common::CompletionResult {
@@ -197,13 +198,12 @@ pub fn handle_prompts_list(
             Ok(Some(ok_response(id, serde_json::to_value(result)?)))
 }
 
-#[allow(clippy::await_holding_lock)]
 pub async fn handle_prompts_get(
-    backend: &Arc<Mutex<Option<GraphBackend>>>,
+    backend: &Arc<RwLock<Option<GraphBackend>>>,
     id: Value,
     request: &mcp_common::JsonRpcRequest,
 ) -> anyhow::Result<Option<mcp_common::JsonRpcResponse>> {
-    let guard = backend.lock().unwrap();
+    let guard = backend.read().await;
     let Some(ref gb) = *guard else {
         return Ok(Some(error_response(id, -32000, "Server not initialized")));
     };
