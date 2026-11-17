@@ -2,7 +2,7 @@ use anyhow::Result;
 use ozymem_core::graph_backend::GraphBackend;
 use ozymem_core::mcp_common::{ContentBlock, ToolCallParams, ToolCallResult};
 use ozymem_core::McpBackend;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use crate::formatters::{compact_tool_output, format_file_context_enriched, format_impact, get_last_commit};
 
@@ -256,6 +256,118 @@ pub async fn handle_explore(
             let summary = backend.get_graph_summary().await?;
             crate::formatters::format_summary(&summary)
         }
+        "route" | "suggest" => {
+            let query = tool_call
+                .arguments
+                .get("query")
+                .or_else(|| tool_call.arguments.get("goal"))
+                .or_else(|| tool_call.arguments.get("task"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("missing 'query' or 'goal' for action='route'"))?;
+
+            let project_path = backend.project_path().unwrap_or_else(|| ".".to_string());
+            let q_lower = query.to_lowercase();
+            let is_refactor = q_lower.contains("refactor")
+                || q_lower.contains("fix")
+                || q_lower.contains("modify")
+                || q_lower.contains("change")
+                || q_lower.contains("update")
+                || q_lower.contains("optim");
+
+            // Extract candidate keywords
+            let words: Vec<&str> = query
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|w| w.len() > 3 && !["refactor", "modify", "change", "update", "function", "class", "module", "please", "help", "this", "that", "from", "with"].contains(&w.to_lowercase().as_str()))
+                .collect();
+
+            let mut matched_symbol = None;
+            let mut matched_file = None;
+
+            for word in &words {
+                if let Ok(matches) = backend.find_symbol(word, &project_path).await {
+                    if let Some(first) = matches.first() {
+                        let file_part = first.split(" [").next().unwrap_or(first).trim();
+                        matched_symbol = Some(word.to_string());
+                        matched_file = Some(file_part.to_string());
+                        break;
+                    }
+                }
+            }
+
+            if matched_file.is_none() {
+                if let Ok(search_res) = backend.search_literal(query, None, false, false, 5, 1, 1) {
+                    if let Some(first_match) = search_res.matches.first() {
+                        matched_file = Some(first_match.file_path.clone());
+                    }
+                }
+            }
+
+            let mut out = String::new();
+            out.push_str("=== [OZY_BRAIN: COGNITIVE TOOL ROUTER] ===\n");
+            out.push_str(&format!("User Objective: \"{}\"\n", query));
+            out.push_str("Status: OPTIMAL_WORKFLOW_RESOLVED\n\n");
+
+            out.push_str("[DIRECTIVE: ANTI_PATTERNS_VETO]\n");
+            out.push_str("⛔ DO NOT use grep, findstr, or shell searches.\n");
+            out.push_str("⛔ DO NOT read files line-by-line (chunked slices).\n");
+            out.push_str("✅ Execute the preloaded tool call below.\n\n");
+
+            if let Some(file) = &matched_file {
+                let (effective, resolved) = crate::symbols::resolve_effective_path(backend, file);
+                let target_path = if effective.exists() { resolved } else { file.to_string() };
+                let impact = backend.analyze_impact(&target_path, 2);
+                let dependents_count = impact.len();
+
+                out.push_str(&format!("Target Resolved: {}\n", target_path));
+                if let Some(sym) = &matched_symbol {
+                    out.push_str(&format!("Symbol Identified: {}\n", sym));
+                }
+                out.push_str(&format!("Blast Radius: {} dependent file(s)\n\n", dependents_count));
+
+                if is_refactor {
+                    out.push_str("[RECOMMENDED_NEXT_TOOL]: ozy_refactor (In-RAM Simulation)\n");
+                    out.push_str("```json\n");
+                    let mut preloaded_args = json!({
+                        "file_path": target_path,
+                        "action": "simulate"
+                    });
+                    if let Some(sym) = &matched_symbol {
+                        preloaded_args["target_symbol"] = json!(sym);
+                    }
+                    out.push_str(&serde_json::to_string_pretty(&json!({
+                        "tool": "ozy_refactor",
+                        "arguments": preloaded_args,
+                        "rationale": "Performs in-RAM Copy-On-Write patch simulation and calculates blast radius with 0 disk writes."
+                    }))?);
+                    out.push_str("\n```\n");
+                } else {
+                    out.push_str("[RECOMMENDED_NEXT_TOOL]: ozy_explore (Contracts)\n");
+                    out.push_str("```json\n");
+                    out.push_str(&serde_json::to_string_pretty(&json!({
+                        "tool": "ozy_explore",
+                        "arguments": {
+                            "file_path": target_path,
+                            "action": "contracts"
+                        },
+                        "rationale": "Extracts structural AST signatures saving 70-95% tokens compared to raw file reads."
+                    }))?);
+                    out.push_str("\n```\n");
+                }
+            } else {
+                out.push_str("[RECOMMENDED_NEXT_TOOL]: ozy_explore (Contracts / Search)\n");
+                out.push_str("```json\n");
+                out.push_str(&serde_json::to_string_pretty(&json!({
+                    "tool": "ozy_explore",
+                    "arguments": {
+                        "action": "contracts",
+                        "file_path": "<target_file>"
+                    }
+                }))?);
+                out.push_str("\n```\n");
+            }
+
+            out
+        }
         "search" => {
             let query = tool_call
                 .arguments
@@ -289,13 +401,15 @@ pub async fn handle_explore(
             let history = backend.get_historical_engram_solutions(file_path).await.unwrap_or_default();
             let neighbors = backend.get_graph_neighbors(file_path).await.ok();
             let last_git = get_last_commit(file_path).await;
-            format_file_context_enriched(
+            let mut formatted = format_file_context_enriched(
                 ctx.as_ref(),
                 file_path,
                 &history,
                 neighbors.as_ref(),
                 last_git.as_deref(),
-            )
+            );
+            formatted.push_str("\n\n[COGNITIVE_DIRECTIVE]: To edit or refactor this file, DO NOT use read_file line-by-line. Call ozy_refactor(file_path=\"...\") with action=\"simulate\" directly in volatile RAM.");
+            formatted
         }
     };
 

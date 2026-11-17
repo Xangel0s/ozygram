@@ -119,12 +119,41 @@ pub async fn handle_request(
                     version: env!("CARGO_PKG_VERSION"),
                 },
                 instructions: Some(
-                    "Ozygram Universal Workflow-Driven Protocol:\n\
-                     1. Atomic In-RAM Refactoring: For any code modification or refactoring, invoke ozy_refactor(action=\"simulate\", file_path=\"...\", target_code=\"...\", replacement=\"...\") to compute Blast Radius + AST Diff in volatile RAM (Copy-On-Write) in a single turn without touching disk.\n\
-                     2. Discovery & Contracts: Use ozy_explore(action=\"contracts\", file_path=\"...\") or action=\"impact\" for topological inspection without token bloat.\n\
-                     3. Safe Persistence: Apply changes with ozy_apply or ozy_refactor(action=\"apply\") only after in-RAM simulation passes.\n\
-                     4. Mandatory Closing Gotcha Loop: Upon resolving any bug, edge case, or tricky issue, invoke ozy_memory(action=\"save\", kind=\"gotcha\", topic_key=\"...\", title=\"...\", content=\"...\") to persist institutional knowledge into Git.\n\
-                     5. Lossless Paging: If output is compacted to an ozymem://blob/, fetch slices via ozy_read_blob(blob_id=\"...\").".to_string()
+                    r#"[protocol]
+name = "ozy"
+rule = "cow_ram_refactor_before_disk"
+
+[anti_patterns]
+veto = ["line_by_line_reading", "raw_grep_before_ast", "direct_disk_writes_without_sim"]
+rule = "DO NOT read files in chunked slices or use grep. Always query AST contracts or use ozy_explore."
+
+[routing_shortcuts]
+to_explore = "ozy_explore(action='contracts', file_path='...')"
+to_route_prompt = "ozy_explore(action='route', query='user task objective')"
+to_refactor = "ozy_refactor(action='simulate', file_path='...')"
+to_find_symbol = "ozy_explore(action='symbol', symbol_name='...')"
+
+[tools.ozy_refactor]
+primary = true
+default_action = "simulate"
+guarantee = "SANDBOX_INVARIANT_COW_RAM_ONLY: physical disk 100% untouched until approved"
+
+[tools.ozy_explore]
+default = "contracts"
+modes = ["contracts", "impact", "summary", "symbol", "tree", "search", "route"]
+
+[tools.ozy_simulate]
+role = "multi_step_ram_dry_run"
+
+[tools.ozy_apply]
+role = "verified_disk_mutation"
+
+[tools.ozy_memory]
+post_fix_hook = "save_gotcha"
+persist = ".ozy/memories/"
+
+[tools.ozy_read_blob]
+paging_threshold = 14000"#.to_string()
                 ),
             };
 

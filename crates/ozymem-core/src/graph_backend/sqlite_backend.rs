@@ -35,7 +35,7 @@ impl SqliteBackend {
 
         let conn =
             Connection::open(&path).with_context(|| format!("failed to open SQLite at {path}"))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
         let backend = Self {
             conn: std::sync::Arc::new(std::sync::Mutex::new(conn)),

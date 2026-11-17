@@ -27,14 +27,14 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_explore",
-                    description: "[WORKFLOW STEP 1: EXPLORE & CONTRACTS] Unified discovery tool. Extracts AST contract skeletons (LOD 1), projects blast radius/dependents, searches symbols across workspace, and generates semantic file trees.",
+                    description: "[WORKFLOW STEP 1: EXPLORE & COGNITIVE ROUTER] Unified discovery tool. Supports action='route' (analyzes natural language prompt and returns preloaded ozy_refactor tool call), action='contracts' (AST contract skeletons), 'impact' (blast radius), 'symbol', 'tree', 'summary', and 'search'.",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
                             "file_path": { "type": "string", "description": "Target file for contracts or impact analysis." },
-                            "action": { "type": "string", "enum": ["contracts", "impact", "symbol", "tree", "summary", "search"], "default": "contracts" },
+                            "action": { "type": "string", "enum": ["contracts", "impact", "symbol", "tree", "summary", "search", "route"], "default": "contracts" },
                             "symbol_name": { "type": "string", "description": "Function or class name when action='symbol'." },
-                            "query": { "type": "string", "description": "Text query when action='search'." },
+                            "query": { "type": "string", "description": "Text query when action='search' or natural language objective when action='route'." },
                             "depth": { "type": "integer", "default": 2, "description": "Exploration or impact depth." }
                         }
                     }),
