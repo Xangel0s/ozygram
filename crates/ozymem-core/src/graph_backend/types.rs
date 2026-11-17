@@ -425,6 +425,7 @@ pub struct NeighborhoodResult {
 pub(crate) struct Inner {
     pub(crate) graph: DiGraph<FileNode, FileEdge>,
     pub(crate) file_index: HashMap<String, NodeIndex>,
+    pub(crate) token_index: HashMap<String, Vec<NodeIndex>>,
     pub(crate) memory_graph: DiGraph<GraphEntityNode, MemoryGraphEdge>,
     pub(crate) memory_index: HashMap<String, NodeIndex>,
     pub(crate) sqlite: Connection,

@@ -37,6 +37,7 @@ impl GraphBackend {
             inner: Mutex::new(Inner {
                 graph: DiGraph::new(),
                 file_index: HashMap::new(),
+                token_index: HashMap::new(),
                 memory_graph: DiGraph::new(),
                 memory_index: HashMap::new(),
                 sqlite,
@@ -58,6 +59,7 @@ impl GraphBackend {
         };
         backend.init_schema()?;
         backend.load_memory_graph_to_ram()?;
+        backend.rebuild_graph().ok();
         Ok(backend)
     }
 

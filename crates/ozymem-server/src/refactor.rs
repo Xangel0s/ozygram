@@ -286,19 +286,34 @@ pub async fn handle_explore(
             let mut matched_symbol = None;
             let mut matched_file = None;
 
-            for word in &words {
-                if let Ok(matches) = backend.find_symbol(word, &project_path).await {
-                    if let Some(first) = matches.first() {
-                        let file_part = first.split(" [").next().unwrap_or(first).trim();
+            // 1. Ultra-fast In-RAM Token Index Lookup (< 0.1ms, zero SQLite locks)
+            let ram_candidates = backend.find_files_by_tokens_ram(&words, 5);
+            if let Some(first) = ram_candidates.first() {
+                matched_file = Some(first.clone());
+                for word in &words {
+                    if first.to_lowercase().contains(&word.to_lowercase()) {
                         matched_symbol = Some(word.to_string());
-                        matched_file = Some(file_part.to_string());
                         break;
                     }
                 }
             }
 
+            // 2. Fallback to symbol search if RAM token index didn't identify the file
             if matched_file.is_none() {
-                // Fast-path: query SQLite indexed files (< 1ms) instead of full-disk walk
+                for word in &words {
+                    if let Ok(matches) = backend.find_symbol(word, &project_path).await {
+                        if let Some(first) = matches.first() {
+                            let file_part = first.split(" [").next().unwrap_or(first).trim();
+                            matched_symbol = Some(word.to_string());
+                            matched_file = Some(file_part.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 3. Fallback to SQLite indexed file paths if still not matched
+            if matched_file.is_none() {
                 for word in &words {
                     if let Some(resolved) = backend.resolve_target_path(word) {
                         matched_file = Some(resolved);

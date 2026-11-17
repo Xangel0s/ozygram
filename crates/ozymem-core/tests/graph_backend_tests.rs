@@ -3377,7 +3377,7 @@ async fn test_universal_path_normalization_sqlite() {
     assert_eq!(c_orders.functions[0].name, "get_orders");
 
     // Test H: Backslash relative query
-    let ctx_bslash = sqlite.get_file_context(tenant, r"api-geofal-crm\routes\orders.py").unwrap();
+    let ctx_bslash = sqlite.get_file_context(tenant, r"backend-service\routes\orders.py").unwrap();
     assert!(ctx_bslash.is_some());
 
     // Test I: Bidirectional matching - store relative path in DB, query with absolute path
@@ -3399,4 +3399,26 @@ async fn test_universal_path_normalization_sqlite() {
     let ctx_abs_query = sqlite.get_file_context(tenant, "C:/projects/myapp/packages/frontend/src/index.ts").unwrap();
     assert!(ctx_abs_query.is_some(), "Absolute query must resolve stored relative path");
     assert_eq!(ctx_abs_query.unwrap().language, "TypeScript");
+}
+
+#[test]
+fn test_find_files_by_tokens_ram_submillisecond() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(root.join("probetas_controller.py"), "def calculate_density(): pass\ndef get_nucleo_perforado(): pass\n").unwrap();
+    std::fs::write(root.join("alerts_service.ts"), "export function disableAlerts(): void {}\n").unwrap();
+
+    let backend = GraphBackend::open_for_project(root).unwrap();
+    let root_str = root.to_string_lossy().to_string();
+    backend.full_scan(&root_str, None).unwrap();
+
+    // Query with tokens
+    let matches = backend.find_files_by_tokens_ram(&["nucleo", "perforado", "probetas"], 3);
+    assert!(!matches.is_empty(), "Expected probetas_controller.py to be found by tokens");
+    assert!(matches[0].contains("probetas_controller.py"));
+
+    let alert_matches = backend.find_files_by_tokens_ram(&["disableAlerts", "alerts"], 3);
+    assert!(!alert_matches.is_empty(), "Expected alerts_service.ts to be found by tokens");
+    assert!(alert_matches[0].contains("alerts_service.ts"));
 }

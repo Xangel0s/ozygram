@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::sync::{check_noise_or_huge_file, DeltaIndexResult, NoiseFilterDecision, DEFAULT_MAX_DELTA_FILE_BYTES};
 use crate::graph_backend::helpers::mark_stale_lessons;
 use anyhow::Result;
-use petgraph::graph::DiGraph;
+use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use rusqlite::params;
 use std::collections::HashSet;
@@ -402,6 +402,7 @@ impl GraphBackend {
     pub fn rebuild_graph(&self) -> Result<()> {
         let rows: Vec<(String, String, String, i64, i64)>;
         let deps: Vec<(String, String)>;
+        let funcs: Vec<(String, String)>;
 
         {
             let inner = self.inner.lock().unwrap();
@@ -434,10 +435,21 @@ impl GraphBackend {
                 })?
                 .filter_map(|r| r.ok())
                 .collect();
+
+            let mut func_stmt = inner.sqlite.prepare(
+                "SELECT name, file_path FROM functions WHERE tenant_id = ?1",
+            )?;
+            funcs = func_stmt
+                .query_map(params![self.tenant_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
         }
 
         let mut graph = DiGraph::new();
         let mut file_index = HashMap::new();
+        let mut token_index: HashMap<String, Vec<NodeIndex>> = HashMap::new();
 
         for (path, language, strategy, fc, lc) in &rows {
             let idx = graph.add_node(FileNode {
@@ -448,6 +460,27 @@ impl GraphBackend {
                 lesson_count: *lc,
             });
             file_index.insert(path.clone(), idx);
+
+            for token in path.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+                let lower = token.to_lowercase();
+                let list = token_index.entry(lower).or_default();
+                if !list.contains(&idx) {
+                    list.push(idx);
+                }
+            }
+        }
+
+        // Hydrate function tokens directly into RAM token_index
+        for (func_name, file_path) in &funcs {
+            if let Some(&idx) = file_index.get(file_path) {
+                for token in func_name.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+                    let lower = token.to_lowercase();
+                    let list = token_index.entry(lower).or_default();
+                    if !list.contains(&idx) {
+                        list.push(idx);
+                    }
+                }
+            }
         }
 
         for (origin, destination) in &deps {
@@ -461,6 +494,7 @@ impl GraphBackend {
         let mut inner_w = self.inner.lock().unwrap();
         inner_w.graph = graph;
         inner_w.file_index = file_index;
+        inner_w.token_index = token_index;
         drop(inner_w);
 
         let _ = self.engram_store.compact_and_persist();
@@ -702,6 +736,23 @@ impl GraphBackend {
                 inner.file_index.insert(abs_path.clone(), new_idx);
                 new_idx
             };
+
+            for token in abs_path.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+                let lower = token.to_lowercase();
+                let list = inner.token_index.entry(lower).or_default();
+                if !list.contains(&node_idx) {
+                    list.push(node_idx);
+                }
+            }
+            for func in &parsed.functions {
+                for token in func.name.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+                    let lower = token.to_lowercase();
+                    let list = inner.token_index.entry(lower).or_default();
+                    if !list.contains(&node_idx) {
+                        list.push(node_idx);
+                    }
+                }
+            }
 
             let edges_to_remove: Vec<_> = inner.graph.edges_directed(node_idx, petgraph::Direction::Outgoing)
                 .map(|e| e.id())
