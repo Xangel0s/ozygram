@@ -124,14 +124,18 @@ name = "ozy"
 rule = "cow_ram_refactor_before_disk"
 
 [anti_patterns]
-veto = ["line_by_line_reading", "raw_grep_before_ast", "direct_disk_writes_without_sim"]
-rule = "DO NOT read files in chunked slices or use grep. Always query AST contracts or use ozy_explore."
+veto = ["line_by_line_reading", "raw_grep_before_ast", "direct_disk_writes_without_sim", "read_file_when_contracts_exist"]
+rule = "DO NOT read files in chunked slices or use grep. Always query AST contracts or use ozy_explore. In /plan mode, generate diffs strictly from ozy_refactor dry-runs."
 
 [routing_shortcuts]
 to_explore = "ozy_explore(action='contracts', file_path='...')"
 to_route_prompt = "ozy_explore(action='route', query='user task objective')"
 to_refactor = "ozy_refactor(action='simulate', file_path='...')"
 to_find_symbol = "ozy_explore(action='symbol', symbol_name='...')"
+
+[plan_integration]
+rule = "when_plan_mode_active_use_ram_dry_run_for_diffs"
+directive = "When drafting an implementation plan (/plan), use ozy_explore for research and ozy_refactor(action='simulate') for diffs. NEVER use read_file for whole files when AST contracts exist. Keep physical disk 100% untouched until plan approval."
 
 [tools.ozy_refactor]
 primary = true
