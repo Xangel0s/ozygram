@@ -109,9 +109,9 @@ flowchart LR
 
 To maintain absolute technical transparency, all latency, throughput, and token optimization claims map directly to reproducible test suites and empirical runs in the repository:
 
-### 1. Quantitative A/B Benchmark: Ozygram vs Native/Standard Agent (Real Monorepo `crmnew`)
+### 1. Quantitative A/B Benchmark: Ozygram vs Native/Standard Agent (Monorepo de producción)
 
-Evaluated directly against real-world production code (`api-geofal-crm`, FastAPI + SQLAlchemy, 1,500+ files), comparing conventional LLM agent behavior (linear `grep`, chunked `read_file` L1-100, and blind disk mutations) against Ozygram v0.2.7 (Universal TOML Prompt, OzyBrain Cognitive Router, and Atomic In-RAM Refactoring):
+Evaluated directly against real-world production code (Sistema en producción: FastAPI + SQLAlchemy backend, 1,500+ files), comparing conventional LLM agent behavior (linear `grep`, chunked `read_file` L1-100, and blind disk mutations) against Ozygram v0.2.7 (Universal TOML Prompt, OzyBrain Cognitive Router, and Atomic In-RAM Refactoring):
 
 | Evaluation Scenario | Metric | Standard Agent (Unassisted) | Equipped with Ozygram (v0.2.7) | Empirical Advantage |
 | :--- | :--- | :--- | :--- | :--- |
@@ -152,7 +152,7 @@ Evaluated directly against real-world production code (`api-geofal-crm`, FastAPI
 
 ### 4. End-to-End Agent Velocity: 23 Minutes vs. 4 Minutes (Zero-Prompting Interception)
 * **Underlying Engine:** 2-Tier Cognitive Interception Protocol (Imperative MCP tool schemas in `schemas.rs` + Workspace Precedence Protocol in `AGENTS.md` / `CLAUDE.md`).
-* **Empirical Monorepo Evaluation:** Measured on full-stack production monorepos (e.g. `crmnew`, 1,500+ files, FastAPI backend + Next.js 16 frontend):
+* **Empirical Monorepo Evaluation:** Measured on full-stack production monorepos (Sistema en producción: 1,500+ files, FastAPI backend + Next.js 16 frontend):
   * **Standard Agent (Native Unassisted):** 23 minutes, >45,000 tokens, 15+ turns of linear `read_file` / `grep` exploration and trial-and-error disk edits.
   * **Ozygram-Equipped Agent (Fluid Zero-Prompting):** 4 minutes, <6,000 tokens (>85% token reduction), sub-400 ms volatile RAM validation (`ozy_patch`), and single-turn surgical resolution.
 * **Full Documentation & Playbook:** See [Guía Maestra de Herramientas (Sección 7: Automatización Fluida)](docs/herramientas-casos-de-uso.md#7-automatización-fluida-y-protocolo-de-intercepción-zero-prompting) and [MCP Integration Guide (Section 4)](docs/mcp-integration.md#4-autonomous-agent-precedence--zero-prompting-setup).

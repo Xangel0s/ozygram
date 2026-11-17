@@ -1,0 +1,61 @@
+{
+  "vaccine_file": "C:\\Users\\Lenovo\\Documents\\crmnew\\production-crm-backend\\.ozy\\memories\\normalize_date_ymd_invariant.md",
+  "vaccine_content": "```markdown\n# normalize_date_ymd Architectural Invariant\n\n## 1. Invariant Contract\n```python\ndef normalize_date_ymd(value: str | datetime | date | None) -> str:\n    \"\"\"Input MUST accept these production-proven types:\n    - String (ISO-8601, YMD, or Excel number strings)\n    - datetime (SQLAlchemy/DB results)\n    - date (Python native)\n    - None (nullable DB fields)\n    Output always returns YYYY-MM-DD string or raises ValueError\"\"\"\n```\n\n## 2. Architectural Gotcha\n**Forbidden Reduction:** Narrowing to `str` breaks:\n- SQLAlchemy ORM datetime hydration\n- Excel numeric date serialization (44197 \u2192 \"2021-01-01\")\n- Backward compatibility with 35+ callers across:\n  - Quote expiration logic\n  - Lab test date processing\n  - Report period compression\n  - Data warehouse exports\n\n## 3. Zero-Regression Directive\n1. **Type Preservation:** Never modify the parameter union type\n2. **Defensive Testing:** New implementations require:\n   ```python\n   assert normalize_date_ymd(datetime(2023,1,1)) == \"2023-01-01\"\n   assert normalize_date_ymd(45000) == \"2023-03-15\"  # Excel serial\n   assert normalize_date_ymd(None) raises ValueError\n   ```\n3. **Change Protocol:** Coordinate with:\n   - CRM Core Team\n   - Data Engineering\n   - BI Report Owners\n```",
+  "res_synthesis": {
+    "elapsed": 3.3119778633117676,
+    "content": "```markdown\n# normalize_date_ymd Architectural Invariant\n\n## 1. Invariant Contract\n```python\ndef normalize_date_ymd(value: str | datetime | date | None) -> str:\n    \"\"\"Input MUST accept these production-proven types:\n    - String (ISO-8601, YMD, or Excel number strings)\n    - datetime (SQLAlchemy/DB results)\n    - date (Python native)\n    - None (nullable DB fields)\n    Output always returns YYYY-MM-DD string or raises ValueError\"\"\"\n```\n\n## 2. Architectural Gotcha\n**Forbidden Reduction:** Narrowing to `str` breaks:\n- SQLAlchemy ORM datetime hydration\n- Excel numeric date serialization (44197 \u2192 \"2021-01-01\")\n- Backward compatibility with 35+ callers across:\n  - Quote expiration logic\n  - Lab test date processing\n  - Report period compression\n  - Data warehouse exports\n\n## 3. Zero-Regression Directive\n1. **Type Preservation:** Never modify the parameter union type\n2. **Defensive Testing:** New implementations require:\n   ```python\n   assert normalize_date_ymd(datetime(2023,1,1)) == \"2023-01-01\"\n   assert normalize_date_ymd(45000) == \"2023-03-15\"  # Excel serial\n   assert normalize_date_ymd(None) raises ValueError\n   ```\n3. **Change Protocol:** Coordinate with:\n   - CRM Core Team\n   - Data Engineering\n   - BI Report Owners\n```",
+    "usage": {
+      "prompt_tokens": 215,
+      "completion_tokens": 331,
+      "total_tokens": 546,
+      "cost": 0.0003958407,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0003958407,
+        "upstream_inference_prompt_cost": 5.5341e-05,
+        "upstream_inference_completions_cost": 0.0003404997
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "cost": 0.0003958407
+  },
+  "res_verification": {
+    "elapsed": 3.3570680618286133,
+    "content": "Here's the JSON call to simulate the refactor of `normalize_date_ymd` to add `include_time: bool = False`:\n\n```json\n{\n  \"action\": \"simulate\",\n  \"refactor\": {\n    \"file\": \"app/utils/date_format.py\",\n    \"function\": \"normalize_date_ymd\",\n    \"changes\": [\n      {\n        \"type\": \"add_parameter\",\n        \"name\": \"include_time\",\n        \"default\": false,\n        \"annotation\": \"bool\"\n      },\n      {\n        \"type\": \"modify_return\",\n        \"description\": \"Returns YYYY-MM-DD string by default, or YYYY-MM-DD HH:MM:SS if include_time is True\"\n      }\n    ],\n    \"tests\": [\n      {\n        \"input\": [\"2023-01-01 12:34:56\", true],\n        \"expected\": \"2023-01-01 12:34:56\"\n      },\n      {\n        \"input\": [\"2023-01-01 12:34:56\", false],\n        \"expected\": \"2023-01-01\"\n      },\n      {\n        \"input\": [datetime(2023,1,1,12,34,56), true],\n        \"expected\": \"2023-01-01 12:34:56\"\n      },\n      {\n        \"input\": [datetime(2023,1,1,12,34,56), false],\n        \"expected\": \"2023-01-01\"\n      }\n    ],\n    \"impact\": {\n      \"callers\": 35,\n      \"teams\": [\"CRM Core\", \"Data Engineering\", \"BI Reports\"],\n      \"coordination\": true\n    }\n  }\n}\n```\n\nThis simulation:\n1. Adds the `include_time` parameter with a default of `False`\n2. Modifies the return behavior to optionally include time\n3. Adds new test cases to verify time inclusion\n4. Maintains backward compatibility\n5. Flags the need for coordination with impacted teams\n\nThe simulation will analyze the impact across the codebase while preserving the existing architectural invariant.",
+    "usage": {
+      "prompt_tokens": 427,
+      "completion_tokens": 448,
+      "total_tokens": 875,
+      "cost": 0.00053536,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00053536,
+        "upstream_inference_prompt_cost": 0.00013664,
+        "upstream_inference_completions_cost": 0.00039872
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "cost": 0.00053536
+  },
+  "success": false
+}

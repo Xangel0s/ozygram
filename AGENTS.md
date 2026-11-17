@@ -3,8 +3,8 @@
 ## Workspace Overview
 Contains core system modules, memory engines, and CRM integrations:
 - `ozygram/`: Ozy memory engine, Rust crates (`ozymem-parser`, `ozymem-core`), Python brain (`ozy-brain`, Dreamer RSI, outbox consumers).
-- `crmnew/api-geofal-crm/`: Central FastAPI backend for Geofal CRM.
-- `crmnew/crm-geofal/`: Next.js 16 App Router frontend dashboard.
+- `crmnew/production-crm-backend/`: Central FastAPI backend for Sistema CRM en producción.
+- `crmnew/production-crm-frontend/`: Next.js 16 App Router frontend dashboard.
 
 ## Protocolo Obligatorio de Herramientas y Aceleración Cognitiva (Ozygram First)
 
@@ -106,7 +106,7 @@ Contains core system modules, memory engines, and CRM integrations:
 
 - Live Dream-RSI Centinela & Multi-Repo Contract Bridge v2.5.0:
   - Synaptic Tagging & Capture (STC): Ephemeral 30-minute memory marks on modified AST nodes, exponential decay pruning, and PRP compute allocation.
-  - Multi-Repo Workspace Scanner: In-memory harvesting of working tree diffs and 24h commits across consolidated sub-repos (`api-geofal-crm` [FastAPI] + `crm-geofal` [Next.js 16]).
+  - Multi-Repo Workspace Scanner: In-memory harvesting of working tree diffs and 24h commits across consolidated sub-repos (`production-crm-backend` [FastAPI] + `production-crm-frontend` [Next.js 16]).
   - Full-Stack Cross-Repo Contract Tracer: Bidirectional AST verification connecting `@router` endpoints with `resilientFetch`/`useQuery` hooks, emitting `[ALERT: CROSS_REPO_CONTRACT_DRIFT]`.
   - Transitive Reverse Blast Radius: Inverted AST import graph BFS determining direct and indirect component/view breakage.
   - Counterfactual MCTS Solver: RAM-based decision tree evaluating candidate remediations (`BackendFallbackAdapter`, `FrontendCallerSync`, `DualActiveContract`) with multi-dimensional reward optimization.

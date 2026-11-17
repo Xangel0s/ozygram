@@ -107,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Bidirectional Re-injection & Offline Sleep Pre-Optimization**: Automatically enriches `ozybrain/plan` steps and recommendations with `[OPTIMIZED_BY_DREAM_RSI]`, pre-computes fragile file branches during the 30-min idle sleep cycle into `.ozymem/dream_latest_insights.json`, and synthesizes Git markdown Gotcha vaccines via `persist_mitigation_vaccine`.
 
 - **Live Dream-RSI Centinela & Multi-Repo Contract Bridge (v2.5.0)**:
-  - Multi-Repo Workspace Scanner discovering consolidated sub-repos (`api-geofal-crm` [FastAPI] + `crm-geofal` [Next.js 16]).
+  - Multi-Repo Workspace Scanner discovering consolidated sub-repos (`production-crm-backend` [FastAPI] + `production-crm-frontend` [Next.js 16]).
   - Bidirectional AST Contract Tracer connecting `@router` endpoints with `resilientFetch`/`useQuery` hooks and detecting `ContractDriftAlert`.
   - Transitive Reverse Blast Radius over inverted AST import graph BFS determining direct and indirect component/view breakage.
   - Ephemeral Copy-on-Write RAM mutation and caller arity verification with `MonsterComputeConfig` (OZY_MAX_COMPUTE=1).
