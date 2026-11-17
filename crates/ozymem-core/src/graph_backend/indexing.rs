@@ -120,29 +120,6 @@ impl GraphBackend {
         let ignore_patterns = load_ignore_patterns(Path::new(project_path));
         let has_ignores = !ignore_patterns.is_empty();
 
-        // Clear stale data for this tenant before re-scan
-        {
-            let inner = self.inner.lock().unwrap();
-            let _ = inner.sqlite.execute_batch("BEGIN IMMEDIATE;");
-            inner.sqlite.execute(
-                "DELETE FROM file_dependencies WHERE tenant_id = ?1",
-                params![self.tenant_id],
-            )?;
-            inner.sqlite.execute(
-                "DELETE FROM functions WHERE tenant_id = ?1",
-                params![self.tenant_id],
-            )?;
-            inner.sqlite.execute(
-                "DELETE FROM files WHERE tenant_id = ?1",
-                params![self.tenant_id],
-            )?;
-            inner.sqlite.execute(
-                "DELETE FROM ast_diagnostics WHERE tenant_id = ?1",
-                params![self.tenant_id],
-            )?;
-            let _ = inner.sqlite.execute_batch("COMMIT;");
-        }
-
         let proj_root = Path::new(project_path);
 
         // Pre-count total files for progress reporting
@@ -261,6 +238,18 @@ impl GraphBackend {
             };
 
             let inner = self.inner.lock().unwrap();
+            let _ = inner.sqlite.execute(
+                "DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            );
+            let _ = inner.sqlite.execute(
+                "DELETE FROM file_dependencies WHERE origin_path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            );
+            let _ = inner.sqlite.execute(
+                "DELETE FROM ast_diagnostics WHERE file_path = ?1 AND tenant_id = ?2",
+                params![abs_path, self.tenant_id],
+            );
             inner.sqlite.execute(
                 "INSERT OR REPLACE INTO files (path, language, strategy, mtime, tenant_id, workspace_root, sha256) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![abs_path, parsed.language, parsed.strategy.as_str(), mtime, self.tenant_id, inner.workspace_root, sha256_hash],
@@ -343,6 +332,10 @@ impl GraphBackend {
             }
 
             file_count += 1;
+            if file_count % 100 == 0 {
+                let inner = self.inner.lock().unwrap();
+                let _ = inner.sqlite.execute_batch("COMMIT; BEGIN IMMEDIATE;");
+            }
             if let Some(cb) = progress {
                 processed += 1;
                 cb(processed, total_file_count);
@@ -351,6 +344,30 @@ impl GraphBackend {
 
         {
             let inner = self.inner.lock().unwrap();
+            let _ = inner.sqlite.execute_batch("COMMIT;");
+        }
+
+        // Non-destructive cleanup: purge only deleted files from disk that were previously indexed
+        if !scanned_files.is_empty() {
+            let inner = self.inner.lock().unwrap();
+            let _ = inner.sqlite.execute_batch("BEGIN IMMEDIATE;");
+            let existing_files: Vec<String> = if let Ok(mut stmt) = inner.sqlite.prepare("SELECT path FROM files WHERE tenant_id = ?1") {
+                if let Ok(rows) = stmt.query_map(params![self.tenant_id], |r| r.get(0)) {
+                    rows.filter_map(|r| r.ok()).collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+            for old_path in existing_files {
+                if !scanned_files.contains(&old_path) {
+                    let _ = inner.sqlite.execute("DELETE FROM files WHERE path = ?1 AND tenant_id = ?2", params![old_path, self.tenant_id]);
+                    let _ = inner.sqlite.execute("DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2", params![old_path, self.tenant_id]);
+                    let _ = inner.sqlite.execute("DELETE FROM file_dependencies WHERE (origin_path = ?1 OR destination_path = ?1) AND tenant_id = ?2", params![old_path, self.tenant_id]);
+                    let _ = inner.sqlite.execute("DELETE FROM ast_diagnostics WHERE file_path = ?1 AND tenant_id = ?2", params![old_path, self.tenant_id]);
+                }
+            }
             let _ = inner.sqlite.execute_batch("COMMIT;");
         }
 

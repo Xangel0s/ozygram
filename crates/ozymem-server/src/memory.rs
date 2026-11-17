@@ -550,75 +550,74 @@ pub async fn handle_memory_tool(
                                 .get("limit")
                                 .and_then(Value::as_u64)
                                 .unwrap_or(10) as usize;
-                            let wants_observations = tool_call.arguments.contains_key("project")
-                                || tool_call.arguments.contains_key("scope")
-                                || tool_call.arguments.contains_key("topic_key")
-                                || !matches!(
-                                    kind,
-                                    "lesson" | "decision" | "convention" | "gotcha" | "module_rule"
-                                );
-                            if wants_observations {
-                                let project =
-                                    tool_call.arguments.get("project").and_then(Value::as_str);
-                                let scope =
-                                    tool_call.arguments.get("scope").and_then(Value::as_str);
-                                let observation_type = if tool_call.arguments.contains_key("kind") {
-                                    Some(kind)
-                                } else {
-                                    None
-                                };
-                                let obs = backend.search_observations(
-                                    query,
-                                    project,
-                                    scope,
-                                    observation_type,
-                                    limit,
-                                )?;
-                                let text = if obs.is_empty() && !query.is_empty() {
-                                    // Hybrid fallback: query similar lessons across SQLite & ChromaDB
-                                    if let Ok(sim_lessons) = backend.similar_lessons(query, limit, 0.40) {
-                                        if !sim_lessons.is_empty() {
-                                            let mut out = format!("[STATUS: ACTIVE] No direct observations, but found {} semantically related memories for '{query}':\n", sim_lessons.len());
-                                            for (i, sl) in sim_lessons.iter().enumerate() {
-                                                out.push_str(&format!(
-                                                    "{}. [score {:.3}] [{}] {} :: {}\n   {}\n",
-                                                    i + 1,
-                                                    sl.score,
-                                                    sl.lesson.kind,
-                                                    sl.lesson.file_path,
-                                                    sl.lesson.symbol_name,
-                                                    sl.lesson.solution
-                                                ));
-                                            }
-                                            out
-                                        } else {
-                                            format_observations_list(&obs)
+                            let project =
+                                tool_call.arguments.get("project").and_then(Value::as_str);
+                            let scope =
+                                tool_call.arguments.get("scope").and_then(Value::as_str);
+                            let observation_type = if tool_call.arguments.contains_key("kind") {
+                                Some(kind)
+                            } else {
+                                None
+                            };
+
+                            let obs = backend.search_observations(
+                                query,
+                                project,
+                                scope,
+                                observation_type,
+                                limit,
+                            ).unwrap_or_default();
+
+                            let lessons = backend
+                                .search_lessons(query, Some(kind), limit)
+                                .await
+                                .unwrap_or_default();
+
+                            let text = if !obs.is_empty() || !lessons.is_empty() {
+                                let mut out = String::new();
+                                if !obs.is_empty() {
+                                    out.push_str(&format_observations_list(&obs));
+                                }
+                                if !lessons.is_empty() {
+                                    if !out.is_empty() {
+                                        out.push_str("\n\n=== LESSONS & GOTCHAS ===\n");
+                                    }
+                                    out.push_str(&format_lessons_list(&lessons));
+                                }
+                                out
+                            } else if !query.is_empty() {
+                                // Semantic similarity fallback across embeddings
+                                if let Ok(sim_lessons) = backend.similar_lessons(query, limit, 0.40) {
+                                    if !sim_lessons.is_empty() {
+                                        let mut out = format!("[STATUS: ACTIVE] No direct FTS matches, but found {} semantically related memories for '{query}':\n", sim_lessons.len());
+                                        for (i, sl) in sim_lessons.iter().enumerate() {
+                                            out.push_str(&format!(
+                                                "{}. [score {:.3}] [{}] {} :: {}\n   {}\n",
+                                                i + 1,
+                                                sl.score,
+                                                sl.lesson.kind,
+                                                sl.lesson.file_path,
+                                                sl.lesson.symbol_name,
+                                                sl.lesson.solution
+                                            ));
                                         }
+                                        out
                                     } else {
-                                        format_observations_list(&obs)
+                                        "No entries found.".to_string()
                                     }
                                 } else {
-                                    format_observations_list(&obs)
-                                };
-                                ToolCallResult {
-                                    content: vec![ContentBlock {
-                                        kind: "text",
-                                        text,
-                                    }],
-                                    is_error: None,
+                                    "No entries found.".to_string()
                                 }
                             } else {
-                                ToolCallResult {
-                                    content: vec![ContentBlock {
-                                        kind: "text",
-                                        text: format_lessons_list(
-                                            &backend
-                                                .search_lessons(query, Some(kind), limit)
-                                                .await?,
-                                        ),
-                                    }],
-                                    is_error: None,
-                                }
+                                "No entries found.".to_string()
+                            };
+
+                            ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text,
+                                }],
+                                is_error: None,
                             }
                         }
                     }

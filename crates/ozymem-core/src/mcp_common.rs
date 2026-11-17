@@ -126,7 +126,7 @@ pub struct ContentBlock {
     pub text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ToolCallParams {
     pub name: String,
     #[serde(default)]

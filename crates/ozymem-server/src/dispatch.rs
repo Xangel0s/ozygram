@@ -11,7 +11,7 @@ use crate::doctor::handle_ozy_doctor;
 use crate::packages::handle_package_tool;
 use crate::projects::handle_project_tool;
 use crate::skills::handle_ozy_skills;
-use crate::state::{error_response, log_spawn, ok_response, Notifier};
+use crate::state::{error_response, ok_response, Notifier};
 use crate::tools::handle_lookup_engram;
 use crate::verifier::handle_verify_diff;
 use crate::exploration::handle_exploration;
@@ -133,10 +133,8 @@ pub async fn handle_request(
                 env!("CARGO_PKG_VERSION"),
                 project_path.display()
             );
-            log("info", init_msg);
-            if let Some(n) = notifier {
-                n.log("info", format!("[ozymem] Ready (project DB at {})", project_path.display()));
-            }
+            eprintln!("[ozymem] {init_msg}");
+            eprintln!("[ozymem] Ready (project DB at {})", project_path.display());
 
             let gb_warm = backend.clone();
             tokio::spawn(async move {
@@ -150,17 +148,16 @@ pub async fn handle_request(
             });
 
             let backend_clone = backend.clone();
-            let notifier_clone = notifier.cloned();
+            let _notifier_clone = notifier.cloned();
             let project_path_scan = project_path.to_string_lossy().to_string();
             tokio::task::spawn_blocking(move || {
                 let guard = backend_clone.blocking_read();
                 if let Some(ref gb) = *guard {
-                    let progress_cb = notifier_clone.as_ref().map(|n| {
-                        let n = n.clone();
-                        Box::new(move |cur: u64, tot: u64| {
-                            n.progress(&json!("init"), cur, Some(tot));
-                        }) as Box<dyn Fn(u64, u64) + Send + Sync>
-                    });
+                    let progress_cb = Some(Box::new(move |cur: u64, tot: u64| {
+                        if cur % 100 == 0 || cur == tot {
+                            eprintln!("[ozymem] indexing: {cur}/{tot} files");
+                        }
+                    }) as Box<dyn Fn(u64, u64) + Send + Sync>);
                     let cb_ref = progress_cb.as_ref().map(|cb| cb.as_ref() as &dyn Fn(u64, u64));
                     if let Err(e) = gb.full_scan(&project_path_scan, cb_ref) {
                         eprintln!("[ozymem] background scan error: {e}");
@@ -237,7 +234,7 @@ pub async fn handle_request(
                 }
             };
             let tool_call = params;
-            log_spawn("info", format!("[ozymem] tool call: {}", tool_call.name), &notifier.cloned());
+            eprintln!("[ozymem] tool call: {}", tool_call.name);
 
             // Project lifecycle tools
             if matches!(
@@ -628,15 +625,31 @@ pub async fn handle_request(
                     let action = tool_call.arguments.get("action").and_then(Value::as_str).unwrap_or("apply");
                     match action {
                         "simulate" => {
-                            match crate::symbols::handle_simulate_patch(backend, &tool_call) {
-                                Ok(res) => res,
-                                Err(e) => ToolCallResult {
-                                    content: vec![ContentBlock {
-                                        kind: "text",
-                                        text: format!("[ALERT: ERROR] {e}"),
-                                    }],
-                                    is_error: Some(true),
-                                },
+                            if tool_call.arguments.contains_key("target_symbol") {
+                                match crate::symbols::handle_simulate_patch(backend, &tool_call) {
+                                    Ok(res) => res,
+                                    Err(e) => ToolCallResult {
+                                        content: vec![ContentBlock {
+                                            kind: "text",
+                                            text: format!("[ALERT: ERROR] {e}"),
+                                        }],
+                                        is_error: Some(true),
+                                    },
+                                }
+                            } else {
+                                // Block/Diff level AST dry-run simulation
+                                let mut dry_tool_call = tool_call.clone();
+                                dry_tool_call.arguments.insert("dry_run".to_string(), Value::Bool(true));
+                                match crate::symbols::handle_ast_patch(backend, &dry_tool_call) {
+                                    Ok(res) => res,
+                                    Err(e) => ToolCallResult {
+                                        content: vec![ContentBlock {
+                                            kind: "text",
+                                            text: format!("[ALERT: ERROR] {e}"),
+                                        }],
+                                        is_error: Some(true),
+                                    },
+                                }
                             }
                         }
                         "replace_symbol" => {
