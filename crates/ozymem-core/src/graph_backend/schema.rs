@@ -20,7 +20,7 @@ impl GraphBackend {
         let sqlite =
             Connection::open(&path).with_context(|| format!("failed to open SQLite at {path}"))?;
         sqlite.execute_batch(
-            "PRAGMA busy_timeout = 5000;
+            "PRAGMA busy_timeout = 15000;
              PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;
              PRAGMA synchronous = NORMAL;
@@ -63,6 +63,17 @@ impl GraphBackend {
 
     fn init_schema(&self) -> Result<()> {
         let inner = self.inner.lock().unwrap();
+
+        // Concurrency Fast-Path: if schema is already initialized and up-to-date,
+        // skip all DDL / ALTER TABLE commands to prevent exclusive schema lock contention.
+        let version: i32 = inner
+            .sqlite
+            .query_row("PRAGMA user_version;", [], |r| r.get(0))
+            .unwrap_or(0);
+        if version >= 5 {
+            return Ok(());
+        }
+
         inner.sqlite.execute_batch(
             "CREATE TABLE IF NOT EXISTS tenants (
                 id TEXT PRIMARY KEY,
@@ -871,6 +882,9 @@ impl GraphBackend {
             INSERT OR IGNORE INTO memory_nodes_fts(rowid, title, content, error_context, solution)
             SELECT rowid, title, content, error_context, solution FROM memory_nodes;"
         )?;
+
+        // Set user_version so future startups skip all DDL operations
+        let _ = inner.sqlite.execute("PRAGMA user_version = 5;", []);
 
         Ok(())
     }
