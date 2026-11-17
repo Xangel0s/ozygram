@@ -463,6 +463,11 @@ impl McpBackend for GraphBackend {
         let inner = self.inner.lock().unwrap();
         let like1 = format!("{}%", project_path);
         let like2 = format!("{}%", norm_proj);
+        let pattern = if symbol_name.contains('%') {
+            symbol_name.to_string()
+        } else {
+            format!("%{}%", symbol_name)
+        };
         // Use LIKE for partial matching (supports % wildcards in symbol_name)
         let mut stmt = inner.sqlite.prepare(
             "SELECT f.path, fn.start_line, fn.kind FROM functions fn
@@ -472,7 +477,7 @@ impl McpBackend for GraphBackend {
              ORDER BY fn.name LIMIT 100",
         )?;
         let results: Vec<String> = stmt
-            .query_map(params![symbol_name, self.tenant_id, like1, like2], |row| {
+            .query_map(params![pattern, self.tenant_id, like1, like2], |row| {
                 let path: String = row.get(0)?;
                 let line: i64 = row.get(1)?;
                 let kind: String = row.get(2)?;

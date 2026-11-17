@@ -27,7 +27,7 @@ impl GraphBackend {
 
         {
             let mut last = self.last_check.lock().unwrap();
-            if last.elapsed() < std::time::Duration::from_millis(500) {
+            if last.elapsed() < std::time::Duration::from_secs(30) {
                 return;
             }
             *last = Instant::now();

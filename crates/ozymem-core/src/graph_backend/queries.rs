@@ -564,6 +564,25 @@ impl GraphBackend {
         None
     }
 
+    /// Fast-path in-index search for files matching keyword in SQLite (< 1ms).
+    pub fn find_files_by_keyword(&self, keyword: &str, limit: usize) -> Result<Vec<String>> {
+        let clean = keyword.trim().trim_matches(|c| c == '"' || c == '\'');
+        if clean.is_empty() || clean.len() < 3 {
+            return Ok(Vec::new());
+        }
+        let inner = self.inner.lock().unwrap();
+        let pattern = format!("%{}%", clean.replace('\\', "/"));
+        let pattern_bwd = format!("%{}%", clean.replace('/', "\\"));
+        let max = if limit == 0 { 5 } else { limit };
+        let mut stmt = inner.sqlite.prepare(
+            "SELECT path FROM files 
+             WHERE (path LIKE ?1 OR path LIKE ?2 OR replace(path, '\\', '/') LIKE ?1) AND tenant_id = ?3 
+             ORDER BY length(path) ASC LIMIT ?4"
+        )?;
+        let rows = stmt.query_map(params![pattern, pattern_bwd, self.tenant_id, max as i64], |r| r.get(0))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     /// Filter graph summary by a subpath or monorepo sub-scope.
     pub fn get_subpath_graph_summary(&self, subpath: &str) -> Result<GraphSummary> {
         let norm_sub = crate::normalize_path(subpath).replace('\\', "/");

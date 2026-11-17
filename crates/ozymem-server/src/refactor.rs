@@ -184,8 +184,6 @@ pub async fn handle_explore(
     backend: &GraphBackend,
     tool_call: &ToolCallParams,
 ) -> Result<ToolCallResult> {
-    backend.reload_if_stale();
-
     let action = tool_call
         .arguments
         .get("action")
@@ -199,6 +197,11 @@ pub async fn handle_explore(
                 "summary"
             }
         });
+
+    // Fast-path: bypass reload_if_stale for routing queries to guarantee sub-20ms response
+    if action != "route" && action != "suggest" {
+        backend.reload_if_stale();
+    }
 
     let text_output = match action {
         "impact" => {
@@ -295,9 +298,17 @@ pub async fn handle_explore(
             }
 
             if matched_file.is_none() {
-                if let Ok(search_res) = backend.search_literal(query, None, false, false, 5, 1, 1) {
-                    if let Some(first_match) = search_res.matches.first() {
-                        matched_file = Some(first_match.file_path.clone());
+                // Fast-path: query SQLite indexed files (< 1ms) instead of full-disk walk
+                for word in &words {
+                    if let Some(resolved) = backend.resolve_target_path(word) {
+                        matched_file = Some(resolved);
+                        break;
+                    }
+                    if let Ok(found) = backend.find_files_by_keyword(word, 3) {
+                        if let Some(first) = found.first() {
+                            matched_file = Some(first.clone());
+                            break;
+                        }
                     }
                 }
             }
