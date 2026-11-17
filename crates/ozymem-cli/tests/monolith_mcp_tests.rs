@@ -19,13 +19,24 @@ async fn test_monolith_cli_has_embedded_mcp_server() {
     let result = resp.result.expect("result must be present");
     let active_tools = result["tools"].as_array().expect("tools array");
 
-    // Must have the unified canonical tools embedded in the single binary
-    assert!(active_tools.iter().any(|t| t["name"] == "ozy_patch"));
-    assert!(active_tools.iter().any(|t| t["name"] == "ozy_plan"));
-    assert!(active_tools.iter().any(|t| t["name"] == "ozy_context"));
+    // Must have the unified canonical 6-tool suite embedded in the single binary by default
+    assert!(active_tools.iter().any(|t| t["name"] == "ozy_refactor"));
+    assert!(active_tools.iter().any(|t| t["name"] == "ozy_explore"));
+    assert!(active_tools.iter().any(|t| t["name"] == "ozy_simulate"));
+    assert!(active_tools.iter().any(|t| t["name"] == "ozy_apply"));
     assert!(active_tools.iter().any(|t| t["name"] == "ozy_memory"));
-    assert!(active_tools.iter().any(|t| t["name"] == "ozy_doctor"));
-    assert!(active_tools.iter().any(|t| t["name"] == "ozy_dream"));
-    assert_eq!(active_tools.len(), 27);
+    assert!(active_tools.iter().any(|t| t["name"] == "ozy_read_blob"));
+    assert_eq!(active_tools.len(), 6);
+
+    // When all=true is requested, returns the full catalog of 31 tools (4 new canonical + 27 legacy)
+    let req_all = mcp_common::JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(serde_json::json!(2)),
+        method: "tools/list".to_string(),
+        params: Some(serde_json::json!({ "all": true })),
+    };
+    let resp_all = handle_request(&backend, req_all, None, None).await.unwrap().unwrap();
+    let tools_all = resp_all.result.unwrap()["tools"].as_array().unwrap().clone();
+    assert_eq!(tools_all.len(), 31);
 }
 

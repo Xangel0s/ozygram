@@ -9,6 +9,65 @@ pub fn handle_tools_list(
 ) -> anyhow::Result<Option<mcp_common::JsonRpcResponse>> {
             let tools = vec![
                 mcp_common::ToolDefinition {
+                    name: "ozy_refactor",
+                    description: "[RECOMMENDED WORKFLOW META-TOOL] Performs atomic in-RAM refactoring in a single turn. Automatically projects topological blast radius, inspects AST contracts, and simulates Copy-On-Write patch in volatile RAM before writing to disk. Supports action='simulate' (default, 100% in RAM, disk unchanged) and action='apply' (writes verified patch to disk).",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Relative or absolute path to the target file." },
+                            "target_code": { "type": "string", "description": "Exact code block to replace." },
+                            "replacement": { "type": "string", "description": "New refactored code replacement." },
+                            "target_symbol": { "type": "string", "description": "Optional: Symbol/function name to replace." },
+                            "candidate_code": { "type": "string", "description": "Optional: Full replacement body for target_symbol." },
+                            "action": { "type": "string", "enum": ["simulate", "apply"], "default": "simulate", "description": "simulate runs 100% in RAM without touching disk; apply writes verified patch to disk." },
+                            "max_hops": { "type": "integer", "default": 2, "description": "Blast radius exploration depth in dependency graph." }
+                        },
+                        "required": ["file_path"]
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_explore",
+                    description: "[WORKFLOW STEP 1: EXPLORE & CONTRACTS] Unified discovery tool. Extracts AST contract skeletons (LOD 1), projects blast radius/dependents, searches symbols across workspace, and generates semantic file trees.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Target file for contracts or impact analysis." },
+                            "action": { "type": "string", "enum": ["contracts", "impact", "symbol", "tree", "summary", "search"], "default": "contracts" },
+                            "symbol_name": { "type": "string", "description": "Function or class name when action='symbol'." },
+                            "query": { "type": "string", "description": "Text query when action='search'." },
+                            "depth": { "type": "integer", "default": 2, "description": "Exploration or impact depth." }
+                        }
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_simulate",
+                    description: "[WORKFLOW STEP 2: RAM SIMULATION] 100% volatile RAM Copy-On-Write AST patch simulation. Checks syntax, arity, and caller invariants without touching disk.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Relative path to target file." },
+                            "target_code": { "type": "string", "description": "Original code block to substitute." },
+                            "replacement": { "type": "string", "description": "New code block." },
+                            "target_symbol": { "type": "string", "description": "Optional symbol name." },
+                            "candidate_code": { "type": "string", "description": "Optional candidate symbol body." }
+                        },
+                        "required": ["file_path"]
+                    }),
+                },
+                mcp_common::ToolDefinition {
+                    name: "ozy_apply",
+                    description: "[WORKFLOW STEP 3: APPLY VERIFIED PATCH] Writes verified AST patch to disk after passing in-RAM simulation.",
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string", "description": "Relative path to target file." },
+                            "target_code": { "type": "string", "description": "Original code block to substitute." },
+                            "replacement": { "type": "string", "description": "New code block to write to disk." }
+                        },
+                        "required": ["file_path", "target_code", "replacement"]
+                    }),
+                },
+                mcp_common::ToolDefinition {
                     name: "ozy_patch",
                     description: "[MANDATORY CODE MODIFICATION TOOL - ALWAYS SIMULATE BEFORE EDITING] Replaces edit_file and python update scripts. ALWAYS run action='simulate' BEFORE modifying any file on disk to verify caller signatures, arity parity, and prevent breaking changes via volatile RAM Copy-on-Write sandbox (< 400ms). Only after receiving APPROVED status, run action='apply' for fuzzy AST block patching with auto-indentation and Tree-Sitter syntax verification. Replaces ozy_ast_patch, ozy_simulate_patch, and ozy_replace_symbol.",
                     input_schema: json!({
@@ -1291,17 +1350,41 @@ pub fn handle_tools_list(
             let show_legacy = std::env::var("OZYMEM_SHOW_LEGACY_TOOLS")
                 .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
                 .unwrap_or(false);
-            let visible_tools: Vec<_> = if minimal_mode {
+            let expose_all_env = std::env::var("OZYMEM_EXPOSE_ALL_TOOLS")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false);
+            let show_all_param = request
+                .params
+                .as_ref()
+                .and_then(|p| p.get("all"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let expose_all = expose_all_env || show_all_param;
+            const CANONICAL_WORKFLOW_TOOLS: &[&str] = &[
+                "ozy_refactor",
+                "ozy_explore",
+                "ozy_simulate",
+                "ozy_apply",
+                "ozy_memory",
+                "ozy_read_blob",
+            ];
+            let visible_tools: Vec<_> = if show_legacy {
                 tools
-                    .into_iter()
-                    .filter(|tool| matches!(tool.name, "ozy_patch" | "ozy_plan" | "ozy_context" | "ozy_memory" | "ozy_doctor"))
-                    .collect()
-            } else if show_legacy {
-                tools
-            } else {
+            } else if expose_all {
                 tools
                     .into_iter()
                     .filter(|tool| tool.name.starts_with("ozy_"))
+                    .collect()
+            } else if minimal_mode {
+                tools
+                    .into_iter()
+                    .filter(|tool| matches!(tool.name, "ozy_refactor" | "ozy_explore" | "ozy_memory" | "ozy_read_blob"))
+                    .collect()
+            } else {
+                // Default: Canonical Workflow Suite (6 tools, 77.8% context reduction)
+                tools
+                    .into_iter()
+                    .filter(|tool| CANONICAL_WORKFLOW_TOOLS.contains(&tool.name))
                     .collect()
             };
             let total = visible_tools.len();

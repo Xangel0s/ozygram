@@ -19,6 +19,7 @@ pub mod verifier;
 pub mod exploration;
 pub mod dispatch;
 pub mod symbols;
+pub mod refactor;
 pub mod idle_watcher;
 
 use ozymem_core::graph_backend::GraphBackend;

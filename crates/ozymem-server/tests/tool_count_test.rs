@@ -22,8 +22,8 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
 
     assert_eq!(
         active_tools.len(),
-        27,
-        "Default active tools must be exactly 27 as documented in README.md"
+        6,
+        "Default canonical workflow tools must be exactly 6"
     );
 
     for tool in active_tools {
@@ -34,6 +34,17 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
             name
         );
     }
+
+    // When all=true is requested, returns full catalog of 31 tools
+    let req_all = mcp_common::JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(serde_json::json!(2)),
+        method: "tools/list".to_string(),
+        params: Some(serde_json::json!({ "all": true })),
+    };
+    let resp_all = handle_request(&backend, req_all, None, None).await.unwrap().unwrap();
+    let tools_all = resp_all.result.unwrap()["tools"].as_array().unwrap().clone();
+    assert_eq!(tools_all.len(), 31);
 
     // 2. Read README.md to ensure documentation integrity (T1.4 requirement)
     let readme_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

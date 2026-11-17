@@ -119,12 +119,12 @@ pub async fn handle_request(
                     version: env!("CARGO_PKG_VERSION"),
                 },
                 instructions: Some(
-                    "Ozygram Universal Three-Dimensional Protocol:\n\
-                     1. Pre-Flight Blast Radius: ALWAYS invoke ozy_graph(action=\"impact\", file_path=\"...\") before proposing or applying code changes.\n\
-                     2. AST Contracts: Query ozy_context(file_path=\"...\", lod=\"contracts\") or ozy_get_symbol to extract signatures without token bloat.\n\
-                     3. Ephemeral RAM Simulation: Verify diffs with ozy_patch(action=\"simulate\") before applying.\n\
+                    "Ozygram Universal Workflow-Driven Protocol:\n\
+                     1. Atomic In-RAM Refactoring: For any code modification or refactoring, invoke ozy_refactor(action=\"simulate\", file_path=\"...\", target_code=\"...\", replacement=\"...\") to compute Blast Radius + AST Diff in volatile RAM (Copy-On-Write) in a single turn without touching disk.\n\
+                     2. Discovery & Contracts: Use ozy_explore(action=\"contracts\", file_path=\"...\") or action=\"impact\" for topological inspection without token bloat.\n\
+                     3. Safe Persistence: Apply changes with ozy_apply or ozy_refactor(action=\"apply\") only after in-RAM simulation passes.\n\
                      4. Mandatory Closing Gotcha Loop: Upon resolving any bug, edge case, or tricky issue, invoke ozy_memory(action=\"save\", kind=\"gotcha\", topic_key=\"...\", title=\"...\", content=\"...\") to persist institutional knowledge into Git.\n\
-                     5. Lossless Paging: If tool output is compacted, fetch slices via ozy_read_blob(blob_id=\"...\").".to_string()
+                     5. Lossless Paging: If output is compacted to an ozymem://blob/, fetch slices via ozy_read_blob(blob_id=\"...\").".to_string()
                 ),
             };
 
@@ -621,7 +621,74 @@ pub async fn handle_request(
                         },
                     }
                 }
-                                "ozy_patch" | "patch" => {
+                                "ozy_refactor" | "refactor" => {
+                    match crate::refactor::handle_refactor(backend, &tool_call).await {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
+                }
+                "ozy_explore" | "explore" => {
+                    match crate::refactor::handle_explore(backend, &tool_call).await {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
+                }
+                "ozy_simulate" => {
+                    let mut sim_call = tool_call.clone();
+                    sim_call.arguments.insert("action".to_string(), Value::String("simulate".to_string()));
+                    if sim_call.arguments.contains_key("target_symbol") {
+                        match crate::symbols::handle_simulate_patch(backend, &sim_call) {
+                            Ok(res) => res,
+                            Err(e) => ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("[ALERT: ERROR] {e}"),
+                                }],
+                                is_error: Some(true),
+                            },
+                        }
+                    } else {
+                        sim_call.arguments.insert("dry_run".to_string(), Value::Bool(true));
+                        match crate::symbols::handle_ast_patch(backend, &sim_call) {
+                            Ok(res) => res,
+                            Err(e) => ToolCallResult {
+                                content: vec![ContentBlock {
+                                    kind: "text",
+                                    text: format!("[ALERT: ERROR] {e}"),
+                                }],
+                                is_error: Some(true),
+                            },
+                        }
+                    }
+                }
+                "ozy_apply" => {
+                    let mut app_call = tool_call.clone();
+                    app_call.arguments.insert("action".to_string(), Value::String("apply".to_string()));
+                    app_call.arguments.insert("dry_run".to_string(), Value::Bool(false));
+                    match crate::symbols::handle_ast_patch(backend, &app_call) {
+                        Ok(res) => res,
+                        Err(e) => ToolCallResult {
+                            content: vec![ContentBlock {
+                                kind: "text",
+                                text: format!("[ALERT: ERROR] {e}"),
+                            }],
+                            is_error: Some(true),
+                        },
+                    }
+                }
+                "ozy_patch" | "patch" => {
                     let action = tool_call.arguments.get("action").and_then(Value::as_str).unwrap_or("apply");
                     match action {
                         "simulate" => {
