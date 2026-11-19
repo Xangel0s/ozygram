@@ -335,6 +335,31 @@ pub(crate) fn format_file_context_enriched(
         ));
     }
 
+    if context.functions.is_empty() {
+        let p = std::path::Path::new(&context.file_path);
+        let target = if p.exists() {
+            Some(p.to_path_buf())
+        } else {
+            let alt = std::path::Path::new(file_path);
+            if alt.exists() { Some(alt.to_path_buf()) } else { None }
+        };
+
+        if let Some(path_obj) = target {
+            if let Ok(content) = std::fs::read_to_string(&path_obj) {
+                let lines: Vec<&str> = content.lines().collect();
+                let total = lines.len();
+                let limit = 120.min(total);
+                output.push_str("\n\n--- Content Preview (Non-AST / SQL / Config) ---");
+                for (i, line) in lines.iter().take(limit).enumerate() {
+                    output.push_str(&format!("\n{:4} | {}", i + 1, line));
+                }
+                if total > limit {
+                    output.push_str(&format!("\n... and {} more lines. Use ozy_explore(action='view', file_path='...', start_line={}, end_line={}) to inspect further.", total - limit, limit + 1, total));
+                }
+            }
+        }
+    }
+
     // Graph neighbors section
     if let Some(n) = neighbors {
         output.push_str(&format!(

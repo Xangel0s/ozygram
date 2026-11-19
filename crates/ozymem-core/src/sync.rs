@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 
-/// Default maximum file size for hot delta indexing (256 KB).
-pub const DEFAULT_MAX_DELTA_FILE_BYTES: u64 = 256 * 1024;
+/// Default maximum file size for hot delta indexing (5 MB).
+pub const DEFAULT_MAX_DELTA_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Result of indexing a single file delta.
 #[derive(Debug, Clone, PartialEq, Eq)]

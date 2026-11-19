@@ -125,10 +125,12 @@ rule = "cow_ram_refactor_before_disk"
 
 [anti_patterns]
 veto = ["line_by_line_reading", "raw_grep_before_ast", "direct_disk_writes_without_sim", "read_file_when_contracts_exist"]
-rule = "DO NOT read files in chunked slices or use grep. Always query AST contracts or use ozy_explore. In /plan mode, generate diffs strictly from ozy_refactor dry-runs."
+rule = "DO NOT use read_file or grep/findstr. Always use ozy_explore(action='route'), ozy_explore(action='contracts'), ozy_explore(action='view'), or ozy_explore(action='search'). In /plan mode, generate diffs strictly from ozy_refactor dry-runs."
 
 [routing_shortcuts]
 to_explore = "ozy_explore(action='contracts', file_path='...')"
+to_view = "ozy_explore(action='view', file_path='...', start_line=..., end_line=...)"
+to_search = "ozy_explore(action='search', query='...')"
 to_route_prompt = "ozy_explore(action='route', query='user task objective')"
 to_refactor = "ozy_refactor(action='simulate', file_path='...')"
 to_find_symbol = "ozy_explore(action='symbol', symbol_name='...')"
@@ -144,7 +146,7 @@ guarantee = "SANDBOX_INVARIANT_COW_RAM_ONLY: physical disk 100% untouched until 
 
 [tools.ozy_explore]
 default = "contracts"
-modes = ["contracts", "impact", "summary", "symbol", "tree", "search", "route"]
+modes = ["contracts", "view", "impact", "summary", "symbol", "tree", "search", "route"]
 
 [tools.ozy_simulate]
 role = "multi_step_ram_dry_run"
@@ -180,23 +182,30 @@ paging_threshold = 14000"#.to_string()
                 }
             });
 
-            let backend_clone = backend.clone();
-            let _notifier_clone = notifier.cloned();
-            let project_path_scan = project_path.to_string_lossy().to_string();
-            tokio::task::spawn_blocking(move || {
-                let guard = backend_clone.blocking_read();
-                if let Some(ref gb) = *guard {
-                    let progress_cb = Some(Box::new(move |cur: u64, tot: u64| {
-                        if cur % 100 == 0 || cur == tot {
-                            eprintln!("[ozymem] indexing: {cur}/{tot} files");
+            let is_empty = {
+                let guard = backend.read().await;
+                guard.as_ref().map(|gb| gb.is_empty()).unwrap_or(true)
+            };
+
+            if is_empty {
+                let backend_clone = backend.clone();
+                let _notifier_clone = notifier.cloned();
+                let project_path_scan = project_path.to_string_lossy().to_string();
+                tokio::task::spawn_blocking(move || {
+                    let guard = backend_clone.blocking_read();
+                    if let Some(ref gb) = *guard {
+                        let progress_cb = Some(Box::new(move |cur: u64, tot: u64| {
+                            if cur % 100 == 0 || cur == tot {
+                                eprintln!("[ozymem] indexing: {cur}/{tot} files");
+                            }
+                        }) as Box<dyn Fn(u64, u64) + Send + Sync>);
+                        let cb_ref = progress_cb.as_ref().map(|cb| cb.as_ref() as &dyn Fn(u64, u64));
+                        if let Err(e) = gb.full_scan(&project_path_scan, cb_ref) {
+                            eprintln!("[ozymem] background scan error: {e}");
                         }
-                    }) as Box<dyn Fn(u64, u64) + Send + Sync>);
-                    let cb_ref = progress_cb.as_ref().map(|cb| cb.as_ref() as &dyn Fn(u64, u64));
-                    if let Err(e) = gb.full_scan(&project_path_scan, cb_ref) {
-                        eprintln!("[ozymem] background scan error: {e}");
                     }
-                }
-            });
+                });
+            }
 
             // Live filesystem watcher: auto-reindex file modifications from external editors/scripts
             if std::env::var("OZYMEM_DISABLE_WATCHER").is_err() {

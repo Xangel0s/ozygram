@@ -20,6 +20,11 @@ use crate::graph_backend::helpers::{detect_language, file_mtime, is_noise_dir, l
 use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend};
 
 impl GraphBackend {
+    pub fn is_empty(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.graph.node_count() == 0
+    }
+
     pub fn reload_if_stale(&self) {
         if self.scanning.load(Ordering::SeqCst) {
             return;

@@ -27,14 +27,17 @@ pub fn handle_tools_list(
                 },
                 mcp_common::ToolDefinition {
                     name: "ozy_explore",
-                    description: "[WORKFLOW STEP 1: EXPLORE & COGNITIVE ROUTER] Unified discovery tool. Supports action='route' (analyzes natural language prompt and returns preloaded ozy_refactor tool call), action='contracts' (AST contract skeletons), 'impact' (blast radius), 'symbol', 'tree', 'summary', and 'search'.",
+                    description: "[WORKFLOW STEP 1: EXPLORE & COGNITIVE ROUTER] Unified discovery tool. Supports action='route' (analyzes natural language prompt and returns preloaded ozy_refactor tool call), action='contracts' (AST contract skeletons), action='view' (inspects code slices, symbols, or non-AST files with line numbers and Blast Radius, replacing read_file), 'impact' (blast radius), 'symbol', 'tree', 'summary', and 'search' (finds occurrences across codebase, replacing grep).",
                     input_schema: json!({
                         "type": "object",
                         "properties": {
-                            "file_path": { "type": "string", "description": "Target file for contracts or impact analysis." },
-                            "action": { "type": "string", "enum": ["contracts", "impact", "symbol", "tree", "summary", "search", "route"], "default": "contracts" },
-                            "symbol_name": { "type": "string", "description": "Function or class name when action='symbol'." },
+                            "file_path": { "type": "string", "description": "Target file for contracts, view or impact analysis." },
+                            "action": { "type": "string", "enum": ["contracts", "view", "impact", "symbol", "tree", "summary", "search", "route"], "default": "contracts" },
+                            "symbol_name": { "type": "string", "description": "Function or class name when action='symbol' or action='view'." },
                             "query": { "type": "string", "description": "Text query when action='search' or natural language objective when action='route'." },
+                            "start_line": { "type": "integer", "description": "Starting line when action='view'." },
+                            "end_line": { "type": "integer", "description": "Ending line when action='view'." },
+                            "max_matches": { "type": "integer", "default": 30, "description": "Max search results when action='search'." },
                             "depth": { "type": "integer", "default": 2, "description": "Exploration or impact depth." }
                         }
                     }),

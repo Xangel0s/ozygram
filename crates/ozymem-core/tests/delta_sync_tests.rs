@@ -85,8 +85,8 @@ fn test_delta_filters_too_large_files() {
     let root = dir.path();
     let large_file = root.join("huge.py");
 
-    // Write a file exceeding 256 KB
-    let dummy_content = "def big(): pass\n".repeat(20_000);
+    // Write a file exceeding 5 MB
+    let dummy_content = "def big(): pass\n".repeat(350_000);
     fs::write(&large_file, dummy_content).unwrap();
 
     let backend = GraphBackend::open_for_project(root).unwrap();

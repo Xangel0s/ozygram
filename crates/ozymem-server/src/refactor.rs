@@ -400,7 +400,19 @@ pub async fn handle_explore(
                 .get("query")
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow::anyhow!("missing 'query'"))?;
-            let matches = backend.search_literal(query, None, false, false, 20, 2, 2)?;
+            let max_matches = tool_call
+                .arguments
+                .get("max_matches")
+                .or_else(|| tool_call.arguments.get("limit"))
+                .and_then(Value::as_u64)
+                .unwrap_or(30) as usize;
+            let path_prefix = tool_call
+                .arguments
+                .get("file_path")
+                .or_else(|| tool_call.arguments.get("path"))
+                .and_then(Value::as_str);
+
+            let matches = backend.search_literal(query, path_prefix, false, false, 5000, max_matches, 2)?;
             if matches.matches.is_empty() {
                 format!("No occurrences found for query '{}'.", query)
             } else {
@@ -408,6 +420,64 @@ pub async fn handle_explore(
                 for m in matches.matches {
                     out.push_str(&format!("  • {}:{} - {}\n", m.file_path, m.line_number, m.line_content.trim()));
                 }
+                out
+            }
+        }
+        "view" | "read" | "slice" => {
+            let file_path = tool_call
+                .arguments
+                .get("file_path")
+                .or_else(|| tool_call.arguments.get("path"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("missing 'file_path' for action='view'"))?;
+
+            let (effective, resolved) = crate::symbols::resolve_effective_path(backend, file_path);
+            let target_path = if effective.exists() { &effective } else { std::path::Path::new(file_path) };
+
+            if !target_path.exists() {
+                format!("File not found on disk: {}", file_path)
+            } else {
+                let content = std::fs::read_to_string(target_path)
+                    .unwrap_or_else(|e| format!("[ERROR: Failed to read file: {e}]"));
+                let lines: Vec<&str> = content.lines().collect();
+                let total_lines = lines.len();
+
+                let (mut start, mut end) = (
+                    tool_call.arguments.get("start_line").and_then(Value::as_u64).unwrap_or(1) as usize,
+                    tool_call.arguments.get("end_line").and_then(Value::as_u64).unwrap_or(total_lines as u64) as usize,
+                );
+
+                let symbol_opt = tool_call
+                    .arguments
+                    .get("symbol")
+                    .or_else(|| tool_call.arguments.get("symbol_name"))
+                    .and_then(Value::as_str);
+
+                if let Some(sym) = symbol_opt {
+                    if let Ok(Some(ctx)) = backend.get_file_context(file_path).await {
+                        if let Some(f) = ctx.functions.iter().find(|func| func.name.eq_ignore_ascii_case(sym)) {
+                            start = (f.start_line as usize).max(1);
+                            end = (f.end_line as usize).min(total_lines);
+                        }
+                    }
+                }
+
+                start = start.max(1);
+                end = end.min(total_lines).max(start);
+
+                let impact = backend.analyze_impact(&resolved, 2);
+                let dependents_count = impact.len();
+
+                let mut out = format!(
+                    "=== [OZY_VIEW: {}] ===\nLines: {}-{} of {} | Blast Radius: {} dependent file(s)\n--------------------------------------------------\n",
+                    resolved, start, end, total_lines, dependents_count
+                );
+
+                for (idx, line) in lines[start - 1..end].iter().enumerate() {
+                    out.push_str(&format!("{:4} | {}\n", start + idx, line));
+                }
+                out.push_str("--------------------------------------------------\n");
+                out.push_str("[COGNITIVE_DIRECTIVE]: To edit or refactor this code, call ozy_refactor(file_path=\"...\") with action=\"simulate\" directly in volatile RAM.");
                 out
             }
         }
@@ -423,7 +493,15 @@ pub async fn handle_explore(
                 .get("lod")
                 .and_then(Value::as_str)
                 .unwrap_or("contracts");
-            let ctx = backend.get_file_context(file_path).await?;
+            let mut ctx = backend.get_file_context(file_path).await?;
+            if ctx.is_none() {
+                let (effective, _) = crate::symbols::resolve_effective_path(backend, file_path);
+                if effective.exists() {
+                    let root_buf = backend.project_path().map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("."));
+                    let _ = backend.index_file_delta(&effective, &root_buf);
+                    ctx = backend.get_file_context(file_path).await.ok().flatten();
+                }
+            }
             let history = backend.get_historical_engram_solutions(file_path).await.unwrap_or_default();
             let neighbors = backend.get_graph_neighbors(file_path).await.ok();
             let last_git = get_last_commit(file_path).await;
