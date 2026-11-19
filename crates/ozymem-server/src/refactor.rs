@@ -93,6 +93,43 @@ pub async fn handle_refactor(
     out.push_str(&impact_str);
     out.push_str("\n\n");
 
+    // 2. Spec-Driven Development (SDD) Boundary Audit
+    let ws_root = backend.project_path().unwrap_or_else(|| ".".to_string());
+    let target_mod = ozymem_core::graph_backend::extract_module_id(&resolved, &ws_root);
+    let mut external_dependents = Vec::new();
+    for entry in &impact_data {
+        let dep_mod = ozymem_core::graph_backend::extract_module_id(&entry.file_path, &ws_root);
+        if dep_mod != target_mod && dep_mod != "root" && !entry.file_path.contains("test") {
+            external_dependents.push(entry.file_path.clone());
+        }
+    }
+
+    out.push_str("--- 2. SPEC-DRIVEN DEVELOPMENT (SDD) BOUNDARY AUDIT ---\n");
+    if external_dependents.is_empty() {
+        out.push_str(&format!(
+            "Status: [VERIFIED]\n\
+             Target Module: {}\n\
+             Boundary Check: No external module boundaries breached. All {} dependent file(s) are internal to module or test runners.\n\n",
+            target_mod,
+            impact_data.len()
+        ));
+    } else {
+        out.push_str(&format!(
+            "Status: [SPEC_BOUNDARY_WARN]\n\
+             Target Module: {}\n\
+             Warning: Proposed change impacts {} file(s) outside the declared module boundary:\n",
+            target_mod,
+            external_dependents.len()
+        ));
+        for ext in external_dependents.iter().take(8) {
+            out.push_str(&format!("  • {}\n", ext));
+        }
+        if external_dependents.len() > 8 {
+            out.push_str(&format!("  ... and {} more\n", external_dependents.len() - 8));
+        }
+        out.push_str("Recommendation: Verify module contracts in SPEC-<module>.md before applying to disk.\n\n");
+    }
+
     let mut has_error = false;
 
     if let (Some(target_code), Some(replacement)) = (target_code_opt, replacement_opt) {
@@ -104,7 +141,7 @@ pub async fn handle_refactor(
             dry_run,
         )?;
 
-        out.push_str("--- 2. AST PATCH SIMULATION (IN-RAM) ---\n");
+        out.push_str("--- 3. AST PATCH SIMULATION (IN-RAM) ---\n");
         if patch_res.success {
             out.push_str(&format!(
                 "Status: [SUCCESS]\n\
@@ -136,7 +173,7 @@ pub async fn handle_refactor(
         }
     } else if let (Some(target_symbol), Some(candidate_code)) = (target_symbol_opt, candidate_code_opt) {
         let sim = backend.simulate_patch(target_symbol, candidate_code)?;
-        out.push_str("--- 2. SEMANTIC SYMBOL SIMULATION (IN-RAM) ---\n");
+        out.push_str("--- 3. SEMANTIC SYMBOL SIMULATION (IN-RAM) ---\n");
         out.push_str(&crate::formatters::format_simulation_result(&sim));
 
         if is_apply {
@@ -481,6 +518,34 @@ pub async fn handle_explore(
                 out
             }
         }
+        "capability_map" => {
+            let initiative = tool_call
+                .arguments
+                .get("initiative")
+                .or_else(|| tool_call.arguments.get("query"))
+                .and_then(Value::as_str);
+            let res = backend.generate_capability_map(initiative);
+            res.markdown_table
+        }
+        "spec" => {
+            let file_path_opt = tool_call
+                .arguments
+                .get("file_path")
+                .or_else(|| tool_call.arguments.get("path"))
+                .and_then(Value::as_str);
+            let objective_opt = tool_call
+                .arguments
+                .get("objective")
+                .or_else(|| tool_call.arguments.get("query"))
+                .or_else(|| tool_call.arguments.get("goal"))
+                .and_then(Value::as_str);
+            let module_opt = tool_call
+                .arguments
+                .get("module")
+                .and_then(Value::as_str);
+
+            generate_sdd_spec(backend, file_path_opt, objective_opt, module_opt).await?
+        }
         _ => {
             // Default: "contracts"
             let file_path = tool_call
@@ -530,3 +595,145 @@ pub async fn handle_explore(
         is_error: None,
     })
 }
+
+/// Generates a living Spec-Driven Development (SDD) specification document for a module.
+///
+/// Complies with the official 6-area SDD specification format (Objective, Tech Stack,
+/// Commands, Project Structure, Code Style & AST Contracts, Boundaries, Success Criteria)
+/// populated directly from the codebase's AST graph, dependencies, and build configuration.
+async fn generate_sdd_spec(
+    backend: &GraphBackend,
+    file_path_opt: Option<&str>,
+    objective_opt: Option<&str>,
+    module_opt: Option<&str>,
+) -> anyhow::Result<String> {
+    let ws_root = backend.project_path().unwrap_or_else(|| ".".to_string());
+    let target_file = file_path_opt.unwrap_or(".");
+    let (effective, resolved) = crate::symbols::resolve_effective_path(backend, target_file);
+
+    let mod_id = module_opt
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| ozymem_core::graph_backend::extract_module_id(&resolved, &ws_root));
+
+    let objective = objective_opt
+        .unwrap_or("Implement core feature capabilities according to requirements.");
+
+    // Detect tech stack and commands from project root
+    let root_path = std::path::Path::new(&ws_root);
+    let mut detected_stack = Vec::new();
+    let mut build_cmd = "cargo build".to_string();
+    let mut test_cmd = "cargo test".to_string();
+    let mut lint_cmd = "cargo clippy".to_string();
+    let mut dev_cmd = "cargo run".to_string();
+
+    if root_path.join("Cargo.toml").exists() {
+        detected_stack.push("Rust (Cargo workspace, Tokio, Serde)".to_string());
+    } else if root_path.join("pyproject.toml").exists() || root_path.join("requirements.txt").exists() {
+        detected_stack.push("Python (FastAPI / Pydantic / SQLAlchemy / pytest)".to_string());
+        build_cmd = "python -m compileall .".to_string();
+        test_cmd = "pytest -v".to_string();
+        lint_cmd = "ruff check .".to_string();
+        dev_cmd = "python -m uvicorn app.main:app --reload".to_string();
+    } else if root_path.join("package.json").exists() {
+        detected_stack.push("TypeScript / JavaScript (Node.js, Vite/React)".to_string());
+        build_cmd = "npm run build".to_string();
+        test_cmd = "npm test".to_string();
+        lint_cmd = "npm run lint".to_string();
+        dev_cmd = "npm run dev".to_string();
+    } else {
+        detected_stack.push("Multi-language repository".to_string());
+    }
+
+    // AST contracts from target file
+    let mut ast_snippet = String::new();
+    let mut file_lines = 0;
+    if effective.exists() {
+        if let Ok(source) = std::fs::read_to_string(&effective) {
+            file_lines = source.lines().count();
+        }
+        if let Ok(Some(ctx)) = backend.get_file_context(&resolved).await {
+            if !ctx.functions.is_empty() {
+                for f in &ctx.functions {
+                    ast_snippet.push_str(&format!("  • {} [{}] (lines {}-{})\n", f.name, f.kind, f.start_line, f.end_line));
+                }
+            }
+        }
+    }
+
+    if ast_snippet.is_empty() {
+        ast_snippet = "  • (No existing AST functions indexed; new module interface to be specified)\n".to_string();
+    }
+
+    // Blast Radius & Impact
+    let impact = backend.analyze_impact(&resolved, 2);
+    let mut external_allowed = Vec::new();
+    for dep in &impact {
+        let dep_mod = ozymem_core::graph_backend::extract_module_id(&dep.file_path, &ws_root);
+        if dep_mod != mod_id && !dep.file_path.contains("test") {
+            external_allowed.push(dep.file_path.clone());
+        }
+    }
+
+    // Build the canonical 6-area SDD Spec
+    let mut spec = format!("# Spec: {}\n\n", mod_id);
+    spec.push_str("## Objective\n");
+    spec.push_str(&format!("{}\n\n", objective));
+
+    spec.push_str("## Tech Stack\n");
+    for stack in &detected_stack {
+        spec.push_str(&format!("- {}\n", stack));
+    }
+    spec.push_str("\n");
+
+    spec.push_str("## Commands\n");
+    spec.push_str(&format!("- Build: `{}`\n", build_cmd));
+    spec.push_str(&format!("- Test: `{}`\n", test_cmd));
+    spec.push_str(&format!("- Lint: `{}`\n", lint_cmd));
+    spec.push_str(&format!("- Dev: `{}`\n\n", dev_cmd));
+
+    spec.push_str("## Project Structure\n");
+    spec.push_str(&format!("- Target Module: `{}`\n", mod_id));
+    if effective.exists() {
+        spec.push_str(&format!("- Primary File: `{}` ({} lines)\n", resolved, file_lines));
+    }
+    spec.push_str("\n");
+
+    spec.push_str("## Code Style & AST Contracts\n");
+    spec.push_str("Existing AST signatures and contract entrypoints:\n```\n");
+    spec.push_str(&ast_snippet);
+    spec.push_str("```\n\n");
+
+    spec.push_str("## Testing Strategy\n");
+    spec.push_str("- Unit test coverage target: minimum 80% for new and modified functions.\n");
+    spec.push_str(&format!("- Verification command: `{}`\n", test_cmd));
+    spec.push_str("- Test edge cases, validation errors, and nullability.\n\n");
+
+    spec.push_str("## Boundaries\n");
+    spec.push_str("- **Always**: Run automated tests before commit, follow naming conventions, validate external inputs.\n");
+    spec.push_str("- **Ask first**: Database schema changes, modifying public API contracts, adding third-party dependencies.\n");
+    spec.push_str("- **Never**: Commit secrets or credentials, bypass failing test assertions, modify vendor files.\n");
+    spec.push_str("- **Allowed External Dependents (Blast Radius)**:\n");
+    if external_allowed.is_empty() {
+        spec.push_str("  • None (Self-contained module)\n");
+    } else {
+        for ext in external_allowed.iter().take(10) {
+            spec.push_str(&format!("  • `{}`\n", ext));
+        }
+        if external_allowed.len() > 10 {
+            spec.push_str(&format!("  • ... and {} more dependent files\n", external_allowed.len() - 10));
+        }
+    }
+    spec.push_str("\n");
+
+    spec.push_str("## Success Criteria\n");
+    spec.push_str(&format!("- [ ] `{}` requirements implemented according to objective.\n", mod_id));
+    spec.push_str(&format!("- [ ] Automated verification passes via `{}`.\n", test_cmd));
+    spec.push_str("- [ ] Zero regressions in dependent callers within the Blast Radius.\n");
+    spec.push_str("- [ ] In-RAM refactor simulation completed without boundary warnings.\n\n");
+
+    spec.push_str("## Open Questions\n");
+    spec.push_str("- None currently blocking. Update this living document if design decisions evolve.\n");
+
+    Ok(spec)
+}
+

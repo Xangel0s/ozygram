@@ -488,6 +488,26 @@ pub struct ExtractiveSnippet {
     pub token_estimate: usize,
 }
 
+/// Represents a distinct architectural module in a Spec-Driven Development (SDD) Capability Map.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CapabilityModule {
+    pub module_id: String,
+    pub responsibility: String,
+    pub depends_on: Vec<String>,
+    pub file_count: usize,
+    pub function_count: i64,
+    pub languages: Vec<String>,
+}
+
+/// Topologically ordered Capability Map result for Phase 0 of Spec-Driven Development.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CapabilityMapResult {
+    pub initiative: String,
+    pub modules: Vec<CapabilityModule>,
+    pub build_order: Vec<String>,
+    pub markdown_table: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimilarLesson {
     pub lesson: LessonEntry,

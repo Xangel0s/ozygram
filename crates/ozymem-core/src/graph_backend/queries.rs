@@ -2,15 +2,17 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use petgraph::algo::all_simple_paths;
 use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::visit::Bfs;
+use petgraph::visit::{Bfs, EdgeRef};
 use rusqlite::params;
 use std::time::Instant;
 use crate::GraphSummary;
 use crate::mcp_common::McpBackend;
+use crate::graph_backend::helpers::{extract_module_id, infer_module_responsibility};
 use crate::graph_backend::types::{
-    DependentBreakage, FileEdge, FileNode, GraphBackend, ImpactEntry, IncomingDependencyDetail,
-    LiteralMatch, LiteralSearchResult, SimulationResult, SimulationStatus, SymbolReference,
-    SymbolReferencesResult, SymbolReplaceResult, UnifiedSearchResult,
+    CapabilityMapResult, CapabilityModule, DependentBreakage, FileEdge, FileNode, GraphBackend,
+    ImpactEntry, IncomingDependencyDetail, LiteralMatch, LiteralSearchResult, SimulationResult,
+    SimulationStatus, SymbolReference, SymbolReferencesResult, SymbolReplaceResult,
+    UnifiedSearchResult,
 };
 
 impl GraphBackend {
@@ -2005,5 +2007,145 @@ impl GraphBackend {
             execution_time_ms,
             isolation_guarantee: "SANDBOX_INVARIANT_COW_RAM_ONLY".to_string(),
         })
+    }
+
+    /// Generates a Phase 0 Spec-Driven Development (SDD) Capability Map based on topological graph clusters.
+    ///
+    /// Groups workspace files by module, resolves acyclic build order using Kahn's algorithm,
+    /// and formats the canonical SDD Capability Map markdown table.
+    pub fn generate_capability_map(&self, initiative: Option<&str>) -> CapabilityMapResult {
+        let initiative_name = initiative.unwrap_or("Workspace Initiative");
+        let inner = self.inner.lock().unwrap();
+
+        let mut module_files: HashMap<String, Vec<String>> = HashMap::new();
+        let mut module_funcs: HashMap<String, i64> = HashMap::new();
+        let mut module_langs: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+
+        // 1. Group files by extracted module id
+        for (path, &node_idx) in &inner.file_index {
+            let mod_id = extract_module_id(path, &inner.workspace_root);
+            module_files.entry(mod_id.clone()).or_default().push(path.clone());
+            if let Some(node) = inner.graph.node_weight(node_idx) {
+                *module_funcs.entry(mod_id.clone()).or_default() += node.function_count;
+                if !node.language.is_empty() {
+                    module_langs.entry(mod_id.clone()).or_default().insert(node.language.clone());
+                }
+            }
+        }
+
+        // 2. Map dependencies between modules using graph edges
+        let mut module_deps: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+        for edge in inner.graph.edge_references() {
+            if let (Some(src), Some(tgt)) = (inner.graph.node_weight(edge.source()), inner.graph.node_weight(edge.target())) {
+                let from_mod = extract_module_id(&src.path, &inner.workspace_root);
+                let to_mod = extract_module_id(&tgt.path, &inner.workspace_root);
+                if from_mod != to_mod {
+                    module_deps.entry(from_mod).or_default().insert(to_mod);
+                }
+            }
+        }
+
+        // Ensure all modules exist in module_deps
+        for mod_id in module_files.keys() {
+            module_deps.entry(mod_id.clone()).or_default();
+        }
+
+        // 3. Topological Sort (Kahn's Algorithm) for Build Order
+        let mut in_degree: HashMap<String, usize> = HashMap::new();
+        for (m, deps) in &module_deps {
+            in_degree.insert(m.clone(), deps.len());
+        }
+
+        let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+        for (m, deps) in &module_deps {
+            for d in deps {
+                dependents.entry(d.clone()).or_default().push(m.clone());
+            }
+        }
+
+        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        let mut all_mods: Vec<String> = module_files.keys().cloned().collect();
+        all_mods.sort();
+
+        for m in &all_mods {
+            if in_degree.get(m).copied().unwrap_or(0) == 0 {
+                queue.push_back(m.clone());
+            }
+        }
+
+        let mut build_order: Vec<String> = Vec::new();
+        while let Some(curr) = queue.pop_front() {
+            build_order.push(curr.clone());
+            if let Some(deps_on_curr) = dependents.get(&curr) {
+                let mut sorted_deps = deps_on_curr.clone();
+                sorted_deps.sort();
+                for dep in sorted_deps {
+                    if let Some(deg) = in_degree.get_mut(&dep) {
+                        if *deg > 0 {
+                            *deg -= 1;
+                            if *deg == 0 {
+                                queue.push_back(dep);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Append any remaining/cyclical modules
+        for m in &all_mods {
+            if !build_order.contains(m) {
+                build_order.push(m.clone());
+            }
+        }
+
+        // 4. Build CapabilityModule list
+        let mut modules: Vec<CapabilityModule> = Vec::new();
+        for mod_id in &all_mods {
+            let files = module_files.get(mod_id).map(|v| v.len()).unwrap_or(0);
+            let funcs = module_funcs.get(mod_id).copied().unwrap_or(0);
+            let langs: Vec<String> = module_langs.get(mod_id).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+            let deps: Vec<String> = module_deps.get(mod_id).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+            let responsibility = infer_module_responsibility(mod_id);
+
+            modules.push(CapabilityModule {
+                module_id: mod_id.clone(),
+                responsibility,
+                depends_on: deps,
+                file_count: files,
+                function_count: funcs,
+                languages: langs,
+            });
+        }
+
+        // 5. Build Markdown Table
+        let mut md = format!("# Capability Map: {}\n\n", initiative_name);
+        md.push_str("| Module id | Responsibility | Depends on | Files | Functions |\n");
+        md.push_str("|---|---|---|---|---|\n");
+        for m in &modules {
+            let deps_str = if m.depends_on.is_empty() {
+                "—".to_string()
+            } else {
+                m.depends_on.join(", ")
+            };
+            md.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                m.module_id, m.responsibility, deps_str, m.file_count, m.function_count
+            ));
+        }
+
+        let build_order_str = if build_order.is_empty() {
+            "—".to_string()
+        } else {
+            build_order.join(" → ")
+        };
+        md.push_str(&format!("\n**Build order:** {}\n", build_order_str));
+
+        CapabilityMapResult {
+            initiative: initiative_name.to_string(),
+            modules,
+            build_order,
+            markdown_table: md,
+        }
     }
 }

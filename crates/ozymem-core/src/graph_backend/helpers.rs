@@ -379,3 +379,74 @@ pub(crate) fn default_project_name(inner: &Inner) -> &str {
         .and_then(|p| Path::new(p).file_name().and_then(|n| n.to_str()))
         .unwrap_or("default")
 }
+
+/// Extracts a canonical module identifier from a file path.
+///
+/// Complies with Spec-Driven Development (SDD) standards: stable, kebab/snake-case
+/// module IDs derived from the project directory topology (e.g. `auth`, `routers`, `models`).
+pub fn extract_module_id(path: &str, workspace_root: &str) -> String {
+    let mut normalized = path.replace('\\', "/");
+    let ws = workspace_root.replace('\\', "/");
+    if !ws.is_empty() && normalized.starts_with(&ws) {
+        normalized = normalized[ws.len()..].trim_start_matches('/').to_string();
+    }
+    normalized = normalized.trim_start_matches("./").trim_start_matches('/').to_string();
+    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    if parts.is_empty() || parts.len() == 1 {
+        return "root".to_string();
+    }
+
+    let mut start_idx = 0;
+    let p0 = parts[0].to_lowercase();
+    if ["crates", "packages", "apps", "services", "libs", "modules"].contains(&p0.as_str()) && parts.len() > 1 {
+        start_idx = 1;
+    } else if ["backend", "frontend", "api"].contains(&p0.as_str()) && parts.len() > 2 {
+        start_idx = 1;
+    }
+
+    let remaining = &parts[start_idx..];
+    if remaining.is_empty() {
+        return "root".to_string();
+    }
+    if remaining.len() == 1 {
+        return remaining[0].to_string();
+    }
+
+    let r0 = remaining[0].to_lowercase();
+    if ["src", "app", "lib"].contains(&r0.as_str()) && remaining.len() > 1 {
+        return remaining[1].to_string();
+    }
+
+    remaining[0].to_string()
+}
+
+/// Infers a sensible default domain responsibility description for an extracted module ID.
+pub fn infer_module_responsibility(mod_id: &str) -> String {
+    let lower = mod_id.to_lowercase();
+    if lower.contains("auth") || lower.contains("login") || lower.contains("session") {
+        "User authentication, sessions, tokens, and access control".to_string()
+    } else if lower.contains("model") || lower.contains("schema") || lower.contains("entity") {
+        "Data structures, persistence entities, and database schema mappings".to_string()
+    } else if lower.contains("router") || lower.contains("route") || lower.contains("endpoint") || lower.contains("api") {
+        "HTTP/REST route handlers, request validation, and endpoint dispatch".to_string()
+    } else if lower.contains("service") || lower.contains("business") || lower.contains("usecase") {
+        "Core domain logic, transaction orchestrations, and business workflows".to_string()
+    } else if lower.contains("migrat") || lower.contains("sql") {
+        "Database migrations, DDL scripts, and schema evolution history".to_string()
+    } else if lower.contains("component") || lower.contains("ui") {
+        "Reusable frontend components, design system elements, and UI views".to_string()
+    } else if lower.contains("core") {
+        "Foundational data types, AST graph indexing, and core runtime".to_string()
+    } else if lower.contains("server") {
+        "MCP communication protocol, request dispatchers, and RPC schemas".to_string()
+    } else if lower.contains("parser") {
+        "AST parsers, syntax extractors, and fuzzy patch generators".to_string()
+    } else if lower.contains("cli") {
+        "Command-line entrypoints, flags, and terminal commands".to_string()
+    } else if lower.contains("test") {
+        "Test suites, mocks, and integration test runners".to_string()
+    } else {
+        format!("Domain operations and subroutines for {}", mod_id)
+    }
+}
+

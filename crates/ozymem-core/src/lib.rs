@@ -20,7 +20,10 @@ pub use mcts::{EfeResult, MctsAction, MctsNode, MctsState, MctsStatePatch, MctsT
 pub use theta_gamma::{GammaSlot, ThetaGammaBuffer, ThetaGammaContext, ThetaGammaPhaseBin};
 pub use config::{BrainConfig, ComputeConfig, ConfigOrigin, CoreConfig, McpConfig, OzyConfig, StorageConfig};
 pub use engram_store::{FastEngramReader, IncrementalEngramStore, ENGRAM_FILE};
-pub use graph_backend::{DriftAlert, PruneReport, PrunedLessonInfo};
+pub use graph_backend::{
+    extract_module_id, infer_module_responsibility, CapabilityMapResult, CapabilityModule, DriftAlert,
+    PruneReport, PrunedLessonInfo,
+};
 pub use mcp_common::McpBackend;
 pub use ozymem_parser::AstDiagnostic;
 pub use registry::{CrossRepoMemory, ProjectLink};

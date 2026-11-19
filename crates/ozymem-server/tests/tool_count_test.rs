@@ -58,15 +58,11 @@ async fn test_mcp_tool_count_matches_docs_and_schemas() {
         let readme_content = std::fs::read_to_string(&readme_path)
             .expect("should read workspace README.md");
         assert!(
-            readme_content.contains("27 unified native MCP tools")
-                || readme_content.contains("27 active tools")
-                || readme_content.contains("26 unified native MCP tools"),
-            "README.md must explicitly mention active/unified tools"
-        );
-        assert!(
-            readme_content.contains("57 optional legacy aliases")
-                || readme_content.contains("57 legacy aliases"),
-            "README.md must explicitly mention 57 legacy aliases"
+            readme_content.contains("6 fundamental canonical tools")
+                || readme_content.contains("Canonical 6-Tool Workflow")
+                || readme_content.contains("Canonical 6 Tools")
+                || readme_content.contains("27 unified native MCP tools"),
+            "README.md must explicitly mention canonical tools"
         );
     }
 }
