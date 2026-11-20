@@ -84,22 +84,46 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
         }
 
         if let Ok(request) = serde_json::from_str::<mcp_common::JsonRpcRequest>(trimmed) {
-            let req_id = request.id.clone();
-            match handle_request(&backend, request, Some(&notifier), Some(&subscribed)).await {
-                Ok(Some(response)) => {
-                    if let Ok(payload) = serde_json::to_string(&response) {
-                        let _ = stdout_tx.send(payload);
+            let backend_clone = backend.clone();
+            let notifier_clone = notifier.clone();
+            let subscribed_clone = subscribed.clone();
+            let stdout_tx_clone = stdout_tx.clone();
+
+            tokio::spawn(async move {
+                let req_id = request.id.clone();
+                let timeout_res = tokio::time::timeout(
+                    std::time::Duration::from_secs(15),
+                    handle_request(&backend_clone, request, Some(&notifier_clone), Some(&subscribed_clone)),
+                )
+                .await;
+
+                match timeout_res {
+                    Ok(Ok(Some(response))) => {
+                        if let Ok(payload) = serde_json::to_string(&response) {
+                            let _ = stdout_tx_clone.send(payload);
+                        }
+                    }
+                    Ok(Ok(None)) => {}
+                    Ok(Err(e)) => {
+                        let id = req_id.unwrap_or(Value::Null);
+                        let err_resp = state::error_response(id, -32603, &e.to_string());
+                        if let Ok(payload) = serde_json::to_string(&err_resp) {
+                            let _ = stdout_tx_clone.send(payload);
+                        }
+                    }
+                    Err(_timeout) => {
+                        let id = req_id.unwrap_or(Value::Null);
+                        let err_resp = state::error_response(
+                            id,
+                            -32000,
+                            "[TIMEOUT_PREVENTED]: Tool execution took longer than 15s. Returning early to maintain Antigravity 2.0 agent responsiveness.",
+                        );
+                        if let Ok(payload) = serde_json::to_string(&err_resp) {
+                            let _ = stdout_tx_clone.send(payload);
+                        }
                     }
                 }
-                Ok(None) => {}
-                Err(e) => {
-                    let id = req_id.unwrap_or(Value::Null);
-                    let err_resp = state::error_response(id, -32603, &e.to_string());
-                    if let Ok(payload) = serde_json::to_string(&err_resp) {
-                        let _ = stdout_tx.send(payload);
-                    }
-                }
-            }
+            });
         } else {
             let err_resp = state::error_response(Value::Null, -32700, "Parse error: invalid JSON-RPC payload");
             if let Ok(payload) = serde_json::to_string(&err_resp) {
@@ -114,5 +138,6 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
     drop(stdout_tx);
     let _ = writer_handle.await;
 
-    Ok(())
+    // Clean exit to immediately release all SQLite file locks and prevent Windows zombie processes
+    std::process::exit(0);
 }

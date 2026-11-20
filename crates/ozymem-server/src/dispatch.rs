@@ -70,20 +70,38 @@ pub async fn handle_request(
                 })
                 .unwrap_or_else(|| PathBuf::from("."));
 
-            let mut guard = backend.write().await;
-            let gb = match GraphBackend::open_for_project(&project_path) {
-                Ok(b) => b,
-                Err(e) => {
-                    log("error", format!("[ozymem] Failed to open DB at {}: {e}", project_path.display()));
-                    return Ok(Some(error_response(
-                        id,
-                        -32603,
-                        &format!("Failed to open DB: {e}"),
-                    )));
+            // Fast-path: si el backend ya está caliente para este proyecto, responder en < 0.2 ms
+            let already_initialized = {
+                let guard = backend.read().await;
+                if let Some(ref gb) = *guard {
+                    if let Some(current_path) = gb.project_path() {
+                        let norm_req = project_path.canonicalize().unwrap_or_else(|_| project_path.clone());
+                        let norm_curr = PathBuf::from(&current_path).canonicalize().unwrap_or_else(|_| PathBuf::from(&current_path));
+                        norm_req == norm_curr
+                    } else {
+                        false
+                    }
+                } else {
+                    false
                 }
             };
-            *guard = Some(gb);
-            drop(guard);
+
+            if !already_initialized {
+                let mut guard = backend.write().await;
+                let gb = match GraphBackend::open_for_project(&project_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        log("error", format!("[ozymem] Failed to open DB at {}: {e}", project_path.display()));
+                        return Ok(Some(error_response(
+                            id,
+                            -32603,
+                            &format!("Failed to open DB: {e}"),
+                        )));
+                    }
+                };
+                *guard = Some(gb);
+                drop(guard);
+            }
 
             let legacy_db = legacy_global_db_path();
             if legacy_db.exists() && legacy_db.is_file() {
@@ -182,25 +200,25 @@ paging_threshold = 14000"#.to_string()
                 }
             });
 
-            let is_empty = {
+            let is_empty = if already_initialized {
+                false
+            } else {
                 let guard = backend.read().await;
                 guard.as_ref().map(|gb| gb.is_empty()).unwrap_or(true)
             };
 
             if is_empty {
-                let backend_clone = backend.clone();
                 let _notifier_clone = notifier.cloned();
                 let project_path_scan = project_path.to_string_lossy().to_string();
                 tokio::task::spawn_blocking(move || {
-                    let guard = backend_clone.blocking_read();
-                    if let Some(ref gb) = *guard {
+                    if let Ok(bg_backend) = GraphBackend::open_for_project(std::path::Path::new(&project_path_scan)) {
                         let progress_cb = Some(Box::new(move |cur: u64, tot: u64| {
-                            if cur % 100 == 0 || cur == tot {
+                            if cur % 200 == 0 || cur == tot {
                                 eprintln!("[ozymem] indexing: {cur}/{tot} files");
                             }
                         }) as Box<dyn Fn(u64, u64) + Send + Sync>);
                         let cb_ref = progress_cb.as_ref().map(|cb| cb.as_ref() as &dyn Fn(u64, u64));
-                        if let Err(e) = gb.full_scan(&project_path_scan, cb_ref) {
+                        if let Err(e) = bg_backend.full_scan(&project_path_scan, cb_ref) {
                             eprintln!("[ozymem] background scan error: {e}");
                         }
                     }
@@ -208,7 +226,7 @@ paging_threshold = 14000"#.to_string()
             }
 
             // Live filesystem watcher: auto-reindex file modifications from external editors/scripts
-            if std::env::var("OZYMEM_DISABLE_WATCHER").is_err() {
+            if !already_initialized && std::env::var("OZYMEM_DISABLE_WATCHER").is_err() {
                 let backend_weak = Arc::downgrade(backend);
                 let watcher_root = project_path.clone();
                 tokio::task::spawn_blocking(move || {

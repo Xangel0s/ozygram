@@ -114,12 +114,10 @@ pub fn start_idle_watcher(backend: Arc<RwLock<Option<GraphBackend>>>) -> tokio::
                     }
 
                     // Execute offline counterfactual replay sweep over recorded trajectories (Google Dream-RSI in Rust)
-                    let backend_replay = backend.clone();
                     let proj_path_for_sweep = project_path.clone();
                     let replay_task = tokio::task::spawn_blocking(move || {
-                        let guard = backend_replay.blocking_read();
-                        if let Some(ref gb) = *guard {
-                            gb.run_offline_counterfactual_dream_sweep(Some(&proj_path_for_sweep))
+                        if let Ok(replay_backend) = GraphBackend::open_for_project(std::path::Path::new(&proj_path_for_sweep)) {
+                            replay_backend.run_offline_counterfactual_dream_sweep(Some(&proj_path_for_sweep))
                         } else {
                             Ok(Vec::new())
                         }
