@@ -30,6 +30,12 @@ impl GraphBackend {
             return;
         }
 
+        // LiveWatcher handles file modifications in real-time via OS filesystem events.
+        // Synchronous WalkDir sweeps across the filesystem freeze agent tool queries on large repositories.
+        if std::env::var("OZYMEM_SYNC_RELOAD").is_err() && std::env::var("OZYMEM_DISABLE_WATCHER").is_err() {
+            return;
+        }
+
         {
             let mut last = self.last_check.lock().unwrap();
             if last.elapsed() < std::time::Duration::from_secs(30) {

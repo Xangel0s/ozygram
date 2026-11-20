@@ -10,7 +10,9 @@ pub async fn handle_refactor(
     backend: &GraphBackend,
     tool_call: &ToolCallParams,
 ) -> Result<ToolCallResult> {
-    backend.reload_if_stale();
+    if std::env::var("OZYMEM_SYNC_RELOAD").is_ok() {
+        backend.reload_if_stale();
+    }
 
     let file_path = tool_call
         .arguments
@@ -235,8 +237,8 @@ pub async fn handle_explore(
             }
         });
 
-    // Fast-path: bypass reload_if_stale for routing queries to guarantee sub-20ms response
-    if action != "route" && action != "suggest" {
+    // Fast-path: LiveWatcher maintains graph in real-time. Bypass redundant WalkDir disk sweep.
+    if std::env::var("OZYMEM_SYNC_RELOAD").is_ok() {
         backend.reload_if_stale();
     }
 
