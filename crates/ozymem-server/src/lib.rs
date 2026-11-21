@@ -91,8 +91,12 @@ pub async fn run_mcp_server() -> anyhow::Result<()> {
 
             tokio::spawn(async move {
                 let req_id = request.id.clone();
+                let timeout_secs = std::env::var("OZYMEM_TOOL_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                    .unwrap_or(15);
                 let timeout_res = tokio::time::timeout(
-                    std::time::Duration::from_secs(15),
+                    std::time::Duration::from_secs(timeout_secs),
                     handle_request(&backend_clone, request, Some(&notifier_clone), Some(&subscribed_clone)),
                 )
                 .await;

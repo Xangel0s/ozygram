@@ -88,18 +88,29 @@ pub async fn handle_request(
 
             if !already_initialized {
                 let mut guard = backend.write().await;
-                let gb = match GraphBackend::open_for_project(&project_path) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log("error", format!("[ozymem] Failed to open DB at {}: {e}", project_path.display()));
-                        return Ok(Some(error_response(
-                            id,
-                            -32603,
-                            &format!("Failed to open DB: {e}"),
-                        )));
+                let is_still_uninit = match *guard {
+                    Some(ref gb) => {
+                        let curr = gb.project_path().unwrap_or_default();
+                        let norm_req = project_path.canonicalize().unwrap_or_else(|_| project_path.clone());
+                        let norm_curr = PathBuf::from(&curr).canonicalize().unwrap_or_else(|_| PathBuf::from(&curr));
+                        norm_req != norm_curr
                     }
+                    None => true,
                 };
-                *guard = Some(gb);
+                if is_still_uninit {
+                    let gb = match GraphBackend::open_for_project(&project_path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log("error", format!("[ozymem] Failed to open DB at {}: {e}", project_path.display()));
+                            return Ok(Some(error_response(
+                                id,
+                                -32603,
+                                &format!("Failed to open DB: {e}"),
+                            )));
+                        }
+                    };
+                    *guard = Some(gb);
+                }
                 drop(guard);
             }
 
@@ -210,6 +221,7 @@ paging_threshold = 14000"#.to_string()
             if is_empty {
                 let _notifier_clone = notifier.cloned();
                 let project_path_scan = project_path.to_string_lossy().to_string();
+                let backend_weak = Arc::downgrade(backend);
                 tokio::task::spawn_blocking(move || {
                     if let Ok(bg_backend) = GraphBackend::open_for_project(std::path::Path::new(&project_path_scan)) {
                         let progress_cb = Some(Box::new(move |cur: u64, tot: u64| {
@@ -220,6 +232,14 @@ paging_threshold = 14000"#.to_string()
                         let cb_ref = progress_cb.as_ref().map(|cb| cb.as_ref() as &dyn Fn(u64, u64));
                         if let Err(e) = bg_backend.full_scan(&project_path_scan, cb_ref) {
                             eprintln!("[ozymem] background scan error: {e}");
+                        } else {
+                            // Synchronize in-memory RAM graph on active server backend
+                            if let Some(backend_arc) = backend_weak.upgrade() {
+                                let guard = backend_arc.blocking_read();
+                                if let Some(ref gb) = *guard {
+                                    let _ = gb.rebuild_graph();
+                                }
+                            }
                         }
                     }
                 });
@@ -242,19 +262,17 @@ paging_threshold = 14000"#.to_string()
                                     match event {
                                         ozymem_core::DeltaFileEvent::Modified(p) => {
                                             if !ozymem_core::graph_backend::helpers::is_noise_path(&p) {
-                                                if let Ok(guard) = backend_arc.try_read() {
-                                                    if let Some(ref gb) = *guard {
-                                                        let _ = gb.index_file_delta(&p, &watcher_root);
-                                                    }
+                                                let guard = backend_arc.blocking_read();
+                                                if let Some(ref gb) = *guard {
+                                                    let _ = gb.index_file_delta(&p, &watcher_root);
                                                 }
                                             }
                                         }
                                         ozymem_core::DeltaFileEvent::Removed(p) => {
                                             if !ozymem_core::graph_backend::helpers::is_noise_path(&p) {
-                                                if let Ok(guard) = backend_arc.try_read() {
-                                                    if let Some(ref gb) = *guard {
-                                                        let _ = gb.remove_file_delta(&p, &watcher_root);
-                                                    }
+                                                let guard = backend_arc.blocking_read();
+                                                if let Some(ref gb) = *guard {
+                                                    let _ = gb.remove_file_delta(&p, &watcher_root);
                                                 }
                                             }
                                         }
