@@ -1127,56 +1127,117 @@ pub fn format_simulation_result(sim: &ozymem_core::graph_backend::types::Simulat
 /// Compact tool outputs exceeding token budget (~3,500 tokens / 14,000 characters).
 /// Persists the raw payload to `.ozymem/blobs/<short_hash>.txt` and replaces the text
 /// with a summarized preview (head 40 lines, tail 10 lines) and an `ozymem://blob/<hash>` pointer.
+/// Resolves the context preservation threshold in characters.
+/// Defaults to 14,000 (~3,500 tokens), configurable via `OZYMEM_COMPACT_THRESHOLD_CHARS`.
+pub fn get_compact_threshold() -> usize {
+    std::env::var("OZYMEM_COMPACT_THRESHOLD_CHARS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(14_000)
+}
+
+/// Compact tool outputs exceeding token budget to preserve the orchestrator context window.
+fn compact_single_text(text: &str, project_path: Option<&str>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    let full_hash = format!("{:x}", hasher.finalize());
+    let short_hash = &full_hash[..12];
+
+    let blob_dir = match project_path {
+        Some(p) => Path::new(p).join(".ozymem").join("blobs"),
+        None => Path::new(".ozymem").join("blobs"),
+    };
+
+    let mut write_ok = false;
+    if std::fs::create_dir_all(&blob_dir).is_ok() {
+        let blob_file = blob_dir.join(format!("{short_hash}.txt"));
+        if std::fs::write(&blob_file, text).is_ok() {
+            write_ok = true;
+        } else {
+            eprintln!("[WARN: COMPACTOR] Failed to persist blob {}: write error", blob_file.display());
+        }
+    } else {
+        eprintln!("[WARN: COMPACTOR] Failed to create blob directory {}", blob_dir.display());
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+    let orig_len = text.len();
+    let approx_tokens = orig_len / 4;
+
+    let head_count = 40.min(total_lines);
+    let head_lines = lines[..head_count].join("\n");
+
+    let tail_lines = if total_lines > 50 {
+        let tail_start = total_lines.saturating_sub(10);
+        format!("\n\n--- Tail Preview (Last 10 lines) ---\n{}", lines[tail_start..].join("\n"))
+    } else {
+        String::new()
+    };
+
+    if write_ok {
+        format!(
+            "[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]\n\
+             Output exceeded context budget (original: {orig_len} chars, {total_lines} lines, ~{approx_tokens} tokens).\n\
+             Full uncompressed output persisted to:\n\
+             URI: ozymem://blob/{short_hash} (Path: .ozymem/blobs/{short_hash}.txt)\n\n\
+             --- Head Preview (Lines 1-{head_count}) ---\n\
+             {head_lines}{tail_lines}\n\n\
+             [NOTE: Read full output with resource ozymem://blob/{short_hash} or read_file on .ozymem/blobs/{short_hash}.txt]"
+        )
+    } else {
+        format!(
+            "[ALERT: OUTPUT_TRUNCATED_TO_PRESERVE_CONTEXT]\n\
+             Output exceeded context budget ({orig_len} chars, ~{approx_tokens} tokens) and blob persistence failed.\n\
+             --- Head Preview (Lines 1-{head_count}) ---\n\
+             {head_lines}{tail_lines}\n\n\
+             [WARN: Local blob persistence unavailable. Re-run query with narrower scope.]"
+        )
+    }
+}
+
+/// Evaluates aggregate payload size and persists raw payloads to `.ozymem/blobs/<short_hash>.txt`.
 pub fn compact_tool_output(content: &mut [ContentBlock], project_path: Option<&str>) {
-    const COMPACT_THRESHOLD_CHARS: usize = 14_000;
+    let threshold = get_compact_threshold();
+    let total_len: usize = content.iter().map(|b| b.text.len()).sum();
+    if total_len <= threshold {
+        return;
+    }
+
+    let per_block_threshold = (threshold / content.len().max(1)).max(50);
 
     for block in content.iter_mut() {
-        if block.text.len() > COMPACT_THRESHOLD_CHARS {
-            let mut hasher = Sha256::new();
-            hasher.update(block.text.as_bytes());
-            let full_hash = format!("{:x}", hasher.finalize());
-            let short_hash = &full_hash[..12];
+        if block.text.len() > per_block_threshold && total_len > threshold {
+            block.text = compact_single_text(&block.text, project_path);
+        }
+    }
+}
 
-            let blob_dir = match project_path {
-                Some(p) => Path::new(p).join(".ozymem").join("blobs"),
-                None => Path::new(".ozymem").join("blobs"),
-            };
+/// Compacts any tool result serialized into `serde_json::Value` (such as delegated tools in dispatch).
+pub fn compact_json_value(val: &mut serde_json::Value, project_path: Option<&str>) {
+    if let Some(content_arr) = val.get_mut("content").and_then(|c| c.as_array_mut()) {
+        let threshold = get_compact_threshold();
+        let total_len: usize = content_arr
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+            .map(|s| s.len())
+            .sum();
 
-            if let Err(e) = std::fs::create_dir_all(&blob_dir) {
-                eprintln!("[WARN: COMPACTOR] Failed to create blob directory {}: {e}", blob_dir.display());
+        if total_len <= threshold {
+            return;
+        }
+
+        let per_block_threshold = (threshold / content_arr.len().max(1)).max(50);
+
+        for block in content_arr.iter_mut() {
+            if let Some(text_val) = block.get_mut("text") {
+                if let Some(text_str) = text_val.as_str() {
+                    if text_str.len() > per_block_threshold && total_len > threshold {
+                        let compacted = compact_single_text(text_str, project_path);
+                        *text_val = serde_json::Value::String(compacted);
+                    }
+                }
             }
-
-            let blob_file = blob_dir.join(format!("{short_hash}.txt"));
-            if let Err(e) = std::fs::write(&blob_file, &block.text) {
-                eprintln!("[WARN: COMPACTOR] Failed to persist blob {}: {e}", blob_file.display());
-            }
-
-            let lines: Vec<&str> = block.text.lines().collect();
-            let total_lines = lines.len();
-            let orig_len = block.text.len();
-            let approx_tokens = orig_len / 4;
-
-            let head_count = 40.min(total_lines);
-            let head_lines = lines[..head_count].join("\n");
-
-            let tail_lines = if total_lines > 50 {
-                let tail_start = total_lines.saturating_sub(10);
-                format!("\n\n--- Tail Preview (Last 10 lines) ---\n{}", lines[tail_start..].join("\n"))
-            } else {
-                String::new()
-            };
-
-            let compacted_msg = format!(
-                "[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]\n\
-                 Output exceeded context budget (original: {orig_len} chars, {total_lines} lines, ~{approx_tokens} tokens).\n\
-                 Full uncompressed output persisted to:\n\
-                 URI: ozymem://blob/{short_hash} (Path: .ozymem/blobs/{short_hash}.txt)\n\n\
-                 --- Head Preview (Lines 1-{head_count}) ---\n\
-                 {head_lines}{tail_lines}\n\n\
-                 [NOTE: Read full output with resource ozymem://blob/{short_hash} or read_file on .ozymem/blobs/{short_hash}.txt]"
-            );
-
-            block.text = compacted_msg;
         }
     }
 }
@@ -1238,6 +1299,84 @@ mod tests {
 
         compact_tool_output(&mut content, None);
         assert_eq!(content[0].text, small_text);
+    }
+
+    #[test]
+    fn test_compact_tool_output_configurable_threshold() {
+        std::env::set_var("OZYMEM_COMPACT_THRESHOLD_CHARS", "500");
+        let medium_text = "x".repeat(600);
+        let mut content = vec![ContentBlock {
+            kind: "text",
+            text: medium_text,
+        }];
+
+        compact_tool_output(&mut content, None);
+        assert!(content[0].text.contains("[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]"));
+        std::env::remove_var("OZYMEM_COMPACT_THRESHOLD_CHARS");
+    }
+
+    #[test]
+    fn test_compact_tool_output_multi_block_aggregate() {
+        std::env::set_var("OZYMEM_COMPACT_THRESHOLD_CHARS", "2000");
+        let b1 = "a".repeat(1200);
+        let b2 = "b".repeat(1200);
+        let mut content = vec![
+            ContentBlock { kind: "text", text: b1 },
+            ContentBlock { kind: "text", text: b2 },
+        ];
+
+        compact_tool_output(&mut content, None);
+        assert!(content[0].text.contains("[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]"));
+        assert!(content[1].text.contains("[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]"));
+        std::env::remove_var("OZYMEM_COMPACT_THRESHOLD_CHARS");
+    }
+
+    #[test]
+    fn test_compact_json_value_spillover() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ozymem_test_json_compactor_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let project_path = temp_dir.to_str().unwrap();
+
+        let large_text = "delegated tool output line\n".repeat(600);
+        let mut val = serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": large_text
+                }
+            ],
+            "isError": false
+        });
+
+        compact_json_value(&mut val, Some(project_path));
+
+        let text_out = val["content"][0]["text"].as_str().unwrap();
+        assert!(text_out.contains("[ALERT: OUTPUT_COMPACTED_TO_PRESERVE_CONTEXT]"));
+        assert!(text_out.contains("URI: ozymem://blob/"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_compact_json_value_under_threshold() {
+        let small_text = "small payload";
+        let mut val = serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": small_text
+                }
+            ]
+        });
+
+        compact_json_value(&mut val, None);
+        assert_eq!(val["content"][0]["text"].as_str().unwrap(), small_text);
     }
 }
 

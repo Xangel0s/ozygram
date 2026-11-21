@@ -932,14 +932,24 @@ paging_threshold = 14000"#.to_string()
                     }
                 }
                 _ => {
-                    if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
-                        return Ok(Some(res));
+                    let delegate_res = if let Some(res) = handle_memory_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
+                        Some(res)
                     } else if let Some(res) = handle_git_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
-                        return Ok(Some(res));
+                        Some(res)
                     } else if let Some(res) = handle_unified_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
-                        return Ok(Some(res));
+                        Some(res)
                     } else if let Some(res) = handle_graph_tool(id.clone(), backend, &tool_call, notifier, subscribed).await? {
-                        return Ok(Some(res));
+                        Some(res)
+                    } else {
+                        None
+                    };
+
+                    if let Some(mut resp) = delegate_res {
+                        if let Some(ref mut res_val) = resp.result {
+                            let project_path = backend.project_path();
+                            crate::formatters::compact_json_value(res_val, project_path.as_deref());
+                        }
+                        return Ok(Some(resp));
                     } else {
                         return Ok(Some(error_response(id, -32601, "Unknown tool")));
                     }
