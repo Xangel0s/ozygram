@@ -891,25 +891,56 @@ Todos los scripts se ejecutaron bajo **Python 3.10.11 / SQLite 3.42.0 (Windows)*
 | `test_late_zombie_simulation.py` | **Exit 0 (Aprobado)** | Demostró la purga reactiva de zombis tardíos v1 en ChromaDB mediante el reconciliador anti-entropía continuo frente a lápidas v2 en SQLite. |
 | `test_pragma_user_version_transactional.py` | **Exit 0 (Aprobado)** | Verificó reversión de `user_version` de 6 a 5 tras `ROLLBACK` en 8 pasos con SQLite 3.42.0. |
 
-### 11.2. Estado Estricto de Git
+### 11.2. Estado Estricto de Git y Registro de Sincronización Remota
 
-```text
-On branch main
-Your branch is up to date with 'origin/main'.
+Conforme a la instrucción del usuario (`commit y push main luego lo continuamos el documento`), se ejecutó la consolidación incremental de los cambios verificados de la Fase 1 y la documentación maestra:
 
-Changes not staged for commit:
-	modified:   crates/ozymem-core/src/graph_backend/helpers.rs
-	modified:   crates/ozymem-core/src/graph_backend/indexing.rs
-	modified:   crates/ozymem-core/src/graph_backend/queries.rs
-	modified:   crates/ozymem-core/src/sync.rs
-	modified:   crates/ozymem-core/tests/e2e_real_project.rs
-	modified:   crates/ozymem-core/tests/graph_backend_tests.rs
+1. **Commit de Corrección de Fase 1:**
+   - Hash: `5b4daa4`
+   - Mensaje: `fix(ozymem-core): correct blast radius incoming caller BFS, noise dir scoping and E2E isolation`
+   - Archivos:
+     - `crates/ozymem-core/src/graph_backend/queries.rs`: BFS de callers entrantes usando `VecDeque`.
+     - `crates/ozymem-core/src/graph_backend/helpers.rs` e `indexing.rs`: Filtro de exclusión de directorios de ruido delimitado al `project_root`.
+     - `crates/ozymem-core/src/sync.rs`: Preservación de contratos.
+     - `crates/ozymem-core/tests/e2e_real_project.rs`: Aislamiento de directorios temporales `tempfile::tempdir()`.
+     - `crates/ozymem-core/tests/phase1_impact_and_noise_tests.rs`: Suite de pruebas unitarias (6/6 aprobadas).
+     - `crates/ozymem-core/tests/graph_backend_tests.rs`: Pruebas de integración de backend de grafos (61/61 aprobadas).
+   - Hook pre-commit: Verificado y firmado por Centinela (`[STATUS: CENTINELA_VERIFIED]`).
 
-Untracked files:
-	crates/ozymem-core/tests/phase1_impact_and_noise_tests.rs
-```
+2. **Commit de Documentación Maestra:**
+   - Hash: `0fd68ca`
+   - Mensaje: `docs: add technical audit report and vector adapter architecture proposal`
+   - Archivos:
+     - `docs/informe_fase1_y_propuesta_adaptador_vectorial.md`
 
-- **Cero commits realizados.**
-- **Cero cambios destructivos o migraciones aplicadas en bases de datos del proyecto.**
-- **Cero código de producción de Fase 2 implementado.**
-- **Condición de salida estrictamente cumplida: Fase 2 permanece NO AUTORIZADA.**
+3. **Publicación y Sincronización Remota:**
+   - Comando ejecutado: `git push origin main`
+   - Salida: `To https://github.com/Xangel0s/ozygram.git 591a6c4..0fd68ca main -> main`
+   - Estado actual:
+     ```text
+     On branch main
+     Your branch is up to date with 'origin/main'.
+     nothing to commit, working tree clean
+     ```
+
+### 11.3. Plan de Continuación para la Fase 2 (Pre-requisitos Obligatorios)
+
+Antes de proceder con la implementación en código del Adaptador Vectorial (`VectorStore` / `LocalVectorIndex`), deben abordarse los siguientes hitos de preparación y validación:
+
+1. **Validación de Paridad Numérica del Modelo de Embeddings (`all-MiniLM-L6-v2`):**
+   - Diseñar y ejecutar una suite comparativa de inferencia en un entorno de pruebas aislado.
+   - Contrastar los vectores de salida generados por el runtime de Rust (`fastembed` u ONNX Runtime nativo) contra la referencia en Python (`sentence-transformers`).
+   - Criterios de aceptación innegociables:
+     - Similitud Coseno inter-runtime: $\text{Cosine Similarity} \ge 0,9995$.
+     - Error absoluto máximo por dimensión: $\Delta_{\max} \le 5 \times 10^{-4}$.
+   - Corpus de prueba: Selección representativa de engrams de código fuente, lecciones técnicas, gotchas y descripciones de arquitectura de Ozygram.
+
+2. **Plan de Despliegue de la Migración DDL v6 en `ozymem-core`:**
+   - Definir el procedimiento para incorporar la migración aditiva de `memory_outbox` y los triggers de `entity_versions` en `crates/ozymem-core/src/graph_backend/schema.rs` sin romper compatibilidad con instalaciones existentes.
+   - Diseñar la integración con los pipelines de CI para validar que el `PRAGMA user_version = 6` se aplique y pueda revertirse limpiamente.
+
+3. **Arquitectura del Runner de Sincronización y Reconciliador Anti-Entropía:**
+   - Especificar la estructura modular del background worker que procesará `memory_outbox` hacia ChromaDB.
+   - Definir el ciclo de vida del reconciliador anti-entropía periódico que audita y purga discrepancias o zombis en ChromaDB.
+
+- **Condición de salida actual: Fase 1 cerrada y sincronizada en `main`. Fase 2 en fase de preparación de pre-requisitos.**
