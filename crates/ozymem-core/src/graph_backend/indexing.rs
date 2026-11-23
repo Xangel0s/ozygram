@@ -1,23 +1,29 @@
-use std::sync::Arc;
-use crate::StoredFunction;
-use std::collections::HashMap;
-use crate::sync::{check_noise_or_huge_file, DeltaIndexResult, NoiseFilterDecision, DEFAULT_MAX_DELTA_FILE_BYTES};
 use crate::graph_backend::helpers::mark_stale_lessons;
+use crate::graph_backend::helpers::{
+    detect_language, file_mtime, is_noise_dir, is_noise_path_with_root, load_ignore_patterns,
+    path_matches_ignore,
+};
+use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend};
+use crate::sync::{
+    check_noise_or_huge_file_with_root, DeltaIndexResult, NoiseFilterDecision,
+    DEFAULT_MAX_DELTA_FILE_BYTES,
+};
+use crate::StoredFunction;
 use anyhow::Result;
+use ozymem_parser::{
+    extract_dependency_hints, is_binary_file, is_internal_dependency_hint, parse_source,
+    resolve_dependency_target,
+};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use rusqlite::params;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
-use sha2::{Digest, Sha256};
-use ozymem_parser::{
-    extract_dependency_hints, is_internal_dependency_hint,
-    resolve_dependency_target, parse_source, is_binary_file,
-};
-use crate::graph_backend::helpers::{detect_language, file_mtime, is_noise_dir, load_ignore_patterns, path_matches_ignore};
-use crate::graph_backend::types::{FileEdge, FileNode, GraphBackend};
 
 impl GraphBackend {
     pub fn is_empty(&self) -> bool {
@@ -32,13 +38,21 @@ impl GraphBackend {
 
         // LiveWatcher handles file modifications in real-time via OS filesystem events.
         // Synchronous WalkDir sweeps across the filesystem freeze agent tool queries on large repositories.
-        if std::env::var("OZYMEM_SYNC_RELOAD").is_err() && std::env::var("OZYMEM_DISABLE_WATCHER").is_err() {
+        if std::env::var("OZYMEM_SYNC_RELOAD").is_err()
+            && std::env::var("OZYMEM_DISABLE_WATCHER").is_err()
+        {
             return;
         }
 
+        let debounce = if std::env::var("OZYMEM_SYNC_RELOAD").is_ok() || cfg!(test) {
+            std::time::Duration::from_millis(500)
+        } else {
+            std::time::Duration::from_secs(30)
+        };
+
         {
             let mut last = self.last_check.lock().unwrap();
-            if last.elapsed() < std::time::Duration::from_secs(30) {
+            if last.elapsed() < debounce {
                 return;
             }
             *last = Instant::now();
@@ -85,7 +99,7 @@ impl GraphBackend {
         for entry in walkdir::WalkDir::new(proj_path)
             .into_iter()
             .filter_entry(|e| {
-                if is_noise_dir(e.path()) {
+                if e.depth() > 0 && is_noise_dir(e.path()) {
                     return false;
                 }
                 if has_ignores && path_matches_ignore(e.path(), &ignore_patterns, proj_ref) {
@@ -99,7 +113,12 @@ impl GraphBackend {
             if !path.is_file() || is_binary_file(path) {
                 continue;
             }
-            if check_noise_or_huge_file(path, DEFAULT_MAX_DELTA_FILE_BYTES) != NoiseFilterDecision::Process {
+            if check_noise_or_huge_file_with_root(
+                path,
+                DEFAULT_MAX_DELTA_FILE_BYTES,
+                Some(proj_ref),
+            ) != NoiseFilterDecision::Process
+            {
                 continue;
             }
             let abs_path = path.to_string_lossy().to_string();
@@ -137,7 +156,7 @@ impl GraphBackend {
         let total_file_count: u64 = walkdir::WalkDir::new(project_path)
             .into_iter()
             .filter_entry(|e| {
-                if is_noise_dir(e.path()) {
+                if e.depth() > 0 && is_noise_dir(e.path()) {
                     return false;
                 }
                 if has_ignores && path_matches_ignore(e.path(), &ignore_patterns, proj_root) {
@@ -149,7 +168,11 @@ impl GraphBackend {
             .filter(|e| {
                 e.path().is_file()
                     && !is_binary_file(e.path())
-                    && check_noise_or_huge_file(e.path(), DEFAULT_MAX_DELTA_FILE_BYTES) == NoiseFilterDecision::Process
+                    && check_noise_or_huge_file_with_root(
+                        e.path(),
+                        DEFAULT_MAX_DELTA_FILE_BYTES,
+                        Some(proj_root),
+                    ) == NoiseFilterDecision::Process
             })
             .count() as u64;
 
@@ -168,7 +191,7 @@ impl GraphBackend {
         for entry in walkdir::WalkDir::new(project_path)
             .into_iter()
             .filter_entry(|e| {
-                let noise = is_noise_dir(e.path());
+                let noise = e.depth() > 0 && is_noise_dir(e.path());
                 if noise && e.path().is_dir() {
                     skipped_noise += 1;
                 }
@@ -203,7 +226,12 @@ impl GraphBackend {
                 }
                 continue;
             }
-            if check_noise_or_huge_file(path, DEFAULT_MAX_DELTA_FILE_BYTES) != NoiseFilterDecision::Process {
+            if check_noise_or_huge_file_with_root(
+                path,
+                DEFAULT_MAX_DELTA_FILE_BYTES,
+                Some(proj_root),
+            ) != NoiseFilterDecision::Process
+            {
                 skipped_file_noise += 1;
                 if let Some(cb) = progress {
                     processed += 1;
@@ -239,8 +267,10 @@ impl GraphBackend {
                 }
             };
 
-            let engram_contracts = ozymem_parser::extract_engram_contracts(&abs_path, lang, &source);
-            self.engram_store.update_file_incremental(&abs_path, engram_contracts);
+            let engram_contracts =
+                ozymem_parser::extract_engram_contracts(&abs_path, lang, &source);
+            self.engram_store
+                .update_file_incremental(&abs_path, engram_contracts);
 
             let sha256_hash = {
                 let mut hasher = Sha256::new();
@@ -296,8 +326,13 @@ impl GraphBackend {
                 )?;
             }
 
-            if abs_path.ends_with(".tsx") || abs_path.ends_with(".ts") || abs_path.ends_with(".jsx") || abs_path.ends_with(".js") {
-                let consumers = ozymem_parser::parse_frontend_endpoint_consumers(&source, &abs_path);
+            if abs_path.ends_with(".tsx")
+                || abs_path.ends_with(".ts")
+                || abs_path.ends_with(".jsx")
+                || abs_path.ends_with(".js")
+            {
+                let consumers =
+                    ozymem_parser::parse_frontend_endpoint_consumers(&source, &abs_path);
                 let now = chrono::Utc::now().to_rfc3339();
                 for c in consumers {
                     let canon = &c.canonical_path;
@@ -330,7 +365,10 @@ impl GraphBackend {
                         params![abs_path, r.table_name, now, self.tenant_id, inner.workspace_root],
                     );
                 }
-            } else if abs_path.ends_with(".py") || abs_path.ends_with(".ts") || abs_path.ends_with(".prisma") {
+            } else if abs_path.ends_with(".py")
+                || abs_path.ends_with(".ts")
+                || abs_path.ends_with(".prisma")
+            {
                 let model_refs = ozymem_parser::parse_model_tables(&source, &abs_path);
                 let now = chrono::Utc::now().to_rfc3339();
                 for r in model_refs {
@@ -362,7 +400,10 @@ impl GraphBackend {
         if !scanned_files.is_empty() {
             let inner = self.inner.lock().unwrap();
             let _ = inner.sqlite.execute_batch("BEGIN IMMEDIATE;");
-            let existing_files: Vec<String> = if let Ok(mut stmt) = inner.sqlite.prepare("SELECT path FROM files WHERE tenant_id = ?1") {
+            let existing_files: Vec<String> = if let Ok(mut stmt) = inner
+                .sqlite
+                .prepare("SELECT path FROM files WHERE tenant_id = ?1")
+            {
                 if let Ok(rows) = stmt.query_map(params![self.tenant_id], |r| r.get(0)) {
                     rows.filter_map(|r| r.ok()).collect()
                 } else {
@@ -373,10 +414,19 @@ impl GraphBackend {
             };
             for old_path in existing_files {
                 if !scanned_files.contains(&old_path) {
-                    let _ = inner.sqlite.execute("DELETE FROM files WHERE path = ?1 AND tenant_id = ?2", params![old_path, self.tenant_id]);
-                    let _ = inner.sqlite.execute("DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2", params![old_path, self.tenant_id]);
+                    let _ = inner.sqlite.execute(
+                        "DELETE FROM files WHERE path = ?1 AND tenant_id = ?2",
+                        params![old_path, self.tenant_id],
+                    );
+                    let _ = inner.sqlite.execute(
+                        "DELETE FROM functions WHERE file_path = ?1 AND tenant_id = ?2",
+                        params![old_path, self.tenant_id],
+                    );
                     let _ = inner.sqlite.execute("DELETE FROM file_dependencies WHERE (origin_path = ?1 OR destination_path = ?1) AND tenant_id = ?2", params![old_path, self.tenant_id]);
-                    let _ = inner.sqlite.execute("DELETE FROM ast_diagnostics WHERE file_path = ?1 AND tenant_id = ?2", params![old_path, self.tenant_id]);
+                    let _ = inner.sqlite.execute(
+                        "DELETE FROM ast_diagnostics WHERE file_path = ?1 AND tenant_id = ?2",
+                        params![old_path, self.tenant_id],
+                    );
                 }
             }
             let _ = inner.sqlite.execute_batch("COMMIT;");
@@ -447,9 +497,9 @@ impl GraphBackend {
                 .filter_map(|r| r.ok())
                 .collect();
 
-            let mut func_stmt = inner.sqlite.prepare(
-                "SELECT name, file_path FROM functions WHERE tenant_id = ?1",
-            )?;
+            let mut func_stmt = inner
+                .sqlite
+                .prepare("SELECT name, file_path FROM functions WHERE tenant_id = ?1")?;
             funcs = func_stmt
                 .query_map(params![self.tenant_id], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -472,7 +522,10 @@ impl GraphBackend {
             });
             file_index.insert(path.clone(), idx);
 
-            for token in path.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+            for token in path
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|t| t.len() >= 3)
+            {
                 let lower = token.to_lowercase();
                 let list = token_index.entry(lower).or_default();
                 if !list.contains(&idx) {
@@ -484,7 +537,10 @@ impl GraphBackend {
         // Hydrate function tokens directly into RAM token_index
         for (func_name, file_path) in &funcs {
             if let Some(&idx) = file_index.get(file_path) {
-                for token in func_name.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+                for token in func_name
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .filter(|t| t.len() >= 3)
+                {
                     let lower = token.to_lowercase();
                     let list = token_index.entry(lower).or_default();
                     if !list.contains(&idx) {
@@ -515,9 +571,17 @@ impl GraphBackend {
 
     /// Incrementally indexes a single file if modified (Live Delta Indexing).
     /// Skips files that match ignore patterns, noise dirs, minified/lockfiles, or unchanged SHA-256.
-    pub fn index_file_delta(&self, file_path: &Path, project_root: &Path) -> Result<DeltaIndexResult> {
+    pub fn index_file_delta(
+        &self,
+        file_path: &Path,
+        project_root: &Path,
+    ) -> Result<DeltaIndexResult> {
         // 1. Noise, Lockfile, Minified, Size limit check
-        match check_noise_or_huge_file(file_path, DEFAULT_MAX_DELTA_FILE_BYTES) {
+        match check_noise_or_huge_file_with_root(
+            file_path,
+            DEFAULT_MAX_DELTA_FILE_BYTES,
+            Some(project_root),
+        ) {
             NoiseFilterDecision::Process => {}
             NoiseFilterDecision::NoiseDir
             | NoiseFilterDecision::MinifiedOrBundle
@@ -537,7 +601,9 @@ impl GraphBackend {
 
         // 3. Ignore patterns check
         let ignore_patterns = load_ignore_patterns(project_root);
-        if !ignore_patterns.is_empty() && path_matches_ignore(file_path, &ignore_patterns, project_root) {
+        if !ignore_patterns.is_empty()
+            && path_matches_ignore(file_path, &ignore_patterns, project_root)
+        {
             return Ok(DeltaIndexResult::SkippedNoise);
         }
 
@@ -645,8 +711,13 @@ impl GraphBackend {
                 )?;
             }
 
-            if abs_path.ends_with(".tsx") || abs_path.ends_with(".ts") || abs_path.ends_with(".jsx") || abs_path.ends_with(".js") {
-                let consumers = ozymem_parser::parse_frontend_endpoint_consumers(&source, &abs_path);
+            if abs_path.ends_with(".tsx")
+                || abs_path.ends_with(".ts")
+                || abs_path.ends_with(".jsx")
+                || abs_path.ends_with(".js")
+            {
+                let consumers =
+                    ozymem_parser::parse_frontend_endpoint_consumers(&source, &abs_path);
                 let now = chrono::Utc::now().to_rfc3339();
                 let _ = inner.sqlite.execute(
                     "DELETE FROM memory_edges WHERE source_type = 'file' AND (source_id = ?1 OR source_id = ?2) AND edge_type = 'consumes_endpoint' AND tenant_id = ?3",
@@ -691,7 +762,10 @@ impl GraphBackend {
                         params![abs_path, r.table_name, now, self.tenant_id, inner.workspace_root],
                     );
                 }
-            } else if abs_path.ends_with(".py") || abs_path.ends_with(".ts") || abs_path.ends_with(".prisma") {
+            } else if abs_path.ends_with(".py")
+                || abs_path.ends_with(".ts")
+                || abs_path.ends_with(".prisma")
+            {
                 let model_refs = ozymem_parser::parse_model_tables(&source, &abs_path);
                 if !model_refs.is_empty() {
                     let now = chrono::Utc::now().to_rfc3339();
@@ -711,7 +785,8 @@ impl GraphBackend {
         }
 
         let engram_contracts = ozymem_parser::extract_engram_contracts(&abs_path, lang, &source);
-        self.engram_store.update_file_incremental(&abs_path, engram_contracts);
+        self.engram_store
+            .update_file_incremental(&abs_path, engram_contracts);
 
         // 8. Update In-Memory Graph and File Index directly
         {
@@ -720,7 +795,10 @@ impl GraphBackend {
             let func_len = parsed.functions.len() as i64;
             let current_tenant = self.tenant_id.clone();
             let mut lesson_count = 0i64;
-            if let Ok(mut lstmt) = inner.sqlite.prepare("SELECT COUNT(*) FROM lessons WHERE file_path = ?1 AND tenant_id = ?2") {
+            if let Ok(mut lstmt) = inner
+                .sqlite
+                .prepare("SELECT COUNT(*) FROM lessons WHERE file_path = ?1 AND tenant_id = ?2")
+            {
                 if let Ok(mut lrows) = lstmt.query(params![abs_path, current_tenant]) {
                     if let Ok(Some(lrow)) = lrows.next() {
                         lesson_count = lrow.get(0).unwrap_or(0);
@@ -748,7 +826,10 @@ impl GraphBackend {
                 new_idx
             };
 
-            for token in abs_path.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+            for token in abs_path
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .filter(|t| t.len() >= 3)
+            {
                 let lower = token.to_lowercase();
                 let list = inner.token_index.entry(lower).or_default();
                 if !list.contains(&node_idx) {
@@ -756,7 +837,11 @@ impl GraphBackend {
                 }
             }
             for func in &parsed.functions {
-                for token in func.name.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3) {
+                for token in func
+                    .name
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .filter(|t| t.len() >= 3)
+                {
                     let lower = token.to_lowercase();
                     let list = inner.token_index.entry(lower).or_default();
                     if !list.contains(&node_idx) {
@@ -765,7 +850,9 @@ impl GraphBackend {
                 }
             }
 
-            let edges_to_remove: Vec<_> = inner.graph.edges_directed(node_idx, petgraph::Direction::Outgoing)
+            let edges_to_remove: Vec<_> = inner
+                .graph
+                .edges_directed(node_idx, petgraph::Direction::Outgoing)
                 .map(|e| e.id())
                 .collect();
             for edge_id in edges_to_remove {
@@ -901,7 +988,7 @@ impl GraphBackend {
                  FROM functions \
                  WHERE (name LIKE ?1 OR file_path LIKE ?1) AND tenant_id = ?2 \
                  ORDER BY CASE WHEN name LIKE ?1 THEN 0 ELSE 1 END, name ASC \
-                 LIMIT ?3"
+                 LIMIT ?3",
             )?;
 
             let funcs: Vec<StoredFunction> = stmt
@@ -911,7 +998,11 @@ impl GraphBackend {
                         kind: row.get(1)?,
                         start_line: row.get(2)?,
                         end_line: row.get(3)?,
-                        strategy: format!("{} in {}", row.get::<_, String>(4)?, row.get::<_, String>(5)?),
+                        strategy: format!(
+                            "{} in {}",
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?
+                        ),
                     })
                 })?
                 .filter_map(|r| r.ok())
@@ -928,14 +1019,17 @@ impl GraphBackend {
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         params_vec.push(Box::new(self.tenant_id.clone())); // ?1
-        params_vec.push(Box::new(limit));                  // ?2
-        params_vec.push(Box::new(chained_pattern));        // ?3
+        params_vec.push(Box::new(limit)); // ?2
+        params_vec.push(Box::new(chained_pattern)); // ?3
 
         for token in &search_tokens {
             let token_like = format!("%{}%", token);
             params_vec.push(Box::new(token_like));
             let idx = params_vec.len();
-            score_clauses.push(format!("(CASE WHEN name LIKE ?{0} THEN 15 WHEN file_path LIKE ?{0} THEN 10 ELSE 0 END)", idx));
+            score_clauses.push(format!(
+                "(CASE WHEN name LIKE ?{0} THEN 15 WHEN file_path LIKE ?{0} THEN 10 ELSE 0 END)",
+                idx
+            ));
             or_clauses.push(format!("(name LIKE ?{0} OR file_path LIKE ?{0})", idx));
         }
 
@@ -953,7 +1047,8 @@ impl GraphBackend {
         );
 
         let mut stmt = inner.sqlite.prepare(&sql)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let funcs: Vec<StoredFunction> = stmt
             .query_map(rusqlite::params_from_iter(params_refs), |row| {
@@ -962,7 +1057,11 @@ impl GraphBackend {
                     kind: row.get(1)?,
                     start_line: row.get(2)?,
                     end_line: row.get(3)?,
-                    strategy: format!("{} in {}", row.get::<_, String>(4)?, row.get::<_, String>(5)?),
+                    strategy: format!(
+                        "{} in {}",
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?
+                    ),
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1014,14 +1113,17 @@ impl GraphBackend {
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         params_vec.push(Box::new(self.tenant_id.clone())); // ?1
-        params_vec.push(Box::new(limit));                  // ?2
-        params_vec.push(Box::new(chained_pattern));        // ?3
+        params_vec.push(Box::new(limit)); // ?2
+        params_vec.push(Box::new(chained_pattern)); // ?3
 
         for token in &search_tokens {
             let token_like = format!("%{}%", token);
             params_vec.push(Box::new(token_like));
             let idx = params_vec.len();
-            score_clauses.push(format!("(CASE WHEN path LIKE ?{0} THEN 10 ELSE 0 END)", idx));
+            score_clauses.push(format!(
+                "(CASE WHEN path LIKE ?{0} THEN 10 ELSE 0 END)",
+                idx
+            ));
             or_clauses.push(format!("path LIKE ?{0}", idx));
         }
 
@@ -1039,7 +1141,8 @@ impl GraphBackend {
         );
 
         let mut stmt = inner.sqlite.prepare(&sql)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), |row| {
             row.get::<_, String>(0)
@@ -1058,25 +1161,31 @@ impl GraphBackend {
         let mut stmt = inner.sqlite.prepare(
             "SELECT file_path, line_number, severity, message FROM ast_diagnostics WHERE tenant_id = ?1 ORDER BY id DESC LIMIT ?2"
         )?;
-        let diags = stmt.query_map(params![self.tenant_id, limit], |row| {
-            Ok(ozymem_parser::AstDiagnostic {
-                file_path: row.get(0)?,
-                line_number: row.get::<_, i64>(1)? as usize,
-                severity: row.get(2)?,
-                message: row.get(3)?,
-            })
-        })?.filter_map(|r| r.ok()).collect();
+        let diags = stmt
+            .query_map(params![self.tenant_id, limit], |row| {
+                Ok(ozymem_parser::AstDiagnostic {
+                    file_path: row.get(0)?,
+                    line_number: row.get::<_, i64>(1)? as usize,
+                    severity: row.get(2)?,
+                    message: row.get(3)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
         Ok(diags)
     }
 
     /// Count total static AST diagnostics.
     pub fn count_ast_diagnostics(&self) -> Result<i64> {
         let inner = self.inner.lock().unwrap();
-        inner.sqlite.query_row(
-            "SELECT COUNT(*) FROM ast_diagnostics WHERE tenant_id = ?1",
-            params![self.tenant_id],
-            |r| r.get(0),
-        ).map_err(Into::into)
+        inner
+            .sqlite
+            .query_row(
+                "SELECT COUNT(*) FROM ast_diagnostics WHERE tenant_id = ?1",
+                params![self.tenant_id],
+                |r| r.get(0),
+            )
+            .map_err(Into::into)
     }
 
     /// Count lessons for the current tenant.
@@ -1107,22 +1216,20 @@ impl GraphBackend {
 
         std::thread::Builder::new()
             .name("ozymem-live-watcher".to_string())
-            .spawn(move || {
-                loop {
-                    if stop_rx.try_recv().is_ok() {
-                        break;
-                    }
-                    if let Some(event) = watcher.recv_timeout(std::time::Duration::from_millis(150)) {
-                        match event {
-                            crate::sync::DeltaFileEvent::Modified(path) => {
-                                if !crate::graph_backend::helpers::is_noise_path(&path) {
-                                    let _ = backend.index_file_delta(&path, &root_buf);
-                                }
+            .spawn(move || loop {
+                if stop_rx.try_recv().is_ok() {
+                    break;
+                }
+                if let Some(event) = watcher.recv_timeout(std::time::Duration::from_millis(150)) {
+                    match event {
+                        crate::sync::DeltaFileEvent::Modified(path) => {
+                            if !is_noise_path_with_root(&path, Some(&root_buf)) {
+                                let _ = backend.index_file_delta(&path, &root_buf);
                             }
-                            crate::sync::DeltaFileEvent::Removed(path) => {
-                                if !crate::graph_backend::helpers::is_noise_path(&path) {
-                                    let _ = backend.remove_file_delta(&path, &root_buf);
-                                }
+                        }
+                        crate::sync::DeltaFileEvent::Removed(path) => {
+                            if !is_noise_path_with_root(&path, Some(&root_buf)) {
+                                let _ = backend.remove_file_delta(&path, &root_buf);
                             }
                         }
                     }
@@ -1153,4 +1260,3 @@ impl Drop for LiveWatcherHandle {
         let _ = self.stop_tx.send(());
     }
 }
-

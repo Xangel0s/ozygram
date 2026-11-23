@@ -28,8 +28,8 @@ fn path_in_root(root: &str, segments: &[&str]) -> String {
 
 #[tokio::test]
 async fn test_e2e_graph_summary() {
-    let db_path = format!("{}/test_e2e_summary.db", std::env::temp_dir().to_string_lossy());
-    let _ = std::fs::remove_file(&db_path);
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("test_e2e_summary.db").to_string_lossy().to_string();
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
@@ -49,14 +49,12 @@ async fn test_e2e_graph_summary() {
 
     assert!(summary.file_count > 0, "should find at least one file in the project");
     assert!(summary.function_count > 0, "should find at least one function");
-
-    std::fs::remove_file(&db_path).ok();
 }
 
 #[tokio::test]
 async fn test_e2e_analyze_impact_on_core() {
-    let db_path = format!("{}/test_e2e_impact.db", std::env::temp_dir().to_string_lossy());
-    let _ = std::fs::remove_file(&db_path);
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("test_e2e_impact.db").to_string_lossy().to_string();
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
@@ -77,14 +75,12 @@ async fn test_e2e_analyze_impact_on_core() {
     let impacts2 = backend.analyze_impact(&core_src, 3);
     let total_lessons: i64 = impacts2.iter().map(|e| e.lesson_count).sum();
     eprintln!("  -> total lesson count across dependents: {total_lessons}");
-
-    std::fs::remove_file(&db_path).ok();
 }
 
 #[tokio::test]
 async fn test_e2e_file_context() {
-    let db_path = format!("{}/test_e2e_context.db", std::env::temp_dir().to_string_lossy());
-    let _ = std::fs::remove_file(&db_path);
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("test_e2e_context.db").to_string_lossy().to_string();
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
@@ -105,14 +101,12 @@ async fn test_e2e_file_context() {
 
     assert_eq!(ctx.language, "Rust");
     assert!(ctx.functions.len() >= 5, "graph_backend.rs should have many functions (found {})", ctx.functions.len());
-
-    std::fs::remove_file(&db_path).ok();
 }
 
 #[tokio::test]
 async fn test_e2e_record_lesson_and_history() {
-    let db_path = format!("{}/test_e2e_lesson.db", std::env::temp_dir().to_string_lossy());
-    let _ = std::fs::remove_file(&db_path);
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("test_e2e_lesson.db").to_string_lossy().to_string();
 
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     let root = workspace_root();
@@ -130,6 +124,29 @@ async fn test_e2e_record_lesson_and_history() {
     }
 
     assert_eq!(history.len(), 2, "should have 2 lessons");
+}
 
-    std::fs::remove_file(&db_path).ok();
+#[tokio::test]
+async fn test_regression_instances_do_not_share_engrams_in_independent_tempdirs() {
+    let dir1 = tempfile::tempdir().unwrap();
+    let dir2 = tempfile::tempdir().unwrap();
+
+    let db_path1 = dir1.path().join("db1.db").to_string_lossy().to_string();
+    let db_path2 = dir2.path().join("db2.db").to_string_lossy().to_string();
+
+    let b1 = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path1)).unwrap();
+    let b2 = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path2)).unwrap();
+
+    b1.engram_store.update_file_incremental("test1.rs", vec![]);
+    b2.engram_store.update_file_incremental("test2.rs", vec![]);
+
+    b1.engram_store.compact_and_persist().unwrap();
+    b2.engram_store.compact_and_persist().unwrap();
+
+    let rkyv1 = dir1.path().join(ozymem_core::ENGRAM_FILE);
+    let rkyv2 = dir2.path().join(ozymem_core::ENGRAM_FILE);
+
+    assert!(rkyv1.exists(), "rkyv1 must exist in dir1");
+    assert!(rkyv2.exists(), "rkyv2 must exist in dir2");
+    assert_ne!(rkyv1, rkyv2, "instances in separate tempdirs must never share storage paths");
 }

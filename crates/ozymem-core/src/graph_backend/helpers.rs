@@ -1,12 +1,12 @@
-use rusqlite::Connection;
-use crate::graph_backend::types::{OZYMEM_DIR, MEMORY_DB};
+use crate::graph_backend::types::Inner;
+use crate::graph_backend::types::{MEMORY_DB, OZYMEM_DIR};
 use anyhow::{Context, Result};
+use ozymem_parser::SupportedLanguage;
 use rusqlite::params;
+use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use sha2::{Digest, Sha256};
-use ozymem_parser::SupportedLanguage;
-use crate::graph_backend::types::Inner;
 
 pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
     let s = path.to_string_lossy();
@@ -42,7 +42,15 @@ pub fn resolve_project_db_path(project_path: &Path) -> Result<PathBuf> {
 pub fn extract_prohibited_terms(rule_text: &str) -> Vec<String> {
     let mut terms = Vec::new();
     let lower = rule_text.to_lowercase();
-    for trigger in &["never use ", "never ", "do not use ", "do not ", "prohibited ", "evitar ", "forbidden "] {
+    for trigger in &[
+        "never use ",
+        "never ",
+        "do not use ",
+        "do not ",
+        "prohibited ",
+        "evitar ",
+        "forbidden ",
+    ] {
         if let Some(pos) = lower.find(trigger) {
             let rest = &lower[pos + trigger.len()..];
             let clause = rest.split([',', '.', ';']).next().unwrap_or(rest);
@@ -50,7 +58,26 @@ pub fn extract_prohibited_terms(rule_text: &str) -> Vec<String> {
             let clause = clause.split("instead").next().unwrap_or(clause);
             for word in clause.split(|c: char| !c.is_alphanumeric() && c != '_') {
                 let w = word.trim();
-                if w.len() >= 2 && !matches!(w, "the" | "a" | "an" | "for" | "to" | "in" | "on" | "with" | "and" | "or" | "use" | "using" | "rule" | "standard" | "point") {
+                if w.len() >= 2
+                    && !matches!(
+                        w,
+                        "the"
+                            | "a"
+                            | "an"
+                            | "for"
+                            | "to"
+                            | "in"
+                            | "on"
+                            | "with"
+                            | "and"
+                            | "or"
+                            | "use"
+                            | "using"
+                            | "rule"
+                            | "standard"
+                            | "point"
+                    )
+                {
                     terms.push(w.to_string());
                 }
             }
@@ -182,59 +209,83 @@ pub fn mark_stale_lessons(
     Ok(marked)
 }
 
-
 pub fn is_noise_dir(path: &Path) -> bool {
-    if !path.is_dir() {
-        return false;
-    }
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        matches!(
-            name,
-            "target"
-                | "node_modules"
-                | ".git"
-                | ".svn"
-                | "__pycache__"
-                | ".ozymem"
-                | "build"
-                | "dist"
-                | ".next"
-                | ".cache"
-                | "vendor"
-                | "bower_components"
-                | ".idea"
-                | ".vscode"
-                | ".venv"
-                | "venv"
-                | "env"
-                | ".tox"
-                | "scratch"
-                | ".supabase"
-                | ".gemini"
-                | ".turbo"
-                | "coverage"
-                | ".output"
-                | ".fastembed_cache"
-                | "cache"
-                | ".onnx"
-        )
+        is_noise_dir_name(name)
     } else {
         false
     }
 }
 
-/// Returns true if the path or any of its parent components is considered noise,
+pub fn is_noise_dir_name(name: &str) -> bool {
+    matches!(
+        name,
+        "target"
+            | "node_modules"
+            | ".git"
+            | ".svn"
+            | "__pycache__"
+            | ".ozymem"
+            | "build"
+            | "dist"
+            | ".next"
+            | ".cache"
+            | "vendor"
+            | "bower_components"
+            | ".idea"
+            | ".vscode"
+            | ".venv"
+            | "venv"
+            | "env"
+            | ".tox"
+            | "scratch"
+            | ".supabase"
+            | ".gemini"
+            | ".turbo"
+            | "coverage"
+            | ".output"
+            | ".fastembed_cache"
+            | "cache"
+            | ".onnx"
+    )
+}
+
+/// Returns true if the path or any of its parent components within the workspace is considered noise,
 /// a database artifact, lockfile, cache, or temporary file.
 pub fn is_noise_path(path: &Path) -> bool {
-    for ancestor in path.ancestors() {
-        if is_noise_dir(ancestor) {
-            return true;
+    is_noise_path_with_root(path, None)
+}
+
+/// Returns true if the path or any of its parent components within the specified `project_root` is considered noise.
+/// If `project_root` is provided, only parent directories relative to `project_root` are evaluated.
+pub fn is_noise_path_with_root(path: &Path, project_root: Option<&Path>) -> bool {
+    if let Some(root) = project_root {
+        if let Ok(rel) = path.strip_prefix(root) {
+            for ancestor in rel.ancestors() {
+                if ancestor.as_os_str().is_empty() || ancestor == rel {
+                    continue;
+                }
+                if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
+                    if is_noise_dir_name(name) {
+                        return true;
+                    }
+                }
+            }
+        } else if let Some(parent) = path.parent() {
+            if let Some(name) = parent.file_name().and_then(|n| n.to_str()) {
+                if is_noise_dir_name(name) {
+                    return true;
+                }
+            }
+        }
+    } else if let Some(parent) = path.parent() {
+        if let Some(name) = parent.file_name().and_then(|n| n.to_str()) {
+            if is_noise_dir_name(name) {
+                return true;
+            }
         }
     }
-    let s = path.to_string_lossy();
-    if s.contains(".git") || s.contains(".ozymem") || s.contains("target") || s.contains("node_modules") {
-        return true;
-    }
+
     let file_name = match path.file_name().and_then(|n| n.to_str()) {
         Some(name) => name.to_lowercase(),
         None => return false,
@@ -249,7 +300,14 @@ pub fn is_noise_path(path: &Path) -> bool {
     {
         return true;
     }
-    !matches!(crate::sync::check_noise_or_huge_file(path, crate::sync::DEFAULT_MAX_DELTA_FILE_BYTES), crate::sync::NoiseFilterDecision::Process)
+    !matches!(
+        crate::sync::check_noise_or_huge_file_with_root(
+            path,
+            crate::sync::DEFAULT_MAX_DELTA_FILE_BYTES,
+            project_root
+        ),
+        crate::sync::NoiseFilterDecision::Process
+    )
 }
 
 /// Load ignore patterns from `.ozymemignore` and `.gitignore` in the project root.
@@ -279,10 +337,14 @@ pub fn path_matches_ignore(path: &Path, patterns: &[String], project_root: &Path
     let rel_lower = rel.to_lowercase();
 
     // Source root immunity: files inside src/, app/, lib/, components/ should never be ignored by bare words like "data"
-    let in_source_root = rel_lower.starts_with("src/") || rel_lower.contains("/src/")
-        || rel_lower.starts_with("app/") || rel_lower.contains("/app/")
-        || rel_lower.starts_with("lib/") || rel_lower.contains("/lib/")
-        || rel_lower.starts_with("components/") || rel_lower.contains("/components/");
+    let in_source_root = rel_lower.starts_with("src/")
+        || rel_lower.contains("/src/")
+        || rel_lower.starts_with("app/")
+        || rel_lower.contains("/app/")
+        || rel_lower.starts_with("lib/")
+        || rel_lower.contains("/lib/")
+        || rel_lower.starts_with("components/")
+        || rel_lower.contains("/components/");
 
     for p in patterns {
         let pat = p.trim().replace('\\', "/");
@@ -390,17 +452,24 @@ pub fn extract_module_id(path: &str, workspace_root: &str) -> String {
     if !ws.is_empty() && normalized.starts_with(&ws) {
         normalized = normalized[ws.len()..].trim_start_matches('/').to_string();
     }
-    normalized = normalized.trim_start_matches("./").trim_start_matches('/').to_string();
-    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    normalized = normalized
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_string();
+    let parts: Vec<&str> = normalized
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
     if parts.is_empty() || parts.len() == 1 {
         return "root".to_string();
     }
 
     let mut start_idx = 0;
     let p0 = parts[0].to_lowercase();
-    if ["crates", "packages", "apps", "services", "libs", "modules"].contains(&p0.as_str()) && parts.len() > 1 {
-        start_idx = 1;
-    } else if ["backend", "frontend", "api"].contains(&p0.as_str()) && parts.len() > 2 {
+    if (["crates", "packages", "apps", "services", "libs", "modules"].contains(&p0.as_str())
+        && parts.len() > 1)
+        || (["backend", "frontend", "api"].contains(&p0.as_str()) && parts.len() > 2)
+    {
         start_idx = 1;
     }
 
@@ -427,7 +496,11 @@ pub fn infer_module_responsibility(mod_id: &str) -> String {
         "User authentication, sessions, tokens, and access control".to_string()
     } else if lower.contains("model") || lower.contains("schema") || lower.contains("entity") {
         "Data structures, persistence entities, and database schema mappings".to_string()
-    } else if lower.contains("router") || lower.contains("route") || lower.contains("endpoint") || lower.contains("api") {
+    } else if lower.contains("router")
+        || lower.contains("route")
+        || lower.contains("endpoint")
+        || lower.contains("api")
+    {
         "HTTP/REST route handlers, request validation, and endpoint dispatch".to_string()
     } else if lower.contains("service") || lower.contains("business") || lower.contains("usecase") {
         "Core domain logic, transaction orchestrations, and business workflows".to_string()
@@ -449,4 +522,3 @@ pub fn infer_module_responsibility(mod_id: &str) -> String {
         format!("Domain operations and subroutines for {}", mod_id)
     }
 }
-

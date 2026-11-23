@@ -1,9 +1,9 @@
-use ozymem_core::McpBackend;
-use ozymem_core::graph_backend::{GraphBackend, SqliteBackend};
 use ozymem_core::graph_backend::{
     auto_manage_gitignore, legacy_global_db_path, mark_stale_lessons, resolve_project_db_path,
 };
-use rusqlite::{Connection, params};
+use ozymem_core::graph_backend::{GraphBackend, SqliteBackend};
+use ozymem_core::McpBackend;
+use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
@@ -478,68 +478,68 @@ async fn test_p1_record_lesson_updates_analyze_impact() {
     let backend = ozymem_core::graph_backend::GraphBackend::open(Some(&db_path)).unwrap();
     backend.full_scan(&root, None).unwrap();
 
-    // main.rs → lib.rs (outgoing edge via `mod lib;`).
-    // analyze_impact on main_path finds lib.rs at depth 1.
+    // main.rs → lib.rs (main imports lib).
+    // analyze_impact on lib_path finds dependent caller main.rs at depth 1 (reverse BFS).
     let main_path = full_path(&root, "main.rs");
     let lib_path = full_path(&root, "lib.rs");
 
-    let impacts = backend.analyze_impact(&main_path, 3);
-    let lib_impact = impacts
+    let impacts = backend.analyze_impact(&lib_path, 3);
+    let main_impact = impacts
         .iter()
-        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
+        .find(|e| e.file_path.ends_with("\\main.rs") || e.file_path.ends_with("/main.rs"));
     assert!(
-        lib_impact.is_some(),
-        "analyze_impact(main) should find lib.rs"
+        main_impact.is_some(),
+        "analyze_impact(lib) should find dependent caller main.rs"
     );
     assert_eq!(
-        lib_impact.unwrap().lesson_count,
+        main_impact.unwrap().lesson_count,
         0,
         "lesson_count should start at 0"
     );
 
-    // Record a lesson on main.rs — lesson_count stays 0 on lib (lesson on main, not lib)
-    backend
-        .record_lesson(&main_path, Some("main"), "panic", "handle error")
-        .await
-        .unwrap();
-    let impacts2 = backend.analyze_impact(&main_path, 3);
-    let lib2 = impacts2
-        .iter()
-        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
-    assert_eq!(
-        lib2.unwrap().lesson_count,
-        0,
-        "lesson on main should not affect lib count"
-    );
-
-    // Record lesson on lib.rs
+    // Record a lesson on lib.rs — lesson_count stays 0 on main (lesson on lib, not main)
     backend
         .record_lesson(&lib_path, Some("add"), "overflow", "use checked_add")
         .await
         .unwrap();
-    let impacts3 = backend.analyze_impact(&main_path, 3);
-    let lib3 = impacts3
+    let impacts2 = backend.analyze_impact(&lib_path, 3);
+    let main2 = impacts2
         .iter()
-        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
+        .find(|e| e.file_path.ends_with("\\main.rs") || e.file_path.ends_with("/main.rs"));
     assert_eq!(
-        lib3.unwrap().lesson_count,
-        1,
-        "lesson on lib should reflect in impact"
+        main2.unwrap().lesson_count,
+        0,
+        "lesson on lib should not affect main count"
     );
 
-    // Second lesson on lib.rs
+    // Record lesson on main.rs
     backend
-        .record_lesson(&lib_path, Some("subtract"), "negative", "use abs")
+        .record_lesson(&main_path, Some("main"), "panic", "handle error")
         .await
         .unwrap();
-    let impacts4 = backend.analyze_impact(&main_path, 3);
-    let lib4 = impacts4
+    let impacts3 = backend.analyze_impact(&lib_path, 3);
+    let main3 = impacts3
         .iter()
-        .find(|e| e.file_path.ends_with("\\lib.rs") || e.file_path.ends_with("/lib.rs"));
+        .find(|e| e.file_path.ends_with("\\main.rs") || e.file_path.ends_with("/main.rs"));
     assert_eq!(
-        lib4.unwrap().lesson_count,
+        main3.unwrap().lesson_count,
+        1,
+        "lesson on main should reflect in impact"
+    );
+
+    // Second lesson on main.rs
+    backend
+        .record_lesson(&main_path, Some("subtract"), "negative", "use abs")
+        .await
+        .unwrap();
+    let impacts4 = backend.analyze_impact(&lib_path, 3);
+    let main4 = impacts4
+        .iter()
+        .find(|e| e.file_path.ends_with("\\main.rs") || e.file_path.ends_with("/main.rs"));
+    assert_eq!(
+        main4.unwrap().lesson_count,
         2,
-        "two lessons on lib should show count=2"
+        "two lessons on main should show count=2"
     );
 
     std::fs::remove_file(&db_path).ok();
@@ -561,9 +561,9 @@ async fn test_p2_scanning_flag_blocks_reload() {
     backend.scanning.store(true, Ordering::SeqCst);
     backend.reload_if_stale();
 
-    let main_path = full_path(&root, "main.rs");
+    let lib_path = full_path(&root, "lib.rs");
     assert!(
-        backend.analyze_impact(&main_path, 3).is_empty(),
+        backend.analyze_impact(&lib_path, 3).is_empty(),
         "reload_if_stale should not scan when scanning=true"
     );
 
@@ -572,7 +572,7 @@ async fn test_p2_scanning_flag_blocks_reload() {
     backend.full_scan(&root, None).unwrap();
 
     assert!(
-        !backend.analyze_impact(&main_path, 3).is_empty(),
+        !backend.analyze_impact(&lib_path, 3).is_empty(),
         "after full_scan, analyze_impact should find results"
     );
 
@@ -593,9 +593,12 @@ async fn test_p5_rebuild_after_file_deletion() {
     let main_path = full_path(&root, "main.rs");
     let lib_path = full_path(&root, "lib.rs");
 
-    // Before deletion: main depends on lib, so analyze_impact(main) finds lib
-    let before = backend.analyze_impact(&main_path, 3);
-    assert!(!before.is_empty(), "main should have dependents");
+    // Before deletion: main depends on lib, so modifying lib impacts main
+    let before = backend.analyze_impact(&lib_path, 3);
+    assert!(
+        !before.is_empty(),
+        "lib should have dependent callers (main)"
+    );
 
     // Delete main.rs and re-scan
     std::fs::remove_file(&main_path).unwrap();
@@ -609,7 +612,7 @@ async fn test_p5_rebuild_after_file_deletion() {
 
     assert!(
         backend.analyze_impact(&lib_path, 3).is_empty(),
-        "lib has no deps, so impact should be empty"
+        "lib has no remaining callers after main is deleted, so impact should be empty"
     );
 
     std::fs::remove_file(&db_path).ok();
@@ -700,6 +703,7 @@ async fn test_edge_noise_dir_exclusion() {
 /// Edge 5: debounce 500ms — second reload_if_stale within the window skips.
 #[tokio::test]
 async fn test_edge_debounce_500ms() {
+    std::env::set_var("OZYMEM_SYNC_RELOAD", "1");
     let dir = TempDir::new().unwrap();
     let root = dir.path().to_string_lossy().to_string();
 
@@ -830,9 +834,13 @@ async fn test_context_for_task_composition() {
     let main_path = full_path(&root, "main.rs");
     let lib_path = full_path(&root, "lib.rs");
 
-    // Record a lesson on lib.rs
+    // Record a lesson on lib.rs and main.rs
     backend
         .record_lesson(&lib_path, Some("add"), "overflow bug", "use checked_add")
+        .await
+        .unwrap();
+    backend
+        .record_lesson(&main_path, Some("main"), "overflow bug", "use checked_add")
         .await
         .unwrap();
 
@@ -858,20 +866,20 @@ async fn test_context_for_task_composition() {
         "main.rs should be an incoming neighbor of lib.rs"
     );
 
-    // 4. analyze_impact — transitive impact from main
-    let impacts = backend.analyze_impact(&main_path, 3);
+    // 4. analyze_impact — transitive impact from lib (callers)
+    let impacts = backend.analyze_impact(&lib_path, 3);
     assert!(
-        impacts.iter().any(|e| e.file_path.contains("lib.rs")),
-        "impact(main) should find lib.rs"
+        impacts.iter().any(|e| e.file_path.contains("main.rs")),
+        "impact(lib) should find main.rs"
     );
-    // The lesson on lib should appear in the impact
-    let lib_impact = impacts
+    // The lesson on main should appear in the impact
+    let main_impact = impacts
         .iter()
-        .find(|e| e.file_path.contains("lib.rs"))
+        .find(|e| e.file_path.contains("main.rs"))
         .unwrap();
     assert_eq!(
-        lib_impact.lesson_count, 1,
-        "lib impact should show lesson count"
+        main_impact.lesson_count, 1,
+        "main impact should show lesson count"
     );
 
     std::fs::remove_file(&db_path).ok();
@@ -1471,10 +1479,10 @@ async fn test_impact_entry_enriched_fields() {
     let backend = GraphBackend::open(Some(&db_path)).unwrap();
     backend.full_scan(&root, None).unwrap();
 
-    let main_path = full_path(&root, "main.rs");
+    let lib_path = full_path(&root, "lib.rs");
 
-    let impacts = backend.analyze_impact(&main_path, 3);
-    assert!(!impacts.is_empty(), "should find at least lib.rs");
+    let impacts = backend.analyze_impact(&lib_path, 3);
+    assert!(!impacts.is_empty(), "should find at least main.rs");
 
     for entry in &impacts {
         assert!(
@@ -1766,14 +1774,26 @@ fn test_is_noise_dir_includes_virtual_envs_and_tool_dirs() {
     let dir = tempfile::tempdir().unwrap();
 
     let noise_names = [
-        ".venv", "venv", "env", ".tox", "scratch",
-        ".supabase", ".gemini", ".turbo", "coverage", ".output",
+        ".venv",
+        "venv",
+        "env",
+        ".tox",
+        "scratch",
+        ".supabase",
+        ".gemini",
+        ".turbo",
+        "coverage",
+        ".output",
     ];
 
     for name in noise_names {
         let p = dir.path().join(name);
         std::fs::create_dir(&p).unwrap();
-        assert!(is_noise_dir(&p), "directory {} should be recognized as noise", name);
+        assert!(
+            is_noise_dir(&p),
+            "directory {} should be recognized as noise",
+            name
+        );
     }
 
     let src = dir.path().join("src");
@@ -1793,11 +1813,19 @@ fn test_passive_capture_sanitizes_noise_and_tables() {
 
     let raw_text = "Done.\n\n## Key Learnings:\n- Normalizar siempre fechas a formato YYYY/MM/DD en backend\n| id | name | value |\n|---|---|---|\n| 1 | test | 123 |\n```typescript\nconst foo = 1;\n```\n- Traceback (most recent call last): File \"main.py\", line 10\n- at Object.<anonymous> (server.js:20:15)\n- Documentar dependencias en plan maestro y validar con tests\n";
 
-    let saved = backend.passive_capture("s2", raw_text, Some("ozymem-test")).unwrap();
+    let saved = backend
+        .passive_capture("s2", raw_text, Some("ozymem-test"))
+        .unwrap();
     // Only the 2 valid conceptual learnings should be captured; table, code block and stacktraces discarded
     assert_eq!(saved.len(), 2);
-    assert_eq!(saved[0].content, "Normalizar siempre fechas a formato YYYY/MM/DD en backend");
-    assert_eq!(saved[1].content, "Documentar dependencias en plan maestro y validar con tests");
+    assert_eq!(
+        saved[0].content,
+        "Normalizar siempre fechas a formato YYYY/MM/DD en backend"
+    );
+    assert_eq!(
+        saved[1].content,
+        "Documentar dependencias en plan maestro y validar con tests"
+    );
 }
 
 #[test]
@@ -1806,52 +1834,62 @@ fn test_exploration_trajectory_lifecycle() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(
-        &dir.path().to_string_lossy(),
-        "Fix authentication token expiry race condition",
-        Some("v1.0.0"),
-    ).unwrap();
+    let traj_id = backend
+        .start_trajectory(
+            &dir.path().to_string_lossy(),
+            "Fix authentication token expiry race condition",
+            Some("v1.0.0"),
+        )
+        .unwrap();
 
     assert!(traj_id.starts_with("traj_"));
 
-    let root_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "ast_query".to_string(),
-        action_payload: "{\"symbol\": \"verify_token\"}".to_string(),
-        observation: "Found function in auth.py:120".to_string(),
-        cost_tokens: Some(150),
-        latency_ms: Some(12),
-        reward_score: Some(1.0),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let root_node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "ast_query".to_string(),
+            action_payload: "{\"symbol\": \"verify_token\"}".to_string(),
+            observation: "Found function in auth.py:120".to_string(),
+            cost_tokens: Some(150),
+            latency_ms: Some(12),
+            reward_score: Some(1.0),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     assert_eq!(root_node.depth, 0);
 
-    let child_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root_node.id.clone()),
-        action_type: "edit_code".to_string(),
-        action_payload: "{\"file\": \"auth.py\", \"diff\": \"+ lock.acquire()\"}".to_string(),
-        observation: "Diff applied cleanly. Tests passing.".to_string(),
-        cost_tokens: Some(320),
-        latency_ms: Some(45),
-        reward_score: Some(10.0),
-        is_solution: Some(true),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let child_node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root_node.id.clone()),
+            action_type: "edit_code".to_string(),
+            action_payload: "{\"file\": \"auth.py\", \"diff\": \"+ lock.acquire()\"}".to_string(),
+            observation: "Diff applied cleanly. Tests passing.".to_string(),
+            cost_tokens: Some(320),
+            latency_ms: Some(45),
+            reward_score: Some(10.0),
+            is_solution: Some(true),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     assert_eq!(child_node.depth, 1);
     assert_eq!(child_node.parent_id, Some(root_node.id));
 
-    backend.complete_trajectory(&traj_id, "completed", Some(10.0)).unwrap();
+    backend
+        .complete_trajectory(&traj_id, "completed", Some(10.0))
+        .unwrap();
 
-    let list = backend.list_trajectories(Some(&dir.path().to_string_lossy()), 10).unwrap();
+    let list = backend
+        .list_trajectories(Some(&dir.path().to_string_lossy()), 10)
+        .unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, traj_id);
     assert_eq!(list[0].status, "completed");
@@ -1865,59 +1903,67 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(
-        &dir.path().to_string_lossy(),
-        "Refactor API caching layer",
-        Some("v1.0.0"),
-    ).unwrap();
+    let traj_id = backend
+        .start_trajectory(
+            &dir.path().to_string_lossy(),
+            "Refactor API caching layer",
+            Some("v1.0.0"),
+        )
+        .unwrap();
 
     // 1. Root node
-    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "root".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "Initial state".to_string(),
-        cost_tokens: Some(0),
-        latency_ms: Some(0),
-        reward_score: Some(0.0),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let root = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "root".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "Initial state".to_string(),
+            cost_tokens: Some(0),
+            latency_ms: Some(0),
+            reward_score: Some(0.0),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // 2. Child branch 1: successful
-    let child1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "redis_cache".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "Speedup 5x".to_string(),
-        cost_tokens: Some(100),
-        latency_ms: Some(20),
-        reward_score: Some(8.0),
-        is_solution: Some(true),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let child1 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "redis_cache".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "Speedup 5x".to_string(),
+            cost_tokens: Some(100),
+            latency_ms: Some(20),
+            reward_score: Some(8.0),
+            is_solution: Some(true),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // 3. Child branch 2: failed / pruned
-    let _child2 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "in_memory_map".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "Memory leak detected".to_string(),
-        cost_tokens: Some(120),
-        latency_ms: Some(15),
-        reward_score: Some(-5.0),
-        is_solution: Some(false),
-        is_pruned: Some(true),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let _child2 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "in_memory_map".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "Memory leak detected".to_string(),
+            cost_tokens: Some(120),
+            latency_ms: Some(15),
+            reward_score: Some(-5.0),
+            is_solution: Some(false),
+            is_pruned: Some(true),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Retrieve tree
     let tree = backend.get_trajectory_tree(&traj_id).unwrap();
@@ -1929,8 +1975,15 @@ fn test_exploration_tree_mcts_backprop_and_uct() {
     assert_eq!(root_node.node.visit_count, 3); // 1 initial + 2 backprop increments
 
     // UCT score for Child 1 (reward 8.0) must be higher than Child 2 (reward -5.0)
-    let c1 = root_node.children.iter().find(|c| c.node.id == child1.id).unwrap();
-    assert!(c1.uct_score > 5.0, "UCT score should be high for positive reward");
+    let c1 = root_node
+        .children
+        .iter()
+        .find(|c| c.node.id == child1.id)
+        .unwrap();
+    assert!(
+        c1.uct_score > 5.0,
+        "UCT score should be high for positive reward"
+    );
 }
 
 #[test]
@@ -1939,32 +1992,34 @@ fn test_exploration_observation_truncation_guard() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(
-        &dir.path().to_string_lossy(),
-        "Test huge logs guard",
-        None,
-    ).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Test huge logs guard", None)
+        .unwrap();
 
     // Create a huge log string of 64 KB
     let huge_observation = "A".repeat(64 * 1024);
 
-    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id,
-        parent_id: None,
-        action_type: "run_build".to_string(),
-        action_payload: "cargo build --all".to_string(),
-        observation: huge_observation,
-        cost_tokens: None,
-        latency_ms: None,
-        reward_score: None,
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id,
+            parent_id: None,
+            action_type: "run_build".to_string(),
+            action_payload: "cargo build --all".to_string(),
+            observation: huge_observation,
+            cost_tokens: None,
+            latency_ms: None,
+            reward_score: None,
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Verification: Observation must be truncated to MAX_OBSERVATION_BYTES + notice
-    assert!(node.observation.contains("[truncated to 32KB by Ozymem Dream-RSI guard]"));
+    assert!(node
+        .observation
+        .contains("[truncated to 32KB by Ozymem Dream-RSI guard]"));
     assert!(node.observation.len() <= 33 * 1024);
 }
 
@@ -1974,21 +2029,25 @@ fn test_exploration_cascade_delete() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Task to delete", None).unwrap();
-    backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "dummy".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "ok".to_string(),
-        cost_tokens: None,
-        latency_ms: None,
-        reward_score: None,
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Task to delete", None)
+        .unwrap();
+    backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "dummy".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "ok".to_string(),
+            cost_tokens: None,
+            latency_ms: None,
+            reward_score: None,
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Delete
     backend.delete_trajectory(&traj_id).unwrap();
@@ -2004,59 +2063,67 @@ fn test_exploration_auto_parenting_chain() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Auto-parenting task", None).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Auto-parenting task", None)
+        .unwrap();
 
     // Node 1: No parent specified -> becomes root (depth 0)
-    let n1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "step_1".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "step 1 ok".to_string(),
-        cost_tokens: Some(100),
-        latency_ms: Some(50),
-        reward_score: Some(1.0),
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let n1 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "step_1".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "step 1 ok".to_string(),
+            cost_tokens: Some(100),
+            latency_ms: Some(50),
+            reward_score: Some(1.0),
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
     assert_eq!(n1.depth, 0);
     assert_eq!(n1.parent_id, None);
 
     // Node 2: No parent specified -> automatically links to n1 (depth 1)
-    let n2 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "step_2".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "step 2 ok".to_string(),
-        cost_tokens: Some(150),
-        latency_ms: Some(80),
-        reward_score: Some(2.0),
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let n2 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "step_2".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "step 2 ok".to_string(),
+            cost_tokens: Some(150),
+            latency_ms: Some(80),
+            reward_score: Some(2.0),
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
     assert_eq!(n2.depth, 1);
     assert_eq!(n2.parent_id, Some(n1.id.clone()));
 
     // Node 3: No parent specified -> automatically links to n2 (depth 2)
-    let n3 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "step_3".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "step 3 ok".to_string(),
-        cost_tokens: Some(200),
-        latency_ms: Some(110),
-        reward_score: Some(3.0),
-        is_solution: Some(true),
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let n3 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "step_3".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "step 3 ok".to_string(),
+            cost_tokens: Some(200),
+            latency_ms: Some(110),
+            reward_score: Some(3.0),
+            is_solution: Some(true),
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
     assert_eq!(n3.depth, 2);
     assert_eq!(n3.parent_id, Some(n2.id.clone()));
 
@@ -2073,7 +2140,9 @@ fn test_exploration_record_batch() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Batch task", None).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Batch task", None)
+        .unwrap();
 
     let steps = vec![
         ozymem_core::graph_backend::RecordNodeParams {
@@ -2088,7 +2157,7 @@ fn test_exploration_record_batch() {
             is_solution: None,
             is_pruned: None,
             rollback_snapshot: None,
-        execution_receipt: None,
+            execution_receipt: None,
         },
         ozymem_core::graph_backend::RecordNodeParams {
             trajectory_id: traj_id.clone(),
@@ -2102,7 +2171,7 @@ fn test_exploration_record_batch() {
             is_solution: None,
             is_pruned: None,
             rollback_snapshot: None,
-        execution_receipt: None,
+            execution_receipt: None,
         },
         ozymem_core::graph_backend::RecordNodeParams {
             trajectory_id: traj_id.clone(),
@@ -2116,14 +2185,16 @@ fn test_exploration_record_batch() {
             is_solution: Some(true),
             is_pruned: None,
             rollback_snapshot: None,
-        execution_receipt: None,
+            execution_receipt: None,
         },
     ];
 
-    let nodes = backend.record_exploration_batch(ozymem_core::graph_backend::RecordBatchParams {
-        trajectory_id: traj_id.clone(),
-        steps,
-    }).unwrap();
+    let nodes = backend
+        .record_exploration_batch(ozymem_core::graph_backend::RecordBatchParams {
+            trajectory_id: traj_id.clone(),
+            steps,
+        })
+        .unwrap();
 
     assert_eq!(nodes.len(), 3);
     assert_eq!(nodes[0].depth, 0);
@@ -2139,23 +2210,29 @@ fn test_exploration_objective_reward_grounding() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Hallucination test", None).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Hallucination test", None)
+        .unwrap();
 
     // Agent optimistically claims reward 1.0, but observation says command failed with exit code: 1
-    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id,
-        parent_id: None,
-        action_type: "run_test".to_string(),
-        action_payload: "{\"test\": \"integration\"}".to_string(),
-        observation: "Error: command failed with exit code: 1 (TypeError: undefined is not a function)".to_string(),
-        cost_tokens: Some(300),
-        latency_ms: Some(150),
-        reward_score: Some(1.0),
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id,
+            parent_id: None,
+            action_type: "run_test".to_string(),
+            action_payload: "{\"test\": \"integration\"}".to_string(),
+            observation:
+                "Error: command failed with exit code: 1 (TypeError: undefined is not a function)"
+                    .to_string(),
+            cost_tokens: Some(300),
+            latency_ms: Some(150),
+            reward_score: Some(1.0),
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Objective override should have clamped the reward to -1.0
     assert_eq!(node.reward_score, -1.0);
@@ -2169,55 +2246,63 @@ fn test_exploration_diagnose_trajectory() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Diagnose task", None).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Diagnose task", None)
+        .unwrap();
 
     // Node 1: Root
-    let n1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "init".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "init ok".to_string(),
-        cost_tokens: Some(100),
-        latency_ms: Some(50),
-        reward_score: Some(0.0),
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let n1 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "init".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "init ok".to_string(),
+            cost_tokens: Some(100),
+            latency_ms: Some(50),
+            reward_score: Some(0.0),
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Node 2: Slow bottleneck node (latency 4500ms > 3000ms) and unpruned negative reward
-    backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(n1.id.clone()),
-        action_type: "slow_query".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "timed out waiting for lock".to_string(),
-        cost_tokens: Some(500),
-        latency_ms: Some(4500),
-        reward_score: Some(-2.0),
-        is_solution: None,
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(n1.id.clone()),
+            action_type: "slow_query".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "timed out waiting for lock".to_string(),
+            cost_tokens: Some(500),
+            latency_ms: Some(4500),
+            reward_score: Some(-2.0),
+            is_solution: None,
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Node 3: Solution node
-    backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(n1.id.clone()),
-        action_type: "fix_index".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "index created, 10ms query".to_string(),
-        cost_tokens: Some(200),
-        latency_ms: Some(100),
-        reward_score: Some(5.0),
-        is_solution: Some(true),
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(n1.id.clone()),
+            action_type: "fix_index".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "index created, 10ms query".to_string(),
+            cost_tokens: Some(200),
+            latency_ms: Some(100),
+            reward_score: Some(5.0),
+            is_solution: Some(true),
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     let diag = backend.diagnose_trajectory(&traj_id).unwrap();
     assert_eq!(diag.total_steps, 3);
@@ -2237,27 +2322,40 @@ fn test_exploration_auto_pruning_on_failure() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Auto pruning task", None).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Auto pruning task", None)
+        .unwrap();
 
     // Node with hard test failure signal: should auto-prune
-    let failed_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "run_test".to_string(),
-        action_payload: "cargo test".to_string(),
-        observation: "failures: 3 tests failed".to_string(),
-        cost_tokens: Some(150),
-        latency_ms: Some(120),
-        reward_score: Some(1.0), // Intentó auto-asignarse recompensa positiva pero falló el test
-        is_solution: None,
-        is_pruned: None, // No especificado -> auto-poda
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let failed_node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "run_test".to_string(),
+            action_payload: "cargo test".to_string(),
+            observation: "failures: 3 tests failed".to_string(),
+            cost_tokens: Some(150),
+            latency_ms: Some(120),
+            reward_score: Some(1.0), // Intentó auto-asignarse recompensa positiva pero falló el test
+            is_solution: None,
+            is_pruned: None, // No especificado -> auto-poda
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
-    assert!(failed_node.is_pruned, "El nodo con fallos en test debió ser podado automáticamente");
-    assert!(failed_node.reward_score < 0.0, "La recompensa debió ser penalizada");
-    assert!(failed_node.action_payload.contains("auto_pruned"), "El payload debió registrar auto_pruned");
+    assert!(
+        failed_node.is_pruned,
+        "El nodo con fallos en test debió ser podado automáticamente"
+    );
+    assert!(
+        failed_node.reward_score < 0.0,
+        "La recompensa debió ser penalizada"
+    );
+    assert!(
+        failed_node.action_payload.contains("auto_pruned"),
+        "El payload debió registrar auto_pruned"
+    );
 }
 
 #[test]
@@ -2266,39 +2364,45 @@ fn test_exploration_recommended_resume_node() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(&dir.path().to_string_lossy(), "Resume task", None).unwrap();
+    let traj_id = backend
+        .start_trajectory(&dir.path().to_string_lossy(), "Resume task", None)
+        .unwrap();
 
     // Root node
-    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "init".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "ok".to_string(),
-        cost_tokens: Some(50),
-        latency_ms: Some(20),
-        reward_score: Some(0.5),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let root = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "init".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "ok".to_string(),
+            cost_tokens: Some(50),
+            latency_ms: Some(20),
+            reward_score: Some(0.5),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Leaf node: highest value active leaf
-    let leaf = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "explore_promising".to_string(),
-        action_payload: "{}".to_string(),
-        observation: "great progress".to_string(),
-        cost_tokens: Some(60),
-        latency_ms: Some(30),
-        reward_score: Some(2.5),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let leaf = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "explore_promising".to_string(),
+            action_payload: "{}".to_string(),
+            observation: "great progress".to_string(),
+            cost_tokens: Some(60),
+            latency_ms: Some(30),
+            reward_score: Some(2.5),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     let resume_node = backend.get_recommended_resume_node(&traj_id).unwrap();
     assert!(resume_node.is_some());
@@ -2314,59 +2418,67 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(
-        &dir.path().to_string_lossy(),
-        "Investigar bug de autocompletado en laboratorio",
-        Some("v1.2.0"),
-    ).unwrap();
+    let traj_id = backend
+        .start_trajectory(
+            &dir.path().to_string_lossy(),
+            "Investigar bug de autocompletado en laboratorio",
+            Some("v1.2.0"),
+        )
+        .unwrap();
 
     // 1. Root hypothesis node
-    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "read_router".to_string(),
-        action_payload: "{\"file\": \"ensayo_especial.py\"}".to_string(),
-        observation: "Endpoints detectados".to_string(),
-        cost_tokens: Some(50),
-        latency_ms: Some(10),
-        reward_score: Some(0.5),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let root = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "read_router".to_string(),
+            action_payload: "{\"file\": \"ensayo_especial.py\"}".to_string(),
+            observation: "Endpoints detectados".to_string(),
+            cost_tokens: Some(50),
+            latency_ms: Some(10),
+            reward_score: Some(0.5),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // 2. Pruned branch (failed hypothesis)
-    let _pruned = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "edit_schema".to_string(),
-        action_payload: "{\"patch\": \"drop column\"}".to_string(),
-        observation: "Regression: schema mismatch".to_string(),
-        cost_tokens: Some(100),
-        latency_ms: Some(25),
-        reward_score: Some(-3.0),
-        is_solution: Some(false),
-        is_pruned: Some(true),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let _pruned = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "edit_schema".to_string(),
+            action_payload: "{\"patch\": \"drop column\"}".to_string(),
+            observation: "Regression: schema mismatch".to_string(),
+            cost_tokens: Some(100),
+            latency_ms: Some(25),
+            reward_score: Some(-3.0),
+            is_solution: Some(false),
+            is_pruned: Some(true),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // 3. Solution branch
-    let _solution = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "fix_mapping".to_string(),
-        action_payload: "{\"target\": \"281-26-ING\"}".to_string(),
-        observation: "Tests passing 100%".to_string(),
-        cost_tokens: Some(80),
-        latency_ms: Some(20),
-        reward_score: Some(10.0),
-        is_solution: Some(true),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let _solution = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "fix_mapping".to_string(),
+            action_payload: "{\"target\": \"281-26-ING\"}".to_string(),
+            observation: "Tests passing 100%".to_string(),
+            cost_tokens: Some(80),
+            latency_ms: Some(20),
+            reward_score: Some(10.0),
+            is_solution: Some(true),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
 
@@ -2384,7 +2496,10 @@ fn test_exploration_render_mermaid_tree_no_emojis_and_alert_tags() {
     // Verificación estricta: NO debe contener emojis
     let forbidden_emojis = ["❌", "🏆", "🔵", "⚠️", "🚨", "✅", "🔥", "🎯"];
     for emoji in forbidden_emojis {
-        assert!(!mermaid.contains(emoji), "Mermaid no debe contener emojis: {emoji}");
+        assert!(
+            !mermaid.contains(emoji),
+            "Mermaid no debe contener emojis: {emoji}"
+        );
     }
 }
 
@@ -2394,72 +2509,105 @@ fn test_exploration_auto_reward_and_false_solution_validation() {
     let db = dir.path().join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(
-        &dir.path().to_string_lossy(),
-        "Auto-reward validation test",
-        None,
-    ).unwrap();
+    let traj_id = backend
+        .start_trajectory(
+            &dir.path().to_string_lossy(),
+            "Auto-reward validation test",
+            None,
+        )
+        .unwrap();
 
     // 1. Auto-reward +1.0 ante éxito en run_test sin reward manual
-    let test_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "run_test".to_string(),
-        action_payload: "cargo test --lib".to_string(),
-        observation: "test result: ok. 12 passed; 0 failed; exit code: 0".to_string(),
-        cost_tokens: Some(100),
-        latency_ms: Some(50),
-        reward_score: None, // Auto-Reward
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let test_node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "run_test".to_string(),
+            action_payload: "cargo test --lib".to_string(),
+            observation: "test result: ok. 12 passed; 0 failed; exit code: 0".to_string(),
+            cost_tokens: Some(100),
+            latency_ms: Some(50),
+            reward_score: None, // Auto-Reward
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
-    assert_eq!(test_node.reward_score, 1.0, "Debe asignar +1.0 ante éxito en tests sin reward manual");
+    assert_eq!(
+        test_node.reward_score, 1.0,
+        "Debe asignar +1.0 ante éxito en tests sin reward manual"
+    );
     assert!(!test_node.is_pruned, "No debe estar podado");
-    assert!(test_node.action_payload.contains("[OBJECTIVE: TEST_PASSED]"));
+    assert!(test_node
+        .action_payload
+        .contains("[OBJECTIVE: TEST_PASSED]"));
 
     // 2. Auto-reward -0.8 y auto-poda ante error de sintaxis/compilación sin reward manual
-    let syntax_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(test_node.id.clone()),
-        action_type: "edit_code".to_string(),
-        action_payload: "patch src/lib.rs".to_string(),
-        observation: "error[E0425]: cannot find value 'x' in this scope\ncould not compile `core`".to_string(),
-        cost_tokens: Some(80),
-        latency_ms: Some(40),
-        reward_score: None, // Auto-Reward
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let syntax_node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(test_node.id.clone()),
+            action_type: "edit_code".to_string(),
+            action_payload: "patch src/lib.rs".to_string(),
+            observation:
+                "error[E0425]: cannot find value 'x' in this scope\ncould not compile `core`"
+                    .to_string(),
+            cost_tokens: Some(80),
+            latency_ms: Some(40),
+            reward_score: None, // Auto-Reward
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
-    assert_eq!(syntax_node.reward_score, -0.8, "Debe penalizar con -0.8 ante error de sintaxis/compilación");
-    assert!(syntax_node.is_pruned, "Debe podar automáticamente ante error de sintaxis");
+    assert_eq!(
+        syntax_node.reward_score, -0.8,
+        "Debe penalizar con -0.8 ante error de sintaxis/compilación"
+    );
+    assert!(
+        syntax_node.is_pruned,
+        "Debe podar automáticamente ante error de sintaxis"
+    );
     assert!(syntax_node.action_payload.contains("[ALERT: SYNTAX_ERROR]"));
 
     // 3. Rechazo de solución falsa: agente declara solución pero observación contiene fallos
-    let false_solution_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(test_node.id.clone()),
-        action_type: "run_test".to_string(),
-        action_payload: "pytest tests/".to_string(),
-        observation: "FAILED tests/test_auth.py - AssertionError: 401 != 200, exit code: 1".to_string(),
-        cost_tokens: Some(150),
-        latency_ms: Some(80),
-        reward_score: Some(5.0),
-        is_solution: Some(true), // Agente falsamente declara solución
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let false_solution_node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(test_node.id.clone()),
+            action_type: "run_test".to_string(),
+            action_payload: "pytest tests/".to_string(),
+            observation: "FAILED tests/test_auth.py - AssertionError: 401 != 200, exit code: 1"
+                .to_string(),
+            cost_tokens: Some(150),
+            latency_ms: Some(80),
+            reward_score: Some(5.0),
+            is_solution: Some(true), // Agente falsamente declara solución
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
-    assert!(!false_solution_node.is_solution, "La solución falsa debió ser rechazada (is_solution = false)");
-    assert!(false_solution_node.is_pruned, "La rama con fallo debió ser podada");
-    assert_eq!(false_solution_node.reward_score, -1.0, "La recompensa debió ser penalizada con -1.0");
-    assert!(false_solution_node.action_payload.contains("[ALERT: FALSE_SOLUTION_REJECTED]"));
+    assert!(
+        !false_solution_node.is_solution,
+        "La solución falsa debió ser rechazada (is_solution = false)"
+    );
+    assert!(
+        false_solution_node.is_pruned,
+        "La rama con fallo debió ser podada"
+    );
+    assert_eq!(
+        false_solution_node.reward_score, -1.0,
+        "La recompensa debió ser penalizada con -1.0"
+    );
+    assert!(false_solution_node
+        .action_payload
+        .contains("[ALERT: FALSE_SOLUTION_REJECTED]"));
 
     // 4. Verificar que Mermaid renderice las alertas situacionales exactas sin emojis
     let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
@@ -2485,15 +2633,19 @@ async fn test_lesson_freshness_reality_check_mtime_and_missing_file() {
     let past_time = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs()) - 100;
+        .as_secs())
+        - 100;
 
-    backend.record_entry(
-        &main_file.to_string_lossy(),
-        Some("main"),
-        "error context",
-        "solution v1",
-        "lesson",
-    ).await.unwrap();
+    backend
+        .record_entry(
+            &main_file.to_string_lossy(),
+            Some("main"),
+            "error context",
+            "solution v1",
+            "lesson",
+        )
+        .await
+        .unwrap();
 
     // Ajustar manualmente created_at para simular que el archivo fue modificado después de la lección
     {
@@ -2501,10 +2653,14 @@ async fn test_lesson_freshness_reality_check_mtime_and_missing_file() {
         conn.execute(
             "UPDATE lessons SET created_at = ?1 WHERE id = 1",
             rusqlite::params![past_time.to_string()],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
-    let lessons = backend.get_file_lessons(&main_file.to_string_lossy()).await.unwrap();
+    let lessons = backend
+        .get_file_lessons(&main_file.to_string_lossy())
+        .await
+        .unwrap();
     assert_eq!(lessons.len(), 1);
     assert_eq!(
         lessons[0].freshness_warning.as_deref(),
@@ -2516,28 +2672,42 @@ async fn test_lesson_freshness_reality_check_mtime_and_missing_file() {
     let future_time = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs()) + 500;
+        .as_secs())
+        + 500;
     {
         let conn = rusqlite::Connection::open(&db).unwrap();
         conn.execute(
             "UPDATE lessons SET created_at = ?1 WHERE id = 1",
             rusqlite::params![future_time.to_string()],
-        ).unwrap();
+        )
+        .unwrap();
     }
-    let lessons_fresh = backend.get_file_lessons(&main_file.to_string_lossy()).await.unwrap();
-    assert_eq!(lessons_fresh[0].freshness_warning, None, "Una lección más reciente que el mtime debe ser fresca");
+    let lessons_fresh = backend
+        .get_file_lessons(&main_file.to_string_lossy())
+        .await
+        .unwrap();
+    assert_eq!(
+        lessons_fresh[0].freshness_warning, None,
+        "Una lección más reciente que el mtime debe ser fresca"
+    );
 
     // 3. Si el archivo en disco no existe, debe advertir que no se encontró
     let non_existent = root.join("deleted_service.rs");
-    backend.record_entry(
-        &non_existent.to_string_lossy(),
-        None,
-        "missing context",
-        "solution deleted",
-        "lesson",
-    ).await.unwrap();
+    backend
+        .record_entry(
+            &non_existent.to_string_lossy(),
+            None,
+            "missing context",
+            "solution deleted",
+            "lesson",
+        )
+        .await
+        .unwrap();
 
-    let lessons_missing = backend.get_file_lessons(&non_existent.to_string_lossy()).await.unwrap();
+    let lessons_missing = backend
+        .get_file_lessons(&non_existent.to_string_lossy())
+        .await
+        .unwrap();
     assert_eq!(lessons_missing.len(), 1);
     assert_eq!(
         lessons_missing[0].freshness_warning.as_deref(),
@@ -2559,11 +2729,9 @@ fn test_exploration_node_rollback_file_snapshot() {
     let db = root.join("memory.db");
     let backend = GraphBackend::open(Some(&db.to_string_lossy())).unwrap();
 
-    let traj_id = backend.start_trajectory(
-        &root.to_string_lossy(),
-        "Rollback test trajectory",
-        None,
-    ).unwrap();
+    let traj_id = backend
+        .start_trajectory(&root.to_string_lossy(), "Rollback test trajectory", None)
+        .unwrap();
 
     let app_file = root.join("src").join("app.rs");
     std::fs::create_dir_all(app_file.parent().unwrap()).unwrap();
@@ -2577,30 +2745,39 @@ fn test_exploration_node_rollback_file_snapshot() {
                 "content": "fn main() { original_code(); }"
             }
         ]
-    }).to_string();
+    })
+    .to_string();
 
-    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "edit_code".to_string(),
-        action_payload: "patch app.rs with broken syntax".to_string(),
-        observation: "syntax error: unexpected token".to_string(),
-        cost_tokens: Some(120),
-        latency_ms: Some(60),
-        reward_score: None, // Auto-Reward detecta syntax error -> -0.8, is_pruned = true
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: Some(snapshot),
-        execution_receipt: None,
-    }).unwrap();
+    let node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "edit_code".to_string(),
+            action_payload: "patch app.rs with broken syntax".to_string(),
+            observation: "syntax error: unexpected token".to_string(),
+            cost_tokens: Some(120),
+            latency_ms: Some(60),
+            reward_score: None, // Auto-Reward detecta syntax error -> -0.8, is_pruned = true
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: Some(snapshot),
+            execution_receipt: None,
+        })
+        .unwrap();
 
-    assert!(node.is_pruned, "El nodo con error de sintaxis debió ser podado automáticamente");
+    assert!(
+        node.is_pruned,
+        "El nodo con error de sintaxis debió ser podado automáticamente"
+    );
     assert_eq!(node.reward_score, -0.8);
     assert!(node.rollback_snapshot.is_some());
 
     // Simular que el archivo en disco quedó corrupto tras la acción del agente
     std::fs::write(&app_file, "fn main() { broken_syntax_corrupt; }}}").unwrap();
-    assert_eq!(std::fs::read_to_string(&app_file).unwrap(), "fn main() { broken_syntax_corrupt; }}}");
+    assert_eq!(
+        std::fs::read_to_string(&app_file).unwrap(),
+        "fn main() { broken_syntax_corrupt; }}}"
+    );
 
     // 2. Ejecutar rollback_node
     let report = backend.rollback_node(&node.id).unwrap();
@@ -2610,23 +2787,28 @@ fn test_exploration_node_rollback_file_snapshot() {
 
     // 3. Verificar que el archivo en disco fue restaurado al contenido original exacto
     let restored_content = std::fs::read_to_string(&app_file).unwrap();
-    assert_eq!(restored_content, "fn main() { original_code(); }", "El archivo en disco debió restaurarse al snapshot original");
+    assert_eq!(
+        restored_content, "fn main() { original_code(); }",
+        "El archivo en disco debió restaurarse al snapshot original"
+    );
 
     // 4. Verificar rollback_to_parent desde un nodo hijo sin snapshot propio
-    let child_node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(node.id.clone()),
-        action_type: "run_test".to_string(),
-        action_payload: "cargo test".to_string(),
-        observation: "test failed".to_string(),
-        cost_tokens: Some(50),
-        latency_ms: Some(30),
-        reward_score: Some(-1.0),
-        is_solution: Some(false),
-        is_pruned: Some(true),
-        rollback_snapshot: None, // No tiene snapshot propio
-        execution_receipt: None,
-    }).unwrap();
+    let child_node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(node.id.clone()),
+            action_type: "run_test".to_string(),
+            action_payload: "cargo test".to_string(),
+            observation: "test failed".to_string(),
+            cost_tokens: Some(50),
+            latency_ms: Some(30),
+            reward_score: Some(-1.0),
+            is_solution: Some(false),
+            is_pruned: Some(true),
+            rollback_snapshot: None, // No tiene snapshot propio
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // Modificar el archivo otra vez
     std::fs::write(&app_file, "second bad edit").unwrap();
@@ -2635,7 +2817,10 @@ fn test_exploration_node_rollback_file_snapshot() {
     let parent_report = backend.rollback_to_parent(&child_node.id).unwrap();
     assert_eq!(parent_report.status, "ok");
     assert_eq!(parent_report.restored_files, vec!["src/app.rs"]);
-    assert_eq!(std::fs::read_to_string(&app_file).unwrap(), "fn main() { original_code(); }");
+    assert_eq!(
+        std::fs::read_to_string(&app_file).unwrap(),
+        "fn main() { original_code(); }"
+    );
 
     // 5. Verificar que el árbol Mermaid muestre la etiqueta situacional de rollback listo sin emojis
     let mermaid = backend.render_mermaid_tree(&traj_id).unwrap();
@@ -2678,9 +2863,14 @@ fn test_incoming_dependencies_detailed_multi_hop_and_suffix() {
 
     // 1. Query by base module name (database.py) using get_incoming_deps
     let direct_incoming = backend.get_incoming_deps("database.py");
-    assert!(!direct_incoming.is_empty(), "get_incoming_deps('database.py') should find callers");
     assert!(
-        direct_incoming.iter().any(|p| p.replace('\\', "/").ends_with("services/user_service.py")),
+        !direct_incoming.is_empty(),
+        "get_incoming_deps('database.py') should find callers"
+    );
+    assert!(
+        direct_incoming
+            .iter()
+            .any(|p| p.replace('\\', "/").ends_with("services/user_service.py")),
         "services/user_service.py should be an incoming dependency of database.py"
     );
 
@@ -2695,14 +2885,23 @@ fn test_incoming_dependencies_detailed_multi_hop_and_suffix() {
     let depth1: Vec<_> = multi_hop.iter().filter(|d| d.depth == 1).collect();
     let depth2: Vec<_> = multi_hop.iter().filter(|d| d.depth == 2).collect();
     assert_eq!(depth1.len(), 1, "Expected 1 direct caller at depth 1");
-    assert!(depth1[0].file_path.replace('\\', "/").ends_with("services/user_service.py"));
+    assert!(depth1[0]
+        .file_path
+        .replace('\\', "/")
+        .ends_with("services/user_service.py"));
     assert_eq!(depth2.len(), 1, "Expected 1 transitive caller at depth 2");
-    assert!(depth2[0].file_path.replace('\\', "/").ends_with("controllers/user_controller.py"));
+    assert!(depth2[0]
+        .file_path
+        .replace('\\', "/")
+        .ends_with("controllers/user_controller.py"));
 
     // 3. Query direct caller on user_service.py
     let service_incoming = backend.get_incoming_dependencies_detailed("user_service.py", 1);
     assert_eq!(service_incoming.len(), 1);
-    assert!(service_incoming[0].file_path.replace('\\', "/").ends_with("controllers/user_controller.py"));
+    assert!(service_incoming[0]
+        .file_path
+        .replace('\\', "/")
+        .ends_with("controllers/user_controller.py"));
 }
 
 #[test]
@@ -2715,36 +2914,63 @@ fn test_find_symbol_references_python_and_ts() {
     std::fs::write(&models_py, "class UserModel:\n    id: int\n    name: str\n\nclass UserModelExtended(UserModel):\n    role: str\n").unwrap();
 
     let service_py = root.join("service.py");
-    std::fs::write(&service_py, "from models import UserModel\n\ndef create_user() -> UserModel:\n    return UserModel()\n").unwrap();
+    std::fs::write(
+        &service_py,
+        "from models import UserModel\n\ndef create_user() -> UserModel:\n    return UserModel()\n",
+    )
+    .unwrap();
 
     let main_py = root.join("main.py");
-    std::fs::write(&main_py, "from service import create_user\n\nu = create_user()\nprint(u)\n").unwrap();
+    std::fs::write(
+        &main_py,
+        "from service import create_user\n\nu = create_user()\nprint(u)\n",
+    )
+    .unwrap();
 
     let backend = GraphBackend::open_for_project(root).unwrap();
     let root_str = root.to_string_lossy().to_string();
     backend.full_scan(&root_str, None).unwrap();
 
     // 2. Search references for "UserModel"
-    let res = backend.find_symbol_references("UserModel", Some("models.py"), 50, 2000).unwrap();
+    let res = backend
+        .find_symbol_references("UserModel", Some("models.py"), 50, 2000)
+        .unwrap();
     assert_eq!(res.symbol_name, "UserModel");
-    assert!(res.references_count >= 3, "Should find at least definition, import, and usages");
+    assert!(
+        res.references_count >= 3,
+        "Should find at least definition, import, and usages"
+    );
 
     // Definition in models.py
-    let defs: Vec<_> = res.references.iter().filter(|r| r.reference_kind == "definition").collect();
+    let defs: Vec<_> = res
+        .references
+        .iter()
+        .filter(|r| r.reference_kind == "definition")
+        .collect();
     assert!(!defs.is_empty(), "Should classify definition");
     assert!(defs[0].file_path.replace('\\', "/").ends_with("models.py"));
     assert_eq!(defs[0].line_number, 1);
 
     // Import in service.py
-    let imports: Vec<_> = res.references.iter().filter(|r| r.reference_kind == "import").collect();
+    let imports: Vec<_> = res
+        .references
+        .iter()
+        .filter(|r| r.reference_kind == "import")
+        .collect();
     assert!(!imports.is_empty(), "Should classify import");
-    assert!(imports[0].file_path.replace('\\', "/").ends_with("service.py"));
+    assert!(imports[0]
+        .file_path
+        .replace('\\', "/")
+        .ends_with("service.py"));
 
     // Usages
-    let usages: Vec<_> = res.references.iter().filter(|r| r.reference_kind == "call_or_usage").collect();
+    let usages: Vec<_> = res
+        .references
+        .iter()
+        .filter(|r| r.reference_kind == "call_or_usage")
+        .collect();
     assert!(!usages.is_empty(), "Should classify usage in service.py");
 }
-
 
 // ---------------------------------------------------------------------------
 // Task 2.4: render_mermaid_impact_graph tests
@@ -2757,14 +2983,14 @@ fn setup_impact_graph_project() -> (TempDir, GraphBackend) {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
 
-    let core     = root.join("core.py");
-    let utils    = root.join("utils.py");
-    let helper   = root.join("helper.py");
+    let core = root.join("core.py");
+    let utils = root.join("utils.py");
+    let helper = root.join("helper.py");
     let consumer = root.join("consumer.py");
 
-    std::fs::write(&core,     "from utils import parse\nclass Core: pass\n").unwrap();
-    std::fs::write(&utils,    "from helper import fmt\ndef parse(): pass\n").unwrap();
-    std::fs::write(&helper,   "def fmt(): pass\n").unwrap();
+    std::fs::write(&core, "from utils import parse\nclass Core: pass\n").unwrap();
+    std::fs::write(&utils, "from helper import fmt\ndef parse(): pass\n").unwrap();
+    std::fs::write(&helper, "def fmt(): pass\n").unwrap();
     std::fs::write(&consumer, "from core import Core\nobj = Core()\n").unwrap();
 
     let backend = GraphBackend::open_for_project(root).unwrap();
@@ -2783,13 +3009,19 @@ fn test_render_mermaid_impact_graph_structure() {
     let diagram = result.unwrap();
 
     // Header
-    assert!(diagram.starts_with("graph TD\n"), "Must start with 'graph TD\\n'");
+    assert!(
+        diagram.starts_with("graph TD\n"),
+        "Must start with 'graph TD\\n'"
+    );
 
     // Focal node badge
     assert!(diagram.contains("[FOCAL]"), "Must contain [FOCAL] label");
 
     // Stats footer
-    assert!(diagram.contains("%% [STATS]"), "Must contain %% [STATS] footer comment");
+    assert!(
+        diagram.contains("%% [STATS]"),
+        "Must contain %% [STATS] footer comment"
+    );
 
     // Zero-Emoji: check common emoji unicode ranges
     let has_emoji = diagram.chars().any(|c| {
@@ -2799,10 +3031,16 @@ fn test_render_mermaid_impact_graph_structure() {
             || (0x1F680..=0x1F6FF).contains(&cp)
             || (0x2600..=0x26FF).contains(&cp)
     });
-    assert!(!has_emoji, "Zero-Emoji: no emoji characters allowed in diagram");
+    assert!(
+        !has_emoji,
+        "Zero-Emoji: no emoji characters allowed in diagram"
+    );
 
     // At least one Mermaid edge arrow present
-    assert!(diagram.contains("-->"), "Must contain at least one edge arrow '-->'");
+    assert!(
+        diagram.contains("-->"),
+        "Must contain at least one edge arrow '-->'"
+    );
 }
 
 #[test]
@@ -2813,7 +3051,10 @@ fn test_render_mermaid_impact_graph_unknown_file_is_valid_mermaid() {
     let result = backend.render_mermaid_impact_graph("nonexistent/module.py", 2);
     assert!(result.is_ok(), "Must not error on unindexed file");
     let diagram = result.unwrap();
-    assert!(diagram.starts_with("graph TD\n"), "Must always produce valid Mermaid header");
+    assert!(
+        diagram.starts_with("graph TD\n"),
+        "Must always produce valid Mermaid header"
+    );
     assert!(
         diagram.contains("[INFO: NO_DEPENDENCIES_INDEXED]") || diagram.contains("[FOCAL]"),
         "Must include NO_DEPENDENCIES_INDEXED or FOCAL badge"
@@ -2834,12 +3075,17 @@ fn test_render_mermaid_impact_graph_node_ids_have_no_path_separators() {
             continue;
         }
         // Extract node ID (text before first '[' or '{')
-        let id_end = trimmed.find(|c| c == '[' || c == '{').unwrap_or(trimmed.len());
+        let id_end = trimmed
+            .find(|c| c == '[' || c == '{')
+            .unwrap_or(trimmed.len());
         let node_id = trimmed[..id_end].trim();
-        if node_id.is_empty() { continue; }
+        if node_id.is_empty() {
+            continue;
+        }
         assert!(
             !node_id.contains('/') && !node_id.contains('\\') && !node_id.contains('.'),
-            "Node ID '{}' must not contain path separators or dots", node_id
+            "Node ID '{}' must not contain path separators or dots",
+            node_id
         );
     }
 }
@@ -2886,8 +3132,14 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
     backend.record_amygdala_reflex(&reflex1).unwrap();
 
     // 2. Query with POSIX forward slashes and ensure normalization works
-    let results = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
-    assert_eq!(results.len(), 1, "Should find 1 reflex after path normalization");
+    let results = backend
+        .get_amygdala_reflexes_for_file("src/database/pool.rs")
+        .unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "Should find 1 reflex after path normalization"
+    );
     assert_eq!(results[0].symbol_name, "acquire_connection");
     assert_eq!(results[0].occurrences, 1);
     assert!((results[0].threat_score - 0.75).abs() < 1e-4);
@@ -2910,11 +3162,23 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
     };
     backend.record_amygdala_reflex(&reflex1_update).unwrap();
 
-    let updated = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
-    assert_eq!(updated.len(), 1, "Should still have 1 row due to idempotent upsert");
+    let updated = backend
+        .get_amygdala_reflexes_for_file("src/database/pool.rs")
+        .unwrap();
+    assert_eq!(
+        updated.len(),
+        1,
+        "Should still have 1 row due to idempotent upsert"
+    );
     assert_eq!(updated[0].occurrences, 2, "Occurrences must increment to 2");
-    assert!(updated[0].threat_score >= 0.85, "Threat score must bump to >= 0.85");
-    assert_eq!(updated[0].pain_trigger, "Deadlock on unreleased connection pool (repeated)");
+    assert!(
+        updated[0].threat_score >= 0.85,
+        "Threat score must bump to >= 0.85"
+    );
+    assert_eq!(
+        updated[0].pain_trigger,
+        "Deadlock on unreleased connection pool (repeated)"
+    );
 
     // 4. Record file-level reflex (empty symbol_name) on same file
     let reflex_file_level = ozymem_core::graph_backend::types::AmygdalaReflexEntry {
@@ -2934,9 +3198,18 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
     };
     backend.record_amygdala_reflex(&reflex_file_level).unwrap();
 
-    let both = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
-    assert_eq!(both.len(), 2, "Must contain both symbol-level and file-level reflexes");
-    assert_eq!(both[0].threat_score, 0.90, "First result must be the highest threat_score (0.90)");
+    let both = backend
+        .get_amygdala_reflexes_for_file("src/database/pool.rs")
+        .unwrap();
+    assert_eq!(
+        both.len(),
+        2,
+        "Must contain both symbol-level and file-level reflexes"
+    );
+    assert_eq!(
+        both[0].threat_score, 0.90,
+        "First result must be the highest threat_score (0.90)"
+    );
 
     // 5. Query active reflexes with min_threat threshold
     let active_all = backend.list_active_reflexes(0.70).unwrap();
@@ -2949,18 +3222,29 @@ fn test_amygdala_reflexes_lifecycle_and_upsert() {
     // 6. Delete reflex
     let deleted = backend.delete_amygdala_reflex(&both[0].id).unwrap();
     assert!(deleted, "Must return true on successful deletion");
-    let after_delete = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
+    let after_delete = backend
+        .get_amygdala_reflexes_for_file("src/database/pool.rs")
+        .unwrap();
     assert_eq!(after_delete.len(), 1);
 
     // 7. Latency benchmark (< 0.5ms per query)
     let start = std::time::Instant::now();
     for _ in 0..100 {
-        let _ = backend.get_amygdala_reflexes_for_file("src/database/pool.rs").unwrap();
+        let _ = backend
+            .get_amygdala_reflexes_for_file("src/database/pool.rs")
+            .unwrap();
     }
     let elapsed = start.elapsed();
     let per_query_us = elapsed.as_micros() / 100;
-    println!("[BENCHMARK] get_amygdala_reflexes_for_file: {} µs / query", per_query_us);
-    assert!(per_query_us < 2000, "Latency must be < 2000µs (2ms), was {}µs", per_query_us);
+    println!(
+        "[BENCHMARK] get_amygdala_reflexes_for_file: {} µs / query",
+        per_query_us
+    );
+    assert!(
+        per_query_us < 2000,
+        "Latency must be < 2000µs (2ms), was {}µs",
+        per_query_us
+    );
 }
 
 #[test]
@@ -2990,7 +3274,10 @@ fn test_procedural_habits_storage_and_query() {
         .unwrap();
     assert_eq!(results.len(), 1, "Should find 1 habit playbook");
     assert_eq!(results[0].subsequent_files.len(), 2);
-    assert_eq!(results[0].subsequent_files[0], "crates/ozymem-server/src/schemas.rs");
+    assert_eq!(
+        results[0].subsequent_files[0],
+        "crates/ozymem-server/src/schemas.rs"
+    );
     assert_eq!(results[0].occurrences, 4);
     assert!((results[0].confidence - 0.92).abs() < 1e-4);
 
@@ -3053,13 +3340,13 @@ fn test_thalamus_focus_weights_lifecycle() {
     assert!((combined_hotfix - 0.90).abs() < 1e-4);
 }
 
-
-
 #[test]
 fn test_objective_evaluator_ignores_pessimistic_agent_text() {
     let tmp = tempfile::tempdir().unwrap();
     let backend = GraphBackend::open_for_project(tmp.path()).unwrap();
-    let traj_id = backend.start_trajectory("test_proj", "Test objective evaluation", None).unwrap();
+    let traj_id = backend
+        .start_trajectory("test_proj", "Test objective evaluation", None)
+        .unwrap();
 
     // El agente redacta una observación pesimista con palabras que antes disparaban fallos
     let receipt = ozymem_core::graph_backend::ObjectiveExecutionReceipt {
@@ -3074,24 +3361,34 @@ fn test_objective_evaluator_ignores_pessimistic_agent_text() {
         stderr_snippet: None,
     };
 
-    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id,
-        parent_id: None,
-        action_type: "run_tests".to_string(),
-        action_payload: "{\"cmd\":\"cargo test\"}".to_string(),
-        observation: "CRITICAL FAILED: SyntaxError detected! exit code: 1! Panic in test suite!".to_string(),
-        cost_tokens: Some(50),
-        latency_ms: Some(120),
-        reward_score: None,
-        is_solution: Some(false),
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: Some(receipt),
-    }).unwrap();
+    let node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id,
+            parent_id: None,
+            action_type: "run_tests".to_string(),
+            action_payload: "{\"cmd\":\"cargo test\"}".to_string(),
+            observation:
+                "CRITICAL FAILED: SyntaxError detected! exit code: 1! Panic in test suite!"
+                    .to_string(),
+            cost_tokens: Some(50),
+            latency_ms: Some(120),
+            reward_score: None,
+            is_solution: Some(false),
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: Some(receipt),
+        })
+        .unwrap();
 
     // Invariante Etapa 1: La observación pesimista escrita por el agente NO PUEDE penalizar el nodo
-    assert_eq!(node.reward_score, 1.0, "El evaluador objetivo debió otorgar reward +1.0 basado en exit_code 0");
-    assert!(!node.is_pruned, "El nodo NO debe podarse porque el proceso terminó con éxito");
+    assert_eq!(
+        node.reward_score, 1.0,
+        "El evaluador objetivo debió otorgar reward +1.0 basado en exit_code 0"
+    );
+    assert!(
+        !node.is_pruned,
+        "El nodo NO debe podarse porque el proceso terminó con éxito"
+    );
     assert!(node.action_payload.contains("\"agent_text_ignored\":true"));
     assert!(node.action_payload.contains("\"objective_verified\":true"));
     assert!(node.execution_receipt.is_some());
@@ -3101,7 +3398,9 @@ fn test_objective_evaluator_ignores_pessimistic_agent_text() {
 fn test_objective_evaluator_vetoes_false_solution_and_optimistic_agent_text() {
     let tmp = tempfile::tempdir().unwrap();
     let backend = GraphBackend::open_for_project(tmp.path()).unwrap();
-    let traj_id = backend.start_trajectory("test_proj", "Test false solution veto", None).unwrap();
+    let traj_id = backend
+        .start_trajectory("test_proj", "Test false solution veto", None)
+        .unwrap();
 
     // El agente redacta una observación falsa afirmando que todo está verde y marca is_solution = true
     let failed_receipt = ozymem_core::graph_backend::ObjectiveExecutionReceipt {
@@ -3116,25 +3415,37 @@ fn test_objective_evaluator_vetoes_false_solution_and_optimistic_agent_text() {
         stderr_snippet: Some("panicked at assertion failed".to_string()),
     };
 
-    let node = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id,
-        parent_id: None,
-        action_type: "verify_solution".to_string(),
-        action_payload: "{\"action\":\"final_check\"}".to_string(),
-        observation: "All tests passed with flying colors! 100% green! Solution verified!".to_string(),
-        cost_tokens: Some(100),
-        latency_ms: Some(350),
-        reward_score: Some(10.0), // El agente intentó auto-asignarse 10.0
-        is_solution: Some(true),   // El agente afirmó ser la solución
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: Some(failed_receipt),
-    }).unwrap();
+    let node = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id,
+            parent_id: None,
+            action_type: "verify_solution".to_string(),
+            action_payload: "{\"action\":\"final_check\"}".to_string(),
+            observation: "All tests passed with flying colors! 100% green! Solution verified!"
+                .to_string(),
+            cost_tokens: Some(100),
+            latency_ms: Some(350),
+            reward_score: Some(10.0), // El agente intentó auto-asignarse 10.0
+            is_solution: Some(true),  // El agente afirmó ser la solución
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: Some(failed_receipt),
+        })
+        .unwrap();
 
     // Invariante Etapa 1: El evaluador objetivo VETA incondicionalmente la solución falsa
-    assert_eq!(node.reward_score, -1.0, "El fallo de ejecución debe penalizar con -1.0");
-    assert!(!node.is_solution, "El flag is_solution debió ser vetado a false por el evaluador objetivo");
-    assert!(node.is_pruned, "El nodo debió ser podado obligatoriamente por fallo de proceso");
+    assert_eq!(
+        node.reward_score, -1.0,
+        "El fallo de ejecución debe penalizar con -1.0"
+    );
+    assert!(
+        !node.is_solution,
+        "El flag is_solution debió ser vetado a false por el evaluador objetivo"
+    );
+    assert!(
+        node.is_pruned,
+        "El nodo debió ser podado obligatoriamente por fallo de proceso"
+    );
     assert!(node.action_payload.contains("\"exit_code\":101"));
 }
 
@@ -3142,14 +3453,16 @@ fn test_objective_evaluator_vetoes_false_solution_and_optimistic_agent_text() {
 fn test_parse_structured_test_counts_cargo_and_pytest() {
     // 1. Cargo test output
     let cargo_out = "running 13 tests\ntest foo ... ok\ntest result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out";
-    let (c_pass, c_fail, c_ign) = ozymem_core::graph_backend::parse_structured_test_counts(cargo_out, "");
+    let (c_pass, c_fail, c_ign) =
+        ozymem_core::graph_backend::parse_structured_test_counts(cargo_out, "");
     assert_eq!(c_pass, Some(13));
     assert_eq!(c_fail, Some(0));
     assert_eq!(c_ign, Some(1));
 
     // 2. Pytest output
     let pytest_out = "=== 25 passed, 3 failed, 1 warning in 1.45s ===";
-    let (p_pass, p_fail, _) = ozymem_core::graph_backend::parse_structured_test_counts(pytest_out, "");
+    let (p_pass, p_fail, _) =
+        ozymem_core::graph_backend::parse_structured_test_counts(pytest_out, "");
     assert_eq!(p_pass, Some(25));
     assert_eq!(p_fail, Some(3));
 }
@@ -3158,25 +3471,32 @@ fn test_parse_structured_test_counts_cargo_and_pytest() {
 fn test_shadow_mode_tracks_branching_and_resume_adherence() {
     let tmp = tempfile::tempdir().unwrap();
     let backend = GraphBackend::open_for_project(tmp.path()).unwrap();
-    let traj_id = backend.start_trajectory("test_proj", "Test shadow mode metrics", None).unwrap();
+    let traj_id = backend
+        .start_trajectory("test_proj", "Test shadow mode metrics", None)
+        .unwrap();
 
     // 1. Root node (depth 0, parent None)
-    let root = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: None,
-        action_type: "read_file".to_string(),
-        action_payload: r#"{"path":"src/lib.rs"}"#.to_string(),
-        observation: "file content read".to_string(),
-        cost_tokens: Some(150),
-        latency_ms: Some(25),
-        reward_score: Some(1.0),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let root = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: None,
+            action_type: "read_file".to_string(),
+            action_payload: r#"{"path":"src/lib.rs"}"#.to_string(),
+            observation: "file content read".to_string(),
+            cost_tokens: Some(150),
+            latency_ms: Some(25),
+            reward_score: Some(1.0),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
-    let m1 = backend.get_shadow_metrics(&traj_id).unwrap().expect("shadow metrics must exist");
+    let m1 = backend
+        .get_shadow_metrics(&traj_id)
+        .unwrap()
+        .expect("shadow metrics must exist");
     assert_eq!(m1.total_nodes, 1);
     assert_eq!(m1.max_depth, 0);
     assert_eq!(m1.branching_factor, 0.0);
@@ -3197,37 +3517,41 @@ fn test_shadow_mode_tracks_branching_and_resume_adherence() {
         stdout_snippet: Some("failed test".to_string()),
         stderr_snippet: None,
     };
-    let node1 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "apply_patch".to_string(),
-        action_payload: r#"{"patch":"bad"}"#.to_string(),
-        observation: "tests failed".to_string(),
-        cost_tokens: Some(200),
-        latency_ms: Some(100),
-        reward_score: None,
-        is_solution: None,
-        is_pruned: None,
-        rollback_snapshot: None,
-        execution_receipt: Some(failed_receipt),
-    }).unwrap();
+    let node1 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "apply_patch".to_string(),
+            action_payload: r#"{"patch":"bad"}"#.to_string(),
+            observation: "tests failed".to_string(),
+            cost_tokens: Some(200),
+            latency_ms: Some(100),
+            reward_score: None,
+            is_solution: None,
+            is_pruned: None,
+            rollback_snapshot: None,
+            execution_receipt: Some(failed_receipt),
+        })
+        .unwrap();
     assert!(node1.is_pruned);
 
     // 3. Node 2 follows recommendation (parent = root)
-    let node2 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "apply_patch".to_string(),
-        action_payload: r#"{"patch":"alternative"}"#.to_string(),
-        observation: "step 2 ok".to_string(),
-        cost_tokens: Some(180),
-        latency_ms: Some(40),
-        reward_score: Some(1.0),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let node2 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "apply_patch".to_string(),
+            action_payload: r#"{"patch":"alternative"}"#.to_string(),
+            observation: "step 2 ok".to_string(),
+            cost_tokens: Some(180),
+            latency_ms: Some(40),
+            reward_score: Some(1.0),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     let m2 = backend.get_shadow_metrics(&traj_id).unwrap().unwrap();
     assert_eq!(m2.total_nodes, 3);
@@ -3239,36 +3563,40 @@ fn test_shadow_mode_tracks_branching_and_resume_adherence() {
     assert_eq!(m2.total_latency_ms, 25 + 100 + 40);
 
     // 4. Branching: Add node 3 also under root -> root now has 3 children (node1, node2, node3)
-    let _node3 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(root.id.clone()),
-        action_type: "explore_alternative".to_string(),
-        action_payload: r#"{"alt":3}"#.to_string(),
-        observation: "branch 3".to_string(),
-        cost_tokens: Some(50),
-        latency_ms: Some(10),
-        reward_score: Some(0.5),
-        is_solution: Some(false),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let _node3 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(root.id.clone()),
+            action_type: "explore_alternative".to_string(),
+            action_payload: r#"{"alt":3}"#.to_string(),
+            observation: "branch 3".to_string(),
+            cost_tokens: Some(50),
+            latency_ms: Some(10),
+            reward_score: Some(0.5),
+            is_solution: Some(false),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     // 5. Add node 4 under node2 (depth 2)
-    let _node4 = backend.record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
-        trajectory_id: traj_id.clone(),
-        parent_id: Some(node2.id.clone()),
-        action_type: "finalize".to_string(),
-        action_payload: r#"{"done":true}"#.to_string(),
-        observation: "solution candidate".to_string(),
-        cost_tokens: Some(100),
-        latency_ms: Some(20),
-        reward_score: Some(2.0),
-        is_solution: Some(true),
-        is_pruned: Some(false),
-        rollback_snapshot: None,
-        execution_receipt: None,
-    }).unwrap();
+    let _node4 = backend
+        .record_exploration_node(ozymem_core::graph_backend::RecordNodeParams {
+            trajectory_id: traj_id.clone(),
+            parent_id: Some(node2.id.clone()),
+            action_type: "finalize".to_string(),
+            action_payload: r#"{"done":true}"#.to_string(),
+            observation: "solution candidate".to_string(),
+            cost_tokens: Some(100),
+            latency_ms: Some(20),
+            reward_score: Some(2.0),
+            is_solution: Some(true),
+            is_pruned: Some(false),
+            rollback_snapshot: None,
+            execution_receipt: None,
+        })
+        .unwrap();
 
     let m3 = backend.get_shadow_metrics(&traj_id).unwrap().unwrap();
     assert_eq!(m3.total_nodes, 5);
@@ -3286,7 +3614,8 @@ fn test_shadow_mode_tracks_branching_and_resume_adherence() {
 async fn test_universal_path_normalization_sqlite() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test_norm.db");
-    let sqlite = ozymem_core::graph_backend::SqliteBackend::open(Some(&db_path.to_string_lossy())).unwrap();
+    let sqlite =
+        ozymem_core::graph_backend::SqliteBackend::open(Some(&db_path.to_string_lossy())).unwrap();
 
     let tenant = "local";
     let stored_abs_win = r"C:\workspace\crmnew\api-geofal-crm\routes\orders.py";
@@ -3296,57 +3625,91 @@ async fn test_universal_path_normalization_sqlite() {
         file_path: stored_abs_win.to_string(),
         language: "Python".to_string(),
         strategy: ozymem_parser::ParseStrategy::NativeAst,
-        functions: vec![
-            ozymem_parser::ExtractedFunction {
-                name: "get_orders".to_string(),
-                kind: ozymem_parser::SymbolKind::Function,
-                start_line: 10,
-                end_line: 25,
-            },
-        ],
+        functions: vec![ozymem_parser::ExtractedFunction {
+            name: "get_orders".to_string(),
+            kind: ozymem_parser::SymbolKind::Function,
+            start_line: 10,
+            end_line: 25,
+        }],
     };
-    sqlite.save_file_definition(tenant, &file_map, r"C:\workspace\crmnew").unwrap();
+    sqlite
+        .save_file_definition(tenant, &file_map, r"C:\workspace\crmnew")
+        .unwrap();
 
     // 2. Save dependency with Windows path
     let dest_win = r"C:\workspace\crmnew\api-geofal-crm\models\order.py";
-    sqlite.save_dependency_relation(tenant, stored_abs_win, dest_win, r"C:\workspace\crmnew").unwrap();
+    sqlite
+        .save_dependency_relation(tenant, stored_abs_win, dest_win, r"C:\workspace\crmnew")
+        .unwrap();
 
     // 3. Save lesson
-    sqlite.record_lesson(tenant, stored_abs_win, Some("get_orders"), "timeout", "increase timeout to 30s", r"C:\workspace\crmnew").unwrap();
+    sqlite
+        .record_lesson(
+            tenant,
+            stored_abs_win,
+            Some("get_orders"),
+            "timeout",
+            "increase timeout to 30s",
+            r"C:\workspace\crmnew",
+        )
+        .unwrap();
 
     // Test A: get_file_context with relative unix path
-    let ctx_rel = sqlite.get_file_context(tenant, "api-geofal-crm/routes/orders.py").unwrap();
-    assert!(ctx_rel.is_some(), "Relative path query must find file context");
+    let ctx_rel = sqlite
+        .get_file_context(tenant, "api-geofal-crm/routes/orders.py")
+        .unwrap();
+    assert!(
+        ctx_rel.is_some(),
+        "Relative path query must find file context"
+    );
     let c = ctx_rel.unwrap();
     assert_eq!(c.language, "Python");
     assert_eq!(c.functions.len(), 1);
     assert_eq!(c.functions[0].name, "get_orders");
 
     // Test B: get_file_context with forward slashes absolute path
-    let ctx_fwd = sqlite.get_file_context(tenant, "C:/workspace/crmnew/api-geofal-crm/routes/orders.py").unwrap();
-    assert!(ctx_fwd.is_some(), "Forward slash query must find file context");
+    let ctx_fwd = sqlite
+        .get_file_context(
+            tenant,
+            "C:/workspace/crmnew/api-geofal-crm/routes/orders.py",
+        )
+        .unwrap();
+    assert!(
+        ctx_fwd.is_some(),
+        "Forward slash query must find file context"
+    );
 
     // Test C: get_symbols with relative path
-    let syms = sqlite.get_symbols(tenant, "api-geofal-crm/routes/orders.py").unwrap();
+    let syms = sqlite
+        .get_symbols(tenant, "api-geofal-crm/routes/orders.py")
+        .unwrap();
     assert_eq!(syms.len(), 1);
     assert_eq!(syms[0].name, "get_orders");
 
     // Test D: get_dependencies and incoming_dependencies with relative path
-    let outgoing = sqlite.get_dependencies(tenant, "api-geofal-crm/routes/orders.py").unwrap();
+    let outgoing = sqlite
+        .get_dependencies(tenant, "api-geofal-crm/routes/orders.py")
+        .unwrap();
     assert_eq!(outgoing.len(), 1);
     assert_eq!(outgoing[0], dest_win);
 
-    let incoming = sqlite.incoming_dependencies(tenant, "api-geofal-crm/models/order.py").unwrap();
+    let incoming = sqlite
+        .incoming_dependencies(tenant, "api-geofal-crm/models/order.py")
+        .unwrap();
     assert_eq!(incoming.len(), 1);
     assert_eq!(incoming[0], stored_abs_win);
 
     // Test E: find_symbol with normalized project path
-    let found = sqlite.find_symbol(tenant, "get_orders", "C:/workspace/crmnew").unwrap();
+    let found = sqlite
+        .find_symbol(tenant, "get_orders", "C:/workspace/crmnew")
+        .unwrap();
     assert_eq!(found.len(), 1);
     assert!(found[0].contains("orders.py"));
 
     // Test F: get_historical_engram_solutions with relative path
-    let solutions = sqlite.get_historical_engram_solutions(tenant, "api-geofal-crm/routes/orders.py").unwrap();
+    let solutions = sqlite
+        .get_historical_engram_solutions(tenant, "api-geofal-crm/routes/orders.py")
+        .unwrap();
     assert_eq!(solutions.len(), 1);
     assert_eq!(solutions[0], "increase timeout to 30s");
 
@@ -3356,16 +3719,16 @@ async fn test_universal_path_normalization_sqlite() {
         file_path: other_file.to_string(),
         language: "Python".to_string(),
         strategy: ozymem_parser::ParseStrategy::NativeAst,
-        functions: vec![
-            ozymem_parser::ExtractedFunction {
-                name: "record_orders".to_string(),
-                kind: ozymem_parser::SymbolKind::Function,
-                start_line: 5,
-                end_line: 15,
-            },
-        ],
+        functions: vec![ozymem_parser::ExtractedFunction {
+            name: "record_orders".to_string(),
+            kind: ozymem_parser::SymbolKind::Function,
+            start_line: 5,
+            end_line: 15,
+        }],
     };
-    sqlite.save_file_definition(tenant, &other_map, r"C:\workspace\crmnew").unwrap();
+    sqlite
+        .save_file_definition(tenant, &other_map, r"C:\workspace\crmnew")
+        .unwrap();
 
     // Querying for orders.py must NOT match record_orders.py
     let ctx_orders = sqlite.get_file_context(tenant, "orders.py").unwrap();
@@ -3377,7 +3740,9 @@ async fn test_universal_path_normalization_sqlite() {
     assert_eq!(c_orders.functions[0].name, "get_orders");
 
     // Test H: Backslash relative query
-    let ctx_bslash = sqlite.get_file_context(tenant, r"backend-service\routes\orders.py").unwrap();
+    let ctx_bslash = sqlite
+        .get_file_context(tenant, r"api-geofal-crm\routes\orders.py")
+        .unwrap();
     assert!(ctx_bslash.is_some());
 
     // Test I: Bidirectional matching - store relative path in DB, query with absolute path
@@ -3386,18 +3751,23 @@ async fn test_universal_path_normalization_sqlite() {
         file_path: rel_file.to_string(),
         language: "TypeScript".to_string(),
         strategy: ozymem_parser::ParseStrategy::NativeAst,
-        functions: vec![
-            ozymem_parser::ExtractedFunction {
-                name: "mountApp".to_string(),
-                kind: ozymem_parser::SymbolKind::Function,
-                start_line: 1,
-                end_line: 10,
-            },
-        ],
+        functions: vec![ozymem_parser::ExtractedFunction {
+            name: "mountApp".to_string(),
+            kind: ozymem_parser::SymbolKind::Function,
+            start_line: 1,
+            end_line: 10,
+        }],
     };
-    sqlite.save_file_definition(tenant, &rel_map, "/app").unwrap();
-    let ctx_abs_query = sqlite.get_file_context(tenant, "C:/projects/myapp/packages/frontend/src/index.ts").unwrap();
-    assert!(ctx_abs_query.is_some(), "Absolute query must resolve stored relative path");
+    sqlite
+        .save_file_definition(tenant, &rel_map, "/app")
+        .unwrap();
+    let ctx_abs_query = sqlite
+        .get_file_context(tenant, "C:/projects/myapp/packages/frontend/src/index.ts")
+        .unwrap();
+    assert!(
+        ctx_abs_query.is_some(),
+        "Absolute query must resolve stored relative path"
+    );
     assert_eq!(ctx_abs_query.unwrap().language, "TypeScript");
 }
 
@@ -3406,8 +3776,16 @@ fn test_find_files_by_tokens_ram_submillisecond() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    std::fs::write(root.join("probetas_controller.py"), "def calculate_density(): pass\ndef get_nucleo_perforado(): pass\n").unwrap();
-    std::fs::write(root.join("alerts_service.ts"), "export function disableAlerts(): void {}\n").unwrap();
+    std::fs::write(
+        root.join("probetas_controller.py"),
+        "def calculate_density(): pass\ndef get_nucleo_perforado(): pass\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("alerts_service.ts"),
+        "export function disableAlerts(): void {}\n",
+    )
+    .unwrap();
 
     let backend = GraphBackend::open_for_project(root).unwrap();
     let root_str = root.to_string_lossy().to_string();
@@ -3415,10 +3793,16 @@ fn test_find_files_by_tokens_ram_submillisecond() {
 
     // Query with tokens
     let matches = backend.find_files_by_tokens_ram(&["nucleo", "perforado", "probetas"], 3);
-    assert!(!matches.is_empty(), "Expected probetas_controller.py to be found by tokens");
+    assert!(
+        !matches.is_empty(),
+        "Expected probetas_controller.py to be found by tokens"
+    );
     assert!(matches[0].contains("probetas_controller.py"));
 
     let alert_matches = backend.find_files_by_tokens_ram(&["disableAlerts", "alerts"], 3);
-    assert!(!alert_matches.is_empty(), "Expected alerts_service.ts to be found by tokens");
+    assert!(
+        !alert_matches.is_empty(),
+        "Expected alerts_service.ts to be found by tokens"
+    );
     assert!(alert_matches[0].contains("alerts_service.ts"));
 }

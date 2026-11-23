@@ -1,7 +1,7 @@
 use crate::graph_backend::is_noise_dir;
 use anyhow::{Context, Result};
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
 use notify::RecommendedWatcher;
+use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
@@ -33,9 +33,37 @@ pub enum NoiseFilterDecision {
 
 /// Checks if a file path is noise, a lockfile, minified, or exceeds the size limit.
 pub fn check_noise_or_huge_file(path: &Path, max_bytes: u64) -> NoiseFilterDecision {
-    // 1. Check parent directories for noise dirs
-    for ancestor in path.ancestors() {
-        if is_noise_dir(ancestor) {
+    check_noise_or_huge_file_with_root(path, max_bytes, None)
+}
+
+/// Checks if a file path is noise, scoped to an optional explicit project_root.
+/// If `project_root` is provided, only parent directories relative to `project_root` are evaluated,
+/// ensuring parent paths of the workspace (e.g. `.gemini`, `scratch`) are never inspected.
+pub fn check_noise_or_huge_file_with_root(
+    path: &Path,
+    max_bytes: u64,
+    project_root: Option<&Path>,
+) -> NoiseFilterDecision {
+    // 1. Check parent directories for noise dirs within the workspace
+    if let Some(root) = project_root {
+        if let Ok(rel) = path.strip_prefix(root) {
+            for ancestor in rel.ancestors() {
+                if ancestor.as_os_str().is_empty() || ancestor == rel {
+                    continue;
+                }
+                if is_noise_dir(ancestor) {
+                    return NoiseFilterDecision::NoiseDir;
+                }
+            }
+        } else if let Some(parent) = path.parent() {
+            if is_noise_dir(parent) {
+                return NoiseFilterDecision::NoiseDir;
+            }
+        }
+    } else if let Some(parent) = path.parent() {
+        // Without explicit project_root: only check immediate parent directory to prevent
+        // climbing up into system/user directories (e.g. .gemini, scratch)
+        if is_noise_dir(parent) {
             return NoiseFilterDecision::NoiseDir;
         }
     }
@@ -100,7 +128,17 @@ pub fn check_noise_or_huge_file(path: &Path, max_bytes: u64) -> NoiseFilterDecis
 
 /// Convenience boolean check.
 pub fn is_noise_or_huge_file(path: &Path, max_bytes: u64) -> bool {
-    check_noise_or_huge_file(path, max_bytes) != NoiseFilterDecision::Process
+    is_noise_or_huge_file_with_root(path, max_bytes, None)
+}
+
+/// Convenience boolean check with optional workspace root scoping.
+pub fn is_noise_or_huge_file_with_root(
+    path: &Path,
+    max_bytes: u64,
+    project_root: Option<&Path>,
+) -> bool {
+    check_noise_or_huge_file_with_root(path, max_bytes, project_root)
+        != NoiseFilterDecision::Process
 }
 
 /// Events emitted by the live file watcher.

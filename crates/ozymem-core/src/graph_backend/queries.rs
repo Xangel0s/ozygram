@@ -1,12 +1,3 @@
-use std::collections::HashMap;
-use anyhow::{Context, Result};
-use petgraph::algo::all_simple_paths;
-use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::visit::{Bfs, EdgeRef};
-use rusqlite::params;
-use std::time::Instant;
-use crate::GraphSummary;
-use crate::mcp_common::McpBackend;
 use crate::graph_backend::helpers::{extract_module_id, infer_module_responsibility};
 use crate::graph_backend::types::{
     CapabilityMapResult, CapabilityModule, DependentBreakage, FileEdge, FileNode, GraphBackend,
@@ -14,13 +5,26 @@ use crate::graph_backend::types::{
     SimulationStatus, SymbolReference, SymbolReferencesResult, SymbolReplaceResult,
     UnifiedSearchResult,
 };
+use crate::mcp_common::McpBackend;
+use crate::GraphSummary;
+use anyhow::{Context, Result};
+use petgraph::algo::all_simple_paths;
+use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::EdgeRef;
+use rusqlite::params;
+use std::collections::HashMap;
+use std::time::Instant;
 
 impl GraphBackend {
     pub fn analyze_impact(&self, file_path: &str, depth: u32) -> Vec<ImpactEntry> {
-        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
         let inner = self.inner.lock().unwrap();
-        let start_opt = inner.file_index.get(&resolved)
+        let start_opt = inner
+            .file_index
+            .get(&resolved)
             .or_else(|| inner.file_index.get(&norm_path))
             .or_else(|| inner.file_index.get(file_path));
         let Some(&start) = start_opt else {
@@ -28,10 +32,10 @@ impl GraphBackend {
         };
 
         let mut results = Vec::new();
-        let mut bfs = Bfs::new(&inner.graph, start);
-
         let mut visited: HashMap<NodeIndex, u32> = HashMap::new();
+        let mut queue = std::collections::VecDeque::new();
         visited.insert(start, 0);
+        queue.push_back((start, 0));
 
         // Prepare function query for enriching results
         let mut func_stmt = inner.sqlite.prepare(
@@ -43,105 +47,156 @@ impl GraphBackend {
             "SELECT COALESCE(MIN(start_line),0), COALESCE(MAX(end_line),0) FROM functions WHERE file_path = ?1 AND tenant_id = ?2"
         ).ok();
 
-        while let Some(node) = bfs.next(&inner.graph) {
-            let d = *visited.get(&node).unwrap_or(&0);
-            for neighbor in inner.graph.neighbors(node) {
-                visited.entry(neighbor).or_insert(d + 1);
-            }
-
-            if node == start {
+        while let Some((curr, d)) = queue.pop_front() {
+            if d >= depth {
                 continue;
             }
-            if d > depth {
-                continue;
+
+            for caller in inner
+                .graph
+                .neighbors_directed(curr, petgraph::Direction::Incoming)
+            {
+                if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(caller) {
+                    let next_d = d + 1;
+                    e.insert(next_d);
+                    queue.push_back((caller, next_d));
+
+                    if let Some(fn_data) = inner.graph.node_weight(caller) {
+                        let path = &fn_data.path;
+                        let lower = path.to_lowercase();
+
+                        // Severity
+                        let (severity, reason) = if lower.contains("schema")
+                            || lower.contains("model")
+                            || lower.contains("dto")
+                            || lower.contains("entity")
+                            || lower.contains("interface")
+                            || lower.contains("type")
+                        {
+                            ("breaking", "Contains schema/model/dto/entity/interface/type definitions — changes here affect data contracts".to_string())
+                        } else if fn_data.lesson_count > 0 {
+                            (
+                                "warning",
+                                format!(
+                                    "Has {} known lesson(s) registered — previous issues found in this file",
+                                    fn_data.lesson_count
+                                ),
+                            )
+                        } else if fn_data.function_count > 15 {
+                            (
+                                "warning",
+                                format!(
+                                    "Large file ({} functions) — high risk of cascading changes",
+                                    fn_data.function_count
+                                ),
+                            )
+                        } else if next_d <= 1 {
+                            (
+                                "warning",
+                                "Direct dependent at depth 1 — changes propagate immediately"
+                                    .to_string(),
+                            )
+                        } else {
+                            (
+                                "info",
+                                format!(
+                                    "Indirect dependent at depth {} — changes may propagate here",
+                                    next_d
+                                ),
+                            )
+                        };
+
+                        let suggestion = match severity {
+                            "breaking" => "Review and update all imports, type definitions, and data contracts in dependent files".to_string(),
+                            "warning" => "Check for cascading changes in consuming code; verify tests still pass".to_string(),
+                            _ => "Monitor for indirect effects; no immediate action required".to_string(),
+                        };
+
+                        // Get function names with line numbers
+                        let functions: Vec<String> = func_stmt
+                            .as_mut()
+                            .and_then(|stmt| {
+                                stmt.query_map(params![path, self.tenant_id], |row| {
+                                    let name: String = row.get(0)?;
+                                    let line: i64 = row.get(1)?;
+                                    Ok(format!("{}:{}", name, line))
+                                })
+                                .ok()
+                            })
+                            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                            .unwrap_or_default();
+
+                        // Get line range for this file
+                        let (start_line, end_line) = range_stmt
+                            .as_mut()
+                            .and_then(|stmt| {
+                                stmt.query_row(params![path, self.tenant_id], |row| {
+                                    let s: i64 = row.get(0)?;
+                                    let e: i64 = row.get(1)?;
+                                    Ok((s, e))
+                                })
+                                .ok()
+                            })
+                            .unwrap_or((0, 0));
+
+                        results.push(ImpactEntry {
+                            file_path: path.clone(),
+                            depth: next_d,
+                            function_count: fn_data.function_count,
+                            lesson_count: fn_data.lesson_count,
+                            language: fn_data.language.clone(),
+                            severity: severity.to_string(),
+                            functions,
+                            start_line,
+                            end_line,
+                            reason,
+                            suggestion,
+                        });
+                    }
+                }
             }
-            if let Some(fn_data) = inner.graph.node_weight(node) {
-                let path = &fn_data.path;
-                let lower = path.to_lowercase();
+        }
 
-                // Severity
-                let (severity, reason) = if lower.contains("schema")
-                    || lower.contains("model")
-                    || lower.contains("dto")
-                    || lower.contains("entity")
-                    || lower.contains("interface")
-                    || lower.contains("type")
-                {
-                    ("breaking", "Contains schema/model/dto/entity/interface/type definitions — changes here affect data contracts".to_string())
-                } else if fn_data.lesson_count > 0 {
-                    (
-                        "warning",
-                        format!(
-                            "Has {} known lesson(s) registered — previous issues found in this file",
-                            fn_data.lesson_count
-                        ),
-                    )
-                } else if fn_data.function_count > 15 {
-                    (
-                        "warning",
-                        format!(
-                            "Large file ({} functions) — high risk of cascading changes",
-                            fn_data.function_count
-                        ),
-                    )
-                } else if d <= 1 {
-                    (
-                        "warning",
-                        "Direct dependency at depth 1 — changes propagate immediately".to_string(),
-                    )
-                } else {
-                    (
-                        "info",
-                        "Indirect dependency — unlikely to require changes".to_string(),
-                    )
-                };
+        if results.is_empty() {
+            let file_name = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file_path);
+            let suffix_fwd = format!("%/{}", file_name.replace('\\', "/"));
+            let suffix_bwd = format!("%\\{}", file_name.replace('/', "\\"));
 
-                let suggestion = match severity {
-                    "breaking" => "Review and update all imports, type definitions, and data contracts in dependent files".to_string(),
-                    "warning" => "Check for cascading changes in consuming code; verify tests still pass".to_string(),
-                    _ => "Monitor for indirect effects; no immediate action required".to_string(),
-                };
-
-                // Get function names with line numbers
-                let functions: Vec<String> = func_stmt
-                    .as_mut()
-                    .and_then(|stmt| {
-                        stmt.query_map(params![path, self.tenant_id], |row| {
-                            let name: String = row.get(0)?;
-                            let line: i64 = row.get(1)?;
-                            Ok(format!("{}:{}", name, line))
-                        })
-                        .ok()
-                    })
-                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                    .unwrap_or_default();
-
-                // Get line range for this file
-                let (start_line, end_line) = range_stmt
-                    .as_mut()
-                    .and_then(|stmt| {
-                        stmt.query_row(params![path, self.tenant_id], |row| {
-                            let s: i64 = row.get(0)?;
-                            let e: i64 = row.get(1)?;
-                            Ok((s, e))
-                        })
-                        .ok()
-                    })
-                    .unwrap_or((0, 0));
-
-                results.push(ImpactEntry {
-                    file_path: path.clone(),
-                    depth: d,
-                    function_count: fn_data.function_count,
-                    lesson_count: fn_data.lesson_count,
-                    language: fn_data.language.clone(),
-                    severity: severity.to_string(),
-                    functions,
-                    start_line,
-                    end_line,
-                    reason,
-                    suggestion,
-                });
+            if let Ok(mut stmt) = inner.sqlite.prepare(
+                "SELECT DISTINCT origin_path FROM file_dependencies
+                 WHERE (destination_path = ?1 OR destination_path = ?2
+                        OR destination_path LIKE ?3 OR destination_path LIKE ?4)
+                   AND tenant_id = ?5 ORDER BY origin_path ASC",
+            ) {
+                if let Ok(rows) = stmt.query_map(
+                    params![
+                        &resolved,
+                        &norm_path,
+                        suffix_fwd,
+                        suffix_bwd,
+                        self.tenant_id
+                    ],
+                    |row| row.get::<_, String>(0),
+                ) {
+                    for r in rows.flatten() {
+                        results.push(ImpactEntry {
+                            file_path: r,
+                            depth: 1,
+                            function_count: 0,
+                            lesson_count: 0,
+                            language: "".to_string(),
+                            severity: "info".to_string(),
+                            functions: vec![],
+                            start_line: 0,
+                            end_line: 0,
+                            reason: "Direct dependent found in SQLite file_dependencies".to_string(),
+                            suggestion: "Check for cascading changes in consuming code; verify tests still pass".to_string(),
+                        });
+                    }
+                }
             }
         }
         results
@@ -184,7 +239,13 @@ impl GraphBackend {
                    AND tenant_id = ?5 ORDER BY origin_path ASC",
             ) {
                 if let Ok(rows) = stmt.query_map(
-                    params![&resolved, &norm_path, suffix_fwd, suffix_bwd, self.tenant_id],
+                    params![
+                        &resolved,
+                        &norm_path,
+                        suffix_fwd,
+                        suffix_bwd,
+                        self.tenant_id
+                    ],
                     |row| row.get::<_, String>(0),
                 ) {
                     for r in rows.flatten() {
@@ -231,7 +292,13 @@ impl GraphBackend {
                    AND tenant_id = ?5 ORDER BY origin_path ASC",
             ) {
                 if let Ok(rows) = stmt.query_map(
-                    params![&resolved, &norm_path, suffix_fwd, suffix_bwd, self.tenant_id],
+                    params![
+                        &resolved,
+                        &norm_path,
+                        suffix_fwd,
+                        suffix_bwd,
+                        self.tenant_id
+                    ],
                     |row| row.get::<_, String>(0),
                 ) {
                     for r in rows.flatten() {
@@ -257,7 +324,10 @@ impl GraphBackend {
             if d >= max_depth {
                 continue;
             }
-            for neighbor in inner.graph.neighbors_directed(curr, petgraph::Direction::Incoming) {
+            for neighbor in inner
+                .graph
+                .neighbors_directed(curr, petgraph::Direction::Incoming)
+            {
                 if let std::collections::hash_map::Entry::Vacant(e) = visited.entry(neighbor) {
                     e.insert(d + 1);
                     queue.push_back((neighbor, d + 1));
@@ -288,7 +358,13 @@ impl GraphBackend {
                    AND tenant_id = ?5 ORDER BY origin_path ASC",
             ) {
                 if let Ok(rows) = stmt.query_map(
-                    params![&resolved, &norm_path, suffix_fwd, suffix_bwd, self.tenant_id],
+                    params![
+                        &resolved,
+                        &norm_path,
+                        suffix_fwd,
+                        suffix_bwd,
+                        self.tenant_id
+                    ],
                     |row| row.get::<_, String>(0),
                 ) {
                     for r in rows.flatten() {
@@ -344,8 +420,14 @@ impl GraphBackend {
                 if !scope_norm.is_empty() && !path_norm.contains(&scope_norm) {
                     continue;
                 }
-                let incoming = inner.graph.neighbors_directed(idx, petgraph::Direction::Incoming).count();
-                let outgoing = inner.graph.neighbors_directed(idx, petgraph::Direction::Outgoing).count();
+                let incoming = inner
+                    .graph
+                    .neighbors_directed(idx, petgraph::Direction::Incoming)
+                    .count();
+                let outgoing = inner
+                    .graph
+                    .neighbors_directed(idx, petgraph::Direction::Outgoing)
+                    .count();
                 let score = incoming + outgoing;
                 if score > 0 {
                     hotspots.push((score, incoming, outgoing, w.path.clone()));
@@ -356,7 +438,7 @@ impl GraphBackend {
         if hotspots.is_empty() {
             if let Ok(mut stmt) = inner.sqlite.prepare(
                 "SELECT origin_path, COUNT(*) as out_cnt FROM file_dependencies
-                 WHERE tenant_id = ?1 GROUP BY origin_path ORDER BY out_cnt DESC LIMIT ?2"
+                 WHERE tenant_id = ?1 GROUP BY origin_path ORDER BY out_cnt DESC LIMIT ?2",
             ) {
                 if let Ok(rows) = stmt.query_map(params![self.tenant_id, limit as i64], |row| {
                     let path: String = row.get(0)?;
@@ -429,7 +511,6 @@ impl GraphBackend {
         Ok(results)
     }
 
-
     pub fn find_graph_path(
         &self,
         from: &str,
@@ -437,14 +518,26 @@ impl GraphBackend {
         max_paths: usize,
         max_hops: usize,
     ) -> Vec<Vec<String>> {
-        let from_res = self.resolve_target_path(from).unwrap_or_else(|| from.to_string());
-        let to_res = self.resolve_target_path(to).unwrap_or_else(|| to.to_string());
+        let from_res = self
+            .resolve_target_path(from)
+            .unwrap_or_else(|| from.to_string());
+        let to_res = self
+            .resolve_target_path(to)
+            .unwrap_or_else(|| to.to_string());
         let inner = self.inner.lock().unwrap();
-        let start = match inner.file_index.get(&from_res).or_else(|| inner.file_index.get(from)) {
+        let start = match inner
+            .file_index
+            .get(&from_res)
+            .or_else(|| inner.file_index.get(from))
+        {
             Some(n) => *n,
             None => return Vec::new(),
         };
-        let end = match inner.file_index.get(&to_res).or_else(|| inner.file_index.get(to)) {
+        let end = match inner
+            .file_index
+            .get(&to_res)
+            .or_else(|| inner.file_index.get(to))
+        {
             Some(n) => *n,
             None => return Vec::new(),
         };
@@ -513,17 +606,26 @@ impl GraphBackend {
 
         // 2. Direct match in SQLite files table
         let mut stmt = match inner.sqlite.prepare(
-            "SELECT path FROM files WHERE (path = ?1 OR path = ?2) AND tenant_id = ?3 LIMIT 1"
+            "SELECT path FROM files WHERE (path = ?1 OR path = ?2) AND tenant_id = ?3 LIMIT 1",
         ) {
             Ok(s) => s,
             Err(_) => return None,
         };
-        if let Ok(found) = stmt.query_row(params![input_path, norm, self.tenant_id], |row| row.get::<_, String>(0)) {
+        if let Ok(found) = stmt.query_row(params![input_path, norm, self.tenant_id], |row| {
+            row.get::<_, String>(0)
+        }) {
             return Some(found);
         }
 
         // 3. Resolve relative path against project_path / workspace_root
-        let root_opt = inner.project_path.as_deref().or(if !inner.workspace_root.is_empty() { Some(&inner.workspace_root) } else { None });
+        let root_opt = inner
+            .project_path
+            .as_deref()
+            .or(if !inner.workspace_root.is_empty() {
+                Some(&inner.workspace_root)
+            } else {
+                None
+            });
         if let Some(root) = root_opt {
             let joined_path = std::path::Path::new(root).join(input_path);
             let joined = crate::normalize_path(&joined_path.to_string_lossy());
@@ -536,7 +638,9 @@ impl GraphBackend {
                     return Some(canon_norm);
                 }
             }
-            if let Ok(found) = stmt.query_row(params![joined, joined, self.tenant_id], |row| row.get::<_, String>(0)) {
+            if let Ok(found) = stmt.query_row(params![joined, joined, self.tenant_id], |row| {
+                row.get::<_, String>(0)
+            }) {
                 return Some(found);
             }
         }
@@ -559,7 +663,10 @@ impl GraphBackend {
             Ok(s) => s,
             Err(_) => return None,
         };
-        if let Ok(found) = suffix_stmt.query_row(params![suffix_like, suffix_like_fwd, self.tenant_id], |row| row.get::<_, String>(0)) {
+        if let Ok(found) = suffix_stmt.query_row(
+            params![suffix_like, suffix_like_fwd, self.tenant_id],
+            |row| row.get::<_, String>(0),
+        ) {
             return Some(found);
         }
 
@@ -581,7 +688,10 @@ impl GraphBackend {
              WHERE (path LIKE ?1 OR path LIKE ?2 OR replace(path, '\\', '/') LIKE ?1) AND tenant_id = ?3 
              ORDER BY length(path) ASC LIMIT ?4"
         )?;
-        let rows = stmt.query_map(params![pattern, pattern_bwd, self.tenant_id, max as i64], |r| r.get(0))?;
+        let rows = stmt.query_map(
+            params![pattern, pattern_bwd, self.tenant_id, max as i64],
+            |r| r.get(0),
+        )?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
@@ -597,7 +707,9 @@ impl GraphBackend {
         let mut node_scores: HashMap<NodeIndex, usize> = HashMap::new();
 
         for word in words {
-            let clean = word.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`');
+            let clean = word
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'' || c == '`');
             if clean.len() < 3 {
                 continue;
             }
@@ -626,13 +738,22 @@ impl GraphBackend {
         let mut scored: Vec<(NodeIndex, usize)> = node_scores.into_iter().collect();
         scored.sort_by(|a, b| {
             b.1.cmp(&a.1).then_with(|| {
-                let len_a = inner.graph.node_weight(a.0).map(|n| n.path.len()).unwrap_or(usize::MAX);
-                let len_b = inner.graph.node_weight(b.0).map(|n| n.path.len()).unwrap_or(usize::MAX);
+                let len_a = inner
+                    .graph
+                    .node_weight(a.0)
+                    .map(|n| n.path.len())
+                    .unwrap_or(usize::MAX);
+                let len_b = inner
+                    .graph
+                    .node_weight(b.0)
+                    .map(|n| n.path.len())
+                    .unwrap_or(usize::MAX);
                 len_a.cmp(&len_b)
             })
         });
 
-        scored.into_iter()
+        scored
+            .into_iter()
             .take(max)
             .filter_map(|(node, _)| inner.graph.node_weight(node).map(|n| n.path.clone()))
             .collect()
@@ -716,15 +837,23 @@ impl GraphBackend {
 
     /// Speculative Context Decoding: Obtiene contratos Engram predictivos de archivos vecinos
     /// inmediatos (dependencias y dependientes) en tiempo O(1) usando el grafo AST y MemTable.
-    pub fn get_speculative_engrams(&self, file_path: &str, limit: usize) -> Vec<ozymem_parser::EngramContract> {
-        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+    pub fn get_speculative_engrams(
+        &self,
+        file_path: &str,
+        limit: usize,
+    ) -> Vec<ozymem_parser::EngramContract> {
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
 
         // 1. Obtener archivos vecinos desde el grafo petgraph
         let mut candidate_neighbor_files = Vec::new();
         {
             let inner = self.inner.lock().unwrap();
-            let start_opt = inner.file_index.get(&resolved)
+            let start_opt = inner
+                .file_index
+                .get(&resolved)
                 .or_else(|| inner.file_index.get(&norm_path))
                 .or_else(|| inner.file_index.get(file_path));
 
@@ -791,9 +920,15 @@ impl GraphBackend {
     }
 
     /// Surgical symbol extraction: returns exact symbol source code slice and metadata.
-    pub fn get_symbol(&self, file_path: &str, symbol_name: &str) -> Result<Option<ozymem_parser::SymbolExtract>> {
-        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
-        
+    pub fn get_symbol(
+        &self,
+        file_path: &str,
+        symbol_name: &str,
+    ) -> Result<Option<ozymem_parser::SymbolExtract>> {
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
+
         let path_obj = std::path::Path::new(&resolved);
         let effective_path = if path_obj.exists() {
             path_obj.to_path_buf()
@@ -810,13 +945,20 @@ impl GraphBackend {
         let source = std::fs::read_to_string(&effective_path)?;
         let lang = ozymem_parser::SupportedLanguage::from_path(&effective_path);
 
-        Ok(ozymem_parser::extract_symbol_source(&resolved, symbol_name, &source, lang))
+        Ok(ozymem_parser::extract_symbol_source(
+            &resolved,
+            symbol_name,
+            &source,
+            lang,
+        ))
     }
 
     /// Returns skeletal AST file member tree and outgoing dependencies (if a file),
     /// or hierarchical directory tree with file sizes (if a directory).
     pub fn get_file_tree(&self, file_path: &str, depth: u32, format: &str) -> Result<String> {
-        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
         let norm_path = crate::normalize_path(file_path);
 
         let path_obj = std::path::Path::new(&resolved);
@@ -885,10 +1027,14 @@ impl GraphBackend {
                             });
                         }
                     }
-                    if let Ok(hints) = ozymem_parser::extract_dependency_hints(&resolved, lang, &source) {
+                    if let Ok(hints) =
+                        ozymem_parser::extract_dependency_hints(&resolved, lang, &source)
+                    {
                         for h in hints {
                             if ozymem_parser::is_internal_dependency_hint(&h) {
-                                if let Some(target) = ozymem_parser::resolve_dependency_target(&h, &resolved) {
+                                if let Some(target) =
+                                    ozymem_parser::resolve_dependency_target(&h, &resolved)
+                                {
                                     outgoing.push(target.to_string_lossy().to_string());
                                 }
                             }
@@ -918,7 +1064,11 @@ impl GraphBackend {
             out.push_str(&format!("{}└── (none)\n", fn_prefix));
         } else {
             for (idx, f) in functions.iter().enumerate() {
-                let branch = if idx + 1 == functions.len() { "└──" } else { "├──" };
+                let branch = if idx + 1 == functions.len() {
+                    "└──"
+                } else {
+                    "├──"
+                };
                 out.push_str(&format!(
                     "{}{} [MEMBER: {}] {} (lines {}-{}) via {}\n",
                     fn_prefix,
@@ -937,7 +1087,11 @@ impl GraphBackend {
             out.push_str("    └── (none)\n");
         } else {
             for (idx, dep) in outgoing.iter().enumerate() {
-                let branch = if idx + 1 == outgoing.len() { "└──" } else { "├──" };
+                let branch = if idx + 1 == outgoing.len() {
+                    "└──"
+                } else {
+                    "├──"
+                };
                 out.push_str(&format!("    {} [DEPENDS_ON] File: {}\n", branch, dep));
             }
         }
@@ -946,7 +1100,12 @@ impl GraphBackend {
     }
 
     /// Returns hierarchical directory tree of files and subdirectories with sizes and depth containment.
-    pub fn get_directory_tree(&self, dir_path: &std::path::Path, depth: u32, format: &str) -> Result<String> {
+    pub fn get_directory_tree(
+        &self,
+        dir_path: &std::path::Path,
+        depth: u32,
+        format: &str,
+    ) -> Result<String> {
         let max_depth = (depth as usize).clamp(1, 6);
         let norm_dir = crate::normalize_path(&dir_path.to_string_lossy());
 
@@ -1018,7 +1177,9 @@ impl GraphBackend {
 
         for (idx, (rel, is_dir, sz, depth_level)) in file_entries.iter().enumerate() {
             let is_last = idx + 1 == file_entries.len() || {
-                file_entries[idx + 1..].iter().all(|(_, _, _, next_d)| *next_d < *depth_level)
+                file_entries[idx + 1..]
+                    .iter()
+                    .all(|(_, _, _, next_d)| *next_d < *depth_level)
             };
             let branch = if is_last { "└──" } else { "├──" };
             let indent = "│   ".repeat(depth_level.saturating_sub(1));
@@ -1035,9 +1196,17 @@ impl GraphBackend {
                 };
                 format!("{} ({})", name, sz_str)
             };
-            out.push_str(&format!("{}{}{}\n", indent, branch, if branch.is_empty() { "" } else { " " }.to_string() + &type_str));
+            out.push_str(&format!(
+                "{}{}{}\n",
+                indent,
+                branch,
+                if branch.is_empty() { "" } else { " " }.to_string() + &type_str
+            ));
         }
-        out.push_str(&format!("\nSummary: {} files, {} subdirectories (depth: {})\n", file_count, dir_count, depth));
+        out.push_str(&format!(
+            "\nSummary: {} files, {} subdirectories (depth: {})\n",
+            file_count, dir_count, depth
+        ));
         Ok(out)
     }
 
@@ -1049,7 +1218,9 @@ impl GraphBackend {
         new_code: &str,
         dry_run: bool,
     ) -> Result<SymbolReplaceResult> {
-        let resolved = self.resolve_target_path(file_path).unwrap_or_else(|| file_path.to_string());
+        let resolved = self
+            .resolve_target_path(file_path)
+            .unwrap_or_else(|| file_path.to_string());
         let path_obj = std::path::Path::new(&resolved);
         let effective_path = if path_obj.exists() {
             path_obj.to_path_buf()
@@ -1072,7 +1243,10 @@ impl GraphBackend {
                 preview_diff: String::new(),
                 dry_run,
                 ast_verified: false,
-                error: Some(format!("[ALERT: FILE_NOT_FOUND] File `{}` does not exist", effective_path.display())),
+                error: Some(format!(
+                    "[ALERT: FILE_NOT_FOUND] File `{}` does not exist",
+                    effective_path.display()
+                )),
             });
         }
 
@@ -1092,8 +1266,13 @@ impl GraphBackend {
                     f.name.ends_with(&format!(".{symbol_name}"))
                         || (f.name.starts_with(&format!("{symbol_name}.")) && symbol_name != "cell")
                 })
-            }) else {
-            let available: Vec<String> = map.functions.iter().map(|f| format!("{} ({})", f.name, f.kind.as_str())).collect();
+            })
+        else {
+            let available: Vec<String> = map
+                .functions
+                .iter()
+                .map(|f| format!("{} ({})", f.name, f.kind.as_str()))
+                .collect();
             return Ok(SymbolReplaceResult {
                 success: false,
                 file_path: resolved.clone(),
@@ -1119,7 +1298,8 @@ impl GraphBackend {
             source.split('\n').collect()
         };
 
-        if old_start_line == 0 || old_start_line > raw_lines.len() || old_end_line > raw_lines.len() {
+        if old_start_line == 0 || old_start_line > raw_lines.len() || old_end_line > raw_lines.len()
+        {
             return Ok(SymbolReplaceResult {
                 success: false,
                 file_path: resolved.clone(),
@@ -1132,7 +1312,12 @@ impl GraphBackend {
                 preview_diff: String::new(),
                 dry_run,
                 ast_verified: false,
-                error: Some(format!("[ALERT: INVALID_LINE_RANGE] Lines {}-{} are out of bounds (total lines: {})", old_start_line, old_end_line, raw_lines.len())),
+                error: Some(format!(
+                    "[ALERT: INVALID_LINE_RANGE] Lines {}-{} are out of bounds (total lines: {})",
+                    old_start_line,
+                    old_end_line,
+                    raw_lines.len()
+                )),
             });
         }
 
@@ -1190,7 +1375,8 @@ impl GraphBackend {
         let new_start_line = old_start_line;
         let new_end_line = old_start_line + new_lines_count.saturating_sub(1);
 
-        let mut final_lines: Vec<&str> = Vec::with_capacity(before_lines.len() + new_lines_count + after_lines.len());
+        let mut final_lines: Vec<&str> =
+            Vec::with_capacity(before_lines.len() + new_lines_count + after_lines.len());
         final_lines.extend_from_slice(before_lines);
         for l in &aligned_new_lines {
             final_lines.push(l.as_str());
@@ -1200,7 +1386,8 @@ impl GraphBackend {
         let candidate_source = final_lines.join(newline);
 
         // Pre-flight AST syntax verification
-        let diagnostics = ozymem_parser::extract_ast_diagnostics(&resolved, lang, &candidate_source);
+        let diagnostics =
+            ozymem_parser::extract_ast_diagnostics(&resolved, lang, &candidate_source);
         if !diagnostics.is_empty() {
             let diag_messages: Vec<String> = diagnostics
                 .iter()
@@ -1226,7 +1413,16 @@ impl GraphBackend {
             });
         }
 
-        let mut diff_preview = format!("--- {}\n+++ {}\n@@ -{},{} +{},{} @@ [SYMBOL: {}]\n", resolved, resolved, old_start_line, old_lines_count, new_start_line, new_lines_count, symbol_name);
+        let mut diff_preview = format!(
+            "--- {}\n+++ {}\n@@ -{},{} +{},{} @@ [SYMBOL: {}]\n",
+            resolved,
+            resolved,
+            old_start_line,
+            old_lines_count,
+            new_start_line,
+            new_lines_count,
+            symbol_name
+        );
         for line in old_symbol_lines {
             diff_preview.push_str(&format!("-{}\n", line));
         }
@@ -1325,12 +1521,38 @@ impl GraphBackend {
 
         for entry in walker {
             let Ok(entry) = entry else { continue };
-            if !entry.file_type().is_file() { continue };
+            if !entry.file_type().is_file() {
+                continue;
+            };
             let path = entry.path();
 
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 let ext_lower = ext.to_lowercase();
-                if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc" | "tsbuildinfo" | "map") {
+                if matches!(
+                    ext_lower.as_str(),
+                    "exe"
+                        | "dll"
+                        | "so"
+                        | "png"
+                        | "jpg"
+                        | "jpeg"
+                        | "gif"
+                        | "webp"
+                        | "ico"
+                        | "wasm"
+                        | "zip"
+                        | "tar"
+                        | "gz"
+                        | "parquet"
+                        | "duckdb"
+                        | "db"
+                        | "lock"
+                        | "onnx"
+                        | "bin"
+                        | "pyc"
+                        | "tsbuildinfo"
+                        | "map"
+                ) {
                     continue;
                 }
             }
@@ -1342,7 +1564,9 @@ impl GraphBackend {
             }
 
             total_scanned += 1;
-            let Ok(content) = std::fs::read_to_string(path) else { continue };
+            let Ok(content) = std::fs::read_to_string(path) else {
+                continue;
+            };
             let lines: Vec<&str> = content.lines().collect();
 
             for (idx, line) in lines.iter().enumerate() {
@@ -1387,7 +1611,8 @@ impl GraphBackend {
                         Vec::new()
                     };
 
-                    let mut snippet_token_cost = (snippet.len() + 10) / 4 + 1
+                    let mut snippet_token_cost = (snippet.len() + 10) / 4
+                        + 1
                         + before_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>()
                         + after_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>();
 
@@ -1429,7 +1654,11 @@ impl GraphBackend {
         }
 
         if matches.is_empty() && !is_regex {
-            let stripped = query.replace('\\', "").trim_matches(|c| c == '"' || c == '\'').trim().to_string();
+            let stripped = query
+                .replace('\\', "")
+                .trim_matches(|c| c == '"' || c == '\'')
+                .trim()
+                .to_string();
             let tokens: Vec<String> = query
                 .split(|c: char| !c.is_alphanumeric() && c != '_')
                 .filter(|s| !s.is_empty())
@@ -1450,12 +1679,38 @@ impl GraphBackend {
 
                 for entry in fallback_walker {
                     let Ok(entry) = entry else { continue };
-                    if !entry.file_type().is_file() { continue };
+                    if !entry.file_type().is_file() {
+                        continue;
+                    };
                     let path = entry.path();
 
                     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                         let ext_lower = ext.to_lowercase();
-                        if matches!(ext_lower.as_str(), "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock" | "onnx" | "bin" | "pyc" | "tsbuildinfo" | "map") {
+                        if matches!(
+                            ext_lower.as_str(),
+                            "exe"
+                                | "dll"
+                                | "so"
+                                | "png"
+                                | "jpg"
+                                | "jpeg"
+                                | "gif"
+                                | "webp"
+                                | "ico"
+                                | "wasm"
+                                | "zip"
+                                | "tar"
+                                | "gz"
+                                | "parquet"
+                                | "duckdb"
+                                | "db"
+                                | "lock"
+                                | "onnx"
+                                | "bin"
+                                | "pyc"
+                                | "tsbuildinfo"
+                                | "map"
+                        ) {
                             continue;
                         }
                     }
@@ -1466,7 +1721,9 @@ impl GraphBackend {
                         }
                     }
 
-                    let Ok(content) = std::fs::read_to_string(path) else { continue };
+                    let Ok(content) = std::fs::read_to_string(path) else {
+                        continue;
+                    };
                     let lines: Vec<&str> = content.lines().collect();
 
                     for (idx, line) in lines.iter().enumerate() {
@@ -1518,7 +1775,8 @@ impl GraphBackend {
                                 Vec::new()
                             };
 
-                            let mut snippet_token_cost = (snippet.len() + 10) / 4 + 1
+                            let mut snippet_token_cost = (snippet.len() + 10) / 4
+                                + 1
                                 + before_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>()
                                 + after_ctx.iter().map(|s| (s.len() + 10) / 4).sum::<usize>();
 
@@ -1529,7 +1787,9 @@ impl GraphBackend {
                                 snippet_token_cost = (snippet.len() + 10) / 4 + 1;
                             }
 
-                            if estimated_tokens + snippet_token_cost > token_budget && !matches.is_empty() {
+                            if estimated_tokens + snippet_token_cost > token_budget
+                                && !matches.is_empty()
+                            {
                                 status = "budget_reached".to_string();
                                 break;
                             }
@@ -1578,8 +1838,16 @@ impl GraphBackend {
         max_references: usize,
         token_budget: usize,
     ) -> Result<SymbolReferencesResult> {
-        let max_refs = if max_references == 0 { 50 } else { max_references };
-        let budget = if token_budget == 0 { 1000 } else { token_budget };
+        let max_refs = if max_references == 0 {
+            50
+        } else {
+            max_references
+        };
+        let budget = if token_budget == 0 {
+            1000
+        } else {
+            token_budget
+        };
 
         let mut defining_file_path: Option<String> = None;
         let mut def_start_line: Option<i64> = None;
@@ -1617,7 +1885,13 @@ impl GraphBackend {
                 "SELECT file_path, start_line, end_line FROM functions 
                  WHERE name = ?1 AND tenant_id = ?2 ORDER BY length(file_path) ASC LIMIT 1",
                 params![symbol_name, self.tenant_id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
             );
             if let Ok(row) = res {
                 if defining_file_path.is_none() {
@@ -1660,16 +1934,35 @@ impl GraphBackend {
 
         for entry in walker {
             let Ok(entry) = entry else { continue };
-            if !entry.file_type().is_file() { continue };
+            if !entry.file_type().is_file() {
+                continue;
+            };
             let path = entry.path();
 
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 let ext_lower = ext.to_lowercase();
                 if matches!(
                     ext_lower.as_str(),
-                    "exe" | "dll" | "so" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico"
-                        | "wasm" | "zip" | "tar" | "gz" | "parquet" | "duckdb" | "db" | "lock"
-                        | "onnx" | "bin" | "pyc"
+                    "exe"
+                        | "dll"
+                        | "so"
+                        | "png"
+                        | "jpg"
+                        | "jpeg"
+                        | "gif"
+                        | "webp"
+                        | "ico"
+                        | "wasm"
+                        | "zip"
+                        | "tar"
+                        | "gz"
+                        | "parquet"
+                        | "duckdb"
+                        | "db"
+                        | "lock"
+                        | "onnx"
+                        | "bin"
+                        | "pyc"
                 ) {
                     continue;
                 }
@@ -1681,18 +1974,26 @@ impl GraphBackend {
                 }
             }
 
-            let Ok(content) = std::fs::read_to_string(path) else { continue };
-            if !re.is_match(&content) { continue };
+            let Ok(content) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            if !re.is_match(&content) {
+                continue;
+            };
 
             let normalized_file_path = crate::normalize_path(&path.to_string_lossy());
             let norm_clean_file = normalized_file_path.replace('\\', "/").to_lowercase();
-            let is_defining_file = defining_file_path.as_deref().map(|def| {
-                let norm_def = crate::normalize_path(def).replace('\\', "/").to_lowercase();
-                norm_def == norm_clean_file
-                    || norm_def.ends_with(&norm_clean_file)
-                    || norm_clean_file.ends_with(&norm_def)
-                    || (std::path::Path::new(&norm_def).file_name() == std::path::Path::new(&norm_clean_file).file_name())
-            }).unwrap_or(false);
+            let is_defining_file = defining_file_path
+                .as_deref()
+                .map(|def| {
+                    let norm_def = crate::normalize_path(def).replace('\\', "/").to_lowercase();
+                    norm_def == norm_clean_file
+                        || norm_def.ends_with(&norm_clean_file)
+                        || norm_clean_file.ends_with(&norm_def)
+                        || (std::path::Path::new(&norm_def).file_name()
+                            == std::path::Path::new(&norm_clean_file).file_name())
+                })
+                .unwrap_or(false);
 
             for (idx, line) in content.lines().enumerate() {
                 let line_num = idx + 1;
@@ -1726,17 +2027,23 @@ impl GraphBackend {
                         || trimmed_lower.starts_with("const ");
 
                     let within_def_range = def_start_line
-                        .map(|s| line_num as i64 >= s && def_end_line.map(|e| (line_num as i64) <= e).unwrap_or(true))
+                        .map(|s| {
+                            line_num as i64 >= s
+                                && def_end_line.map(|e| (line_num as i64) <= e).unwrap_or(true)
+                        })
                         .unwrap_or(true);
 
                     let is_import = (trimmed_lower.starts_with("import ")
                         || trimmed_lower.starts_with("from ")
                         || trimmed_lower.contains("require(")
                         || trimmed_lower.starts_with("use ")
-                        || (trimmed_lower.starts_with("export ") && trimmed_lower.contains(" from ")))
+                        || (trimmed_lower.starts_with("export ")
+                            && trimmed_lower.contains(" from ")))
                         && !is_declaring_symbol;
 
-                    let kind = if is_declaring_symbol || (is_defining_file && is_def_keyword && within_def_range) {
+                    let kind = if is_declaring_symbol
+                        || (is_defining_file && is_def_keyword && within_def_range)
+                    {
                         "definition".to_string()
                     } else if is_import {
                         "import".to_string()
@@ -1812,7 +2119,14 @@ impl GraphBackend {
                  WHERE f.name = ?1 AND f.tenant_id = ?2
                  ORDER BY length(f.file_path) ASC LIMIT 1",
                 params![target_symbol, self.tenant_id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
             );
 
             match row_res {
@@ -1822,7 +2136,10 @@ impl GraphBackend {
                     let lang = if detected_lang != ozymem_parser::SupportedLanguage::Unknown {
                         detected_lang
                     } else {
-                        ozymem_parser::SupportedLanguage::from_path(std::path::Path::new(&format!("file.{}", lang_str)))
+                        ozymem_parser::SupportedLanguage::from_path(std::path::Path::new(&format!(
+                            "file.{}",
+                            lang_str
+                        )))
                     };
 
                     let content = std::fs::read_to_string(&fp).unwrap_or_default();
@@ -1878,15 +2195,21 @@ impl GraphBackend {
         }
 
         // 2. Parse candidate code signature
-        let candidate_sig = match ozymem_parser::parse_function_signature(candidate_code, Some(target_symbol), lang)
-            .or_else(|| ozymem_parser::parse_function_signature(candidate_code, None, lang))
+        let candidate_sig = match ozymem_parser::parse_function_signature(
+            candidate_code,
+            Some(target_symbol),
+            lang,
+        )
+        .or_else(|| ozymem_parser::parse_function_signature(candidate_code, None, lang))
         {
             Some(sig) => sig,
             None => {
                 return Ok(SimulationResult {
                     target_symbol: target_symbol.to_string(),
                     target_file: defining_file,
-                    status: SimulationStatus::SyntaxError("Failed to parse valid function signature from candidate code".to_string()),
+                    status: SimulationStatus::SyntaxError(
+                        "Failed to parse valid function signature from candidate code".to_string(),
+                    ),
                     breaks_dependents: true,
                     arity_changed: false,
                     async_changed: false,
@@ -1903,11 +2226,16 @@ impl GraphBackend {
         };
 
         // 3. Parse existing signature from original source slice
-        let old_sig = ozymem_parser::parse_function_signature(&old_source, Some(target_symbol), lang)
-            .or_else(|| ozymem_parser::parse_function_signature(&old_source, None, lang));
+        let old_sig =
+            ozymem_parser::parse_function_signature(&old_source, Some(target_symbol), lang)
+                .or_else(|| ozymem_parser::parse_function_signature(&old_source, None, lang));
 
         let (old_required, old_total, old_async) = if let Some(ref orig) = old_sig {
-            (orig.required_param_count, orig.total_param_count, orig.is_async)
+            (
+                orig.required_param_count,
+                orig.total_param_count,
+                orig.is_async,
+            )
         } else {
             (0, 0, false)
         };
@@ -1947,7 +2275,9 @@ impl GraphBackend {
 
             impacted_callers_count += 1;
 
-            if let Some(passed_args) = ozymem_parser::parse_call_site_argument_count(&r.snippet, target_symbol) {
+            if let Some(passed_args) =
+                ozymem_parser::parse_call_site_argument_count(&r.snippet, target_symbol)
+            {
                 // If caller passes fewer than required parameters
                 if passed_args < candidate_sig.required_param_count {
                     breakages.push(DependentBreakage {
@@ -1977,7 +2307,11 @@ impl GraphBackend {
             }
 
             // Async conversion mismatch
-            if !old_async && candidate_sig.is_async && !r.snippet.contains("await") && !r.snippet.contains(".then") {
+            if !old_async
+                && candidate_sig.is_async
+                && !r.snippet.contains("await")
+                && !r.snippet.contains(".then")
+            {
                 breakages.push(DependentBreakage {
                     caller_symbol: r.reference_kind.clone(),
                     caller_file: r.file_path.clone(),
@@ -2024,11 +2358,17 @@ impl GraphBackend {
         // 1. Group files by extracted module id
         for (path, &node_idx) in &inner.file_index {
             let mod_id = extract_module_id(path, &inner.workspace_root);
-            module_files.entry(mod_id.clone()).or_default().push(path.clone());
+            module_files
+                .entry(mod_id.clone())
+                .or_default()
+                .push(path.clone());
             if let Some(node) = inner.graph.node_weight(node_idx) {
                 *module_funcs.entry(mod_id.clone()).or_default() += node.function_count;
                 if !node.language.is_empty() {
-                    module_langs.entry(mod_id.clone()).or_default().insert(node.language.clone());
+                    module_langs
+                        .entry(mod_id.clone())
+                        .or_default()
+                        .insert(node.language.clone());
                 }
             }
         }
@@ -2036,7 +2376,10 @@ impl GraphBackend {
         // 2. Map dependencies between modules using graph edges
         let mut module_deps: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
         for edge in inner.graph.edge_references() {
-            if let (Some(src), Some(tgt)) = (inner.graph.node_weight(edge.source()), inner.graph.node_weight(edge.target())) {
+            if let (Some(src), Some(tgt)) = (
+                inner.graph.node_weight(edge.source()),
+                inner.graph.node_weight(edge.target()),
+            ) {
                 let from_mod = extract_module_id(&src.path, &inner.workspace_root);
                 let to_mod = extract_module_id(&tgt.path, &inner.workspace_root);
                 if from_mod != to_mod {
@@ -2104,8 +2447,14 @@ impl GraphBackend {
         for mod_id in &all_mods {
             let files = module_files.get(mod_id).map(|v| v.len()).unwrap_or(0);
             let funcs = module_funcs.get(mod_id).copied().unwrap_or(0);
-            let langs: Vec<String> = module_langs.get(mod_id).map(|s| s.iter().cloned().collect()).unwrap_or_default();
-            let deps: Vec<String> = module_deps.get(mod_id).map(|s| s.iter().cloned().collect()).unwrap_or_default();
+            let langs: Vec<String> = module_langs
+                .get(mod_id)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+            let deps: Vec<String> = module_deps
+                .get(mod_id)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
             let responsibility = infer_module_responsibility(mod_id);
 
             modules.push(CapabilityModule {
