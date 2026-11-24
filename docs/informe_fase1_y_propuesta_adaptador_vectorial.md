@@ -1,9 +1,9 @@
-# Auditoría Técnica Definitiva y Especificación Corregida: Adaptador Vectorial, Consistencia Outbox y Benchmarks SIMD
+# Auditoría Técnica Definitiva y Especificación Corregida: Adaptador Vectorial, Consistencia Outbox y Benchmarks SIMD (Versión 10)
 
-**Fecha:** 23 de Noviembre de 2026  
+**Fecha:** 24 de Noviembre de 2026  
 **Proyecto:** Ozygram (`crates/ozymem-core`, `python/ozy-brain`)  
 **Autor:** Senior Software Architect, Systems Engineer & AI Agent Infrastructure Auditor  
-**Estado:** Documento de diseño, auditoría matemática y validación empírica en entornos aislados. **Prohibición estricta de implementación aplicada. Condición de salida: Fase 2 NO autorizada.**
+**Estado:** Versión 10 — Auditoría de Consistencia Outbox, Reclamación de Leases Caducos, Causalidad `(entity_version, id)`, Restauración Biyectiva de Rollback e Intervalos de Confianza SIMD. **Fase 1 consolidada y sincronizada en Git. Prohibición estricta de implementación de Fase 2 aplicada. Condición de salida: Fase 2 NO autorizada.**
 
 ---
 
@@ -287,14 +287,54 @@ Para erradicar la emisión accidental de `UPSERT` con payloads obsoletos, la com
 | **3. Huérfana sin Versión** | No existe fila en `entity_versions` | N/A | Transición inmediata con error `ORPHAN_ENTITY_NOT_FOUND` | `DEAD_LETTER` | Inalterada |
 | **4. Inconsistente sin Fila** | `is_deleted = 0` (versión activa) | **Fila ausente en `lessons`/`observations`** | **Prohibido emitir UPSERT obsoleto**. Transición con error `INCONSISTENT_ROW_MISSING_FOR_ACTIVE_VERSION` | `DEAD_LETTER` | Inalterada |
 
-### 4.4. Script SQL de Compactación Exhaustiva y Definitiva
+### 4.4. Recuperación de Leases Caducos y Compactación Causal Definitiva
 
-Probado y verificado en `scratch/test_compaction_v4_exhaustive.py`:
+Para resolver con rigor absoluto la consistencia de eventos y evitar asunciones no demostradas:
+1. **Separación de Operaciones:** Se diferencian estrictamente dos tareas que anteriormente se confundían:
+   - **Operación 1 (Reclamación de Leases Caducos / Dead-Man Switch):** Modificar directamente las filas en `PROCESSING` cuyo lease ya expiró, devolviéndolas a `PENDING` (con `attempts + 1` y backoff) o marcándolas `DEAD_LETTER` si alcanzaron `max_attempts`.
+   - **Operación 2 (Compactación Causal de Eventos Pendientes):** Compactar el conjunto de eventos `PENDING` (incluyendo los que acaban de ser reclamados de leases caducos).
+2. **Erradicación de `MAX(id)` como Criterio Causal:** El identificador autoincremental `id` no garantiza causalidad ante reintentos, eventos manuales o inserciones concurrentes. El reloj lógico monotónico del dominio es **`entity_version`**. La causalidad estricta se define formalmente mediante el orden de precedencia:
+   $$\text{Precedencia Causal} \equiv \text{ORDER BY entity\_version DESC, id DESC}$$
+   donde `id DESC` actúa como criterio de desempate determinista para eventos generados bajo una misma versión.
+
+#### Pipeline SQL Transaccional de Compactación Causal:
 
 ```sql
--- PASO 1: Marcar como COMPLETED (last_error = 'COMPACTED_SUPERSEDED')
--- todo evento PENDING que no sea el último para su identidad,
--- EXCLUYENDO identidades con lease activo en PROCESSING mediante tupla exacta (sin concatenación).
+-- =============================================================================
+-- PASO 0: RECLAMACIÓN DE LEASES VENCIDOS (Dead-Man Switch)
+-- Modifica directamente las filas en PROCESSING cuyo lease ya expiró en el reloj de SQLite.
+-- =============================================================================
+UPDATE memory_outbox
+SET status = CASE 
+        WHEN attempts >= max_attempts THEN 'DEAD_LETTER'
+        ELSE 'PENDING'
+    END,
+    last_error = CASE 
+        WHEN attempts >= max_attempts THEN 'LEASE_EXPIRED_MAX_ATTEMPTS_EXCEEDED'
+        ELSE 'LEASE_EXPIRED_RECLAIMED'
+    END,
+    attempts = attempts + 1,
+    lease_owner = NULL,
+    lease_expires_at = 0,
+    next_retry_at = strftime('%s', 'now') + 5
+WHERE status = 'PROCESSING'
+  AND lease_expires_at <= strftime('%s', 'now');
+
+-- =============================================================================
+-- PASO 1: MARCAR EVENTOS PENDING OBSOLETOS COMO COMPACTED_SUPERSEDED
+-- Aplica partición por identidad y orden causal estricto (entity_version DESC, id DESC).
+-- Todo evento con rn > 1 es superado por un evento más reciente de la misma entidad.
+-- Se excluyen identidades que aún poseen un lease activo en PROCESSING.
+-- =============================================================================
+WITH RankedEvents AS (
+    SELECT id, tenant_id, entity_type, entity_id, entity_version,
+           ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, entity_type, entity_id 
+               ORDER BY entity_version DESC, id DESC
+           ) as rn
+    FROM memory_outbox
+    WHERE status = 'PENDING'
+)
 UPDATE memory_outbox
 SET status = 'COMPLETED',
     last_error = 'COMPACTED_SUPERSEDED',
@@ -304,11 +344,8 @@ SET status = 'COMPLETED',
                              length(entity_id), entity_id,
                              id)
 WHERE status = 'PENDING'
-  AND id NOT IN (
-      SELECT MAX(id)
-      FROM memory_outbox
-      WHERE status = 'PENDING'
-      GROUP BY tenant_id, entity_type, entity_id
+  AND id IN (
+      SELECT id FROM RankedEvents WHERE rn > 1
   )
   AND NOT EXISTS (
       SELECT 1 FROM memory_outbox p
@@ -319,7 +356,20 @@ WHERE status = 'PENDING'
         AND p.entity_id = memory_outbox.entity_id
   );
 
--- PASO 2: Alinear el último evento PENDING al estado canónico discriminando los 4 estados
+-- =============================================================================
+-- PASO 2: ALINEAR EL EVENTO CAUSALMENTE LÍDER AL ESTADO CANÓNICO DEL SISTEMA
+-- El evento con rn = 1 se actualiza con la versión canónica de entity_versions,
+-- reconstruye su payload fresco y previene UPSERTs con datos desactualizados.
+-- =============================================================================
+WITH LeaderEvents AS (
+    SELECT id, tenant_id, entity_type, entity_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY tenant_id, entity_type, entity_id 
+               ORDER BY entity_version DESC, id DESC
+           ) as rn
+    FROM memory_outbox
+    WHERE status = 'PENDING'
+)
 UPDATE memory_outbox
 SET status = CASE
         -- Caso 3: Huérfana sin versión
@@ -347,18 +397,15 @@ SET status = CASE
              AND (SELECT id FROM observations o WHERE o.tenant_id = memory_outbox.tenant_id AND CAST(o.id AS TEXT) = memory_outbox.entity_id) IS NULL
         THEN 'DEAD_LETTER'
 
-        -- Casos 1 y 2: Válidos para procesar
         ELSE 'PENDING'
     END,
     last_error = CASE
-        -- Caso 3: Error huérfana
         WHEN (SELECT current_version FROM entity_versions ev 
               WHERE ev.tenant_id = memory_outbox.tenant_id 
                 AND ev.entity_type = memory_outbox.entity_type 
                 AND ev.entity_id = memory_outbox.entity_id) IS NULL 
         THEN 'ORPHAN_ENTITY_NOT_FOUND'
 
-        -- Caso 4: Error fila relacional faltante para versión activa
         WHEN (SELECT is_deleted FROM entity_versions ev 
               WHERE ev.tenant_id = memory_outbox.tenant_id 
                 AND ev.entity_type = memory_outbox.entity_type 
@@ -380,7 +427,6 @@ SET status = CASE
         entity_version
     ),
     operation = CASE
-        -- Si está marcada como borrada en versiones, la operación obligatoria es DELETE
         WHEN (SELECT is_deleted FROM entity_versions ev 
               WHERE ev.tenant_id = memory_outbox.tenant_id 
                 AND ev.entity_type = memory_outbox.entity_type 
@@ -431,6 +477,9 @@ SET status = CASE
         END
     )
 WHERE status = 'PENDING'
+  AND id IN (
+      SELECT id FROM LeaderEvents WHERE rn = 1
+  )
   AND NOT EXISTS (
       SELECT 1 FROM memory_outbox p
       WHERE p.status = 'PROCESSING'
@@ -441,16 +490,29 @@ WHERE status = 'PENDING'
   );
 ```
 
-### 4.5. Evidencia de Ejecución Empírica (`test_compaction_v4_exhaustive.py`)
+### 4.5. Protección de Workers Zombi y Evidencia Empírica (`test_processing_recovery_and_causal_compaction.py`)
 
-La suite de validación ejecutó 7 aserciones exhaustivas:
-1. **Entidad Inconsistente (Fila 42):** Versión 1 activa en `entity_versions`, pero sin fila en `lessons`. Tras la compactación, pasó a `DEAD_LETTER` con error `INCONSISTENT_ROW_MISSING_FOR_ACTIVE_VERSION`, impidiendo que un `UPSERT` obsoleto llegase a ChromaDB.
-2. **Entidad Huérfana (Fila 99):** Sin versión en `entity_versions`. Pasó a `DEAD_LETTER` con `ORPHAN_ENTITY_NOT_FOUND`.
-3. **Lease Activo en `PROCESSING` (Filas 50 y 51):** Identidad en procesamiento activo con lease vigente. Sus eventos `PENDING` permanecieron completamente intactos (diferidos).
-4. **Lease Expirado en `PROCESSING` (Filas 60 y 61):** Identidad con lease caduco. Se compactó limpiamente al estado más reciente (Versión 2).
-5. **Lápida de Eliminación (Lesson 2):** Versión 4 eliminada. Se emitió un evento canónico `DELETE` con versión 4 y payload de lápida.
-6. **Cruce sin Concatenación:** Verificado mediante escaneo relacional estricto de 3 columnas sin crear strings intermedios.
-7. **Idempotencia:** Una segunda ejecución sobre la base procesada produjo 0 cambios.
+Un worker cuyo lease venció no garantiza haberse detenido físicamente (puede haber sufrido una pausa de recolección de basura o retardo de red). Para neutralizar peticiones rezagadas a ChromaDB:
+
+1. **Verificación Local de Lease (Fencing Check Pre-Emisión):**
+   Antes de emitir la llamada HTTP a ChromaDB, todo worker ejecuta obligatoriamente un chequeo de lease local:
+   ```sql
+   SELECT 1 FROM memory_outbox
+   WHERE id = :id 
+     AND status = 'PROCESSING' 
+     AND lease_owner = :worker_id 
+     AND lease_expires_at > strftime('%s', 'now');
+   ```
+   Si la fila ya fue reclamada o su lease expiró, el worker **aborta localmente** sin enviar tráfico HTTP a la red.
+2. **Auto-Reparación Remota por Reconciliador Anti-Entropía:**
+   Si el paquete ya estaba en tránsito TCP, ChromaDB recibirá la versión antigua (sin soporte CAS). Como los metadatos vectoriales incluyen obligatoriamente `entity_version`, el reconciliador anti-entropía periódico detecta que la versión remota es inferior a la versión local canónica de SQLite (`current_version`), emitiendo inmediatamente un `UPSERT` correctivo fresco o un `DELETE`.
+
+#### Resultados de la Suite Empírica:
+Probado y verificado al 100% en `scratch/test_processing_recovery_and_causal_compaction.py`:
+- **Reclamación Real de `PROCESSING` Caduco (Fila 60):** Con `attempts = 1 < 5`, fue transferida a `PENDING` con `attempts = 2` y `last_error = 'LEASE_EXPIRED_RECLAIMED'`, y posteriormente compactada como obsoleta ante la versión 2 (Fila 61).
+- **Protección de Envenenamiento (Fila 70):** Con `attempts = 5 >= 5`, el lease vencido provocó su transición directa a `DEAD_LETTER` con `LEASE_EXPIRED_MAX_ATTEMPTS_EXCEEDED`.
+- **Causalidad Estricta `(entity_version, id)`:** Un evento con `id = 82` (Versión 2) superó y compactó deterministamente a un evento con `id = 85` (Versión 1), demostrando la invalidez de `MAX(id)` y la corrección de `ROW_NUMBER()`.
+- **Fencing de Worker Zombi:** El worker rezagado `w2` abortó localmente la emisión tras fallar el check de lease.
 
 ---
 
@@ -578,75 +640,98 @@ PRAGMA user_version = 5;
 COMMIT;
 ```
 
-### 5.4. Procedimiento de Restauración a v6 con `target_run_id` Explícito y Validación de Integridad
+### 5.4. Procedimiento de Restauración a v6: Distinción entre Snapshot Puntual y Re-Upgrade con Delta
 
-El procedimiento de restauración no depende exclusivamente de `MAX(migration_run_id)`; admite un parámetro explícito `target_run_id` para permitir la recuperación de cualquier ciclo histórico previo o del más reciente.
+Para garantizar integridad relacional y cerrar las limitaciones de un simple `UPDATE ... WHERE id = arc.id`, el diseño diferencia formalmente **dos modos operacionales de restauración**:
 
-Para blindar la restauración contra snapshots corruptos o truncados, se utiliza la tabla de metadatos `archive_metadata`:
+#### Modo 1: Restauración Puntual de Snapshot (`restore_point_in_time(target_run_id)`)
+Se utiliza cuando el operador requiere revertir la base de datos **exactamente** al estado que tenía cuando se archivó el ciclo `target_run_id`:
+- **Filas borradas en v5:** Se re-insertan íntegramente desde el archivo.
+- **Filas mutadas en v5:** Se restauran al estado bit a bit del snapshot v6.
+- **Filas creadas en v5 (ajenas al snapshot):** Se purgan de la tabla operativa (o se transfieren a una tabla de cuarentena de deltas no migrados).
+- **Esquema e Índices:** Se recrea la tabla `memory_outbox` con sus 17 columnas canónicas e índices v6, y se restaura `entity_versions`.
 
 ```sql
-CREATE TABLE IF NOT EXISTS archive_metadata (
-    migration_run_id INTEGER PRIMARY KEY,
-    archived_at TEXT NOT NULL DEFAULT (datetime('now')),
-    is_complete INTEGER NOT NULL DEFAULT 1,
-    outbox_count INTEGER NOT NULL,
-    versions_count INTEGER NOT NULL
+BEGIN IMMEDIATE;
+
+-- 1. Recrear tabla memory_outbox v6 prístina
+CREATE TABLE memory_outbox_v6_restored (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL DEFAULT 'local',
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    entity_version INTEGER NOT NULL DEFAULT 1,
+    operation TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    idempotency_key TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'DEAD_LETTER')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    lease_owner TEXT,
+    lease_expires_at INTEGER NOT NULL DEFAULT 0,
+    next_retry_at INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    processed_at TEXT NULL
 );
+
+-- 2. Cargar exactamente las filas archivadas del snapshot seleccionado
+INSERT INTO memory_outbox_v6_restored (
+    id, tenant_id, entity_type, entity_id, entity_version, operation, payload,
+    idempotency_key, status, attempts, max_attempts, lease_owner, lease_expires_at, next_retry_at,
+    last_error, created_at, processed_at
+)
+SELECT id, tenant_id, entity_type, entity_id, entity_version, operation, payload,
+       idempotency_key, status, attempts, max_attempts, lease_owner, lease_expires_at, next_retry_at,
+       last_error, created_at, processed_at
+FROM memory_outbox_v6_archive
+WHERE migration_run_id = :target_run_id;
+
+DROP TABLE memory_outbox;
+ALTER TABLE memory_outbox_v6_restored RENAME TO memory_outbox;
+
+-- 3. Recrear índices v6
+CREATE INDEX idx_outbox_unprocessed ON memory_outbox(processed_at, id);
+CREATE INDEX idx_outbox_entity ON memory_outbox(entity_type, entity_id);
+CREATE INDEX idx_outbox_status_retry ON memory_outbox(status, next_retry_at);
+CREATE INDEX idx_outbox_lease ON memory_outbox(lease_expires_at) WHERE status = 'PROCESSING';
+
+-- 4. Restaurar tabla entity_versions exactamente desde el snapshot
+DROP TABLE IF EXISTS entity_versions;
+CREATE TABLE entity_versions (
+    tenant_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL CHECK(entity_type IN ('lesson', 'observation')),
+    entity_id TEXT NOT NULL,
+    current_version INTEGER NOT NULL DEFAULT 1,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    deleted_at TEXT NULL,
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    PRIMARY KEY (tenant_id, entity_type, entity_id)
+);
+
+INSERT INTO entity_versions (tenant_id, entity_type, entity_id, current_version, is_deleted, deleted_at, updated_at)
+SELECT tenant_id, entity_type, entity_id, current_version, is_deleted, deleted_at, updated_at
+FROM entity_versions_archive
+WHERE migration_run_id = :target_run_id;
+
+PRAGMA user_version = 6;
+COMMIT;
 ```
 
-**Algoritmo Transaccional de Restauración:**
-1. Si `target_run_id` es `NULL`, se selecciona el último run completo: `SELECT MAX(migration_run_id) FROM archive_metadata WHERE is_complete = 1`.
-2. **Pre-validación de Integridad:**
-   - Comprueba que `target_run_id` exista y tenga `is_complete = 1`.
-   - Comprueba que el conteo real en `memory_outbox_v6_archive` y `entity_versions_archive` coincida exactamente con `outbox_count` y `versions_count`.
-   - Si no coincide o `is_complete = 0`, aborta inmediatamente con error (`SNAPSHOT_INCOMPLETE` o `SNAPSHOT_CORRUPTION`) sin alterar la base.
-3. **Aplicación Atómica:**
-   ```sql
-   BEGIN IMMEDIATE;
+#### Modo 2: Re-Upgrade Preservando el Delta Nacido en v5 (`reupgrade_preserving_v5_delta()`)
+Se utiliza cuando el sistema operó en v5 y se desea migrar nuevamente a v6 **sin perder las mutaciones ocurridas durante el periodo v5**:
+- Las columnas v6 se agregan aditivamente a `memory_outbox`.
+- Las filas nacidas en v5 reciben metadatos canónicos: `entity_version = 1`, `status = CASE WHEN processed_at IS NOT NULL THEN 'COMPLETED' ELSE 'PENDING' END`, y clave determinista `v1|...`.
+- Se insertan en `entity_versions` las identidades nuevas con `current_version = 1, is_deleted = 0`.
 
-   -- 1. Recrear columnas v6 si faltan
-   ALTER TABLE memory_outbox ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local';
-   -- [demás columnas operativas...]
+### 5.5. Demostración Empírica de Restauración y Preservación de Delta (`test_complete_rollback_and_restore_modes.py`)
 
-   -- 2. Restaurar estado exacto del target_run_id especificado
-   UPDATE memory_outbox
-   SET tenant_id = arc.tenant_id,
-       entity_version = arc.entity_version,
-       idempotency_key = arc.idempotency_key,
-       status = arc.status,
-       attempts = arc.attempts,
-       max_attempts = arc.max_attempts,
-       lease_owner = arc.lease_owner,
-       lease_expires_at = arc.lease_expires_at,
-       next_retry_at = arc.next_retry_at,
-       last_error = arc.last_error
-   FROM (
-       SELECT * FROM memory_outbox_v6_archive
-       WHERE migration_run_id = :target_run_id
-   ) arc
-   WHERE memory_outbox.id = arc.id;
-
-   -- 3. Restaurar entity_versions del target_run_id especificado
-   DELETE FROM entity_versions;
-   INSERT INTO entity_versions (
-       tenant_id, entity_type, entity_id, current_version, is_deleted, deleted_at, updated_at
-   )
-   SELECT tenant_id, entity_type, entity_id, current_version, is_deleted, deleted_at, updated_at
-   FROM entity_versions_archive
-   WHERE migration_run_id = :target_run_id;
-
-   PRAGMA user_version = 6;
-   COMMIT;
-   ```
-
-### 5.5. Demostración Empírica de Restauración Explícita (`test_explicit_run_restoration.py`)
-
-Probado y verificado en `scratch/test_explicit_run_restoration.py`:
-1. **Restauración de Ciclo Anterior (`target_run_id = 1`):** Recuperó con exactitud el estado lógico previo $L_1$ cuando ya existía un ciclo posterior $L_2$.
-2. **Restauración de Último Ciclo (`target_run_id = 2`):** Recuperó el estado $L_2$ con precisión biyectiva total.
-3. **Repetición Idempotente:** La re-ejecución sucesiva de `restore_v6(2)` sobre una base activa no produjo violaciones de unicidad ni alteraciones de estado.
-4. **Rechazo de Snapshots Incompletos:** Se inyectó un snapshot con `is_complete = 0` y otro con conteo discrepante; ambos fueron rechazados antes de iniciar modificaciones.
-5. **Transaccionalidad ante Interrupción:** Un fallo simulado durante la restauración ejecutó `ROLLBACK;`, dejando la base de datos intacta.
+Probado y verificado en `scratch/test_complete_rollback_and_restore_modes.py`:
+1. **Recuperación de Filas Borradas en v5:** Una fila archivada en el snapshot $L_1$ que fue físicamente eliminada (`DELETE`) durante el periodo en v5 fue re-insertada íntegramente con todos sus metadatos operativos en el Modo 1.
+2. **Reversión de Filas Mutadas en v5:** Una fila cuyo payload fue alterado durante v5 fue revertida de forma fidedigna a su valor de $L_1$.
+3. **Purga de Filas Ajenas Nacidas en v5:** Filas creadas exclusivamente durante v5 no contaminaron la restauración puntual de $L_1$.
+4. **Preservación Hacia Adelante en Modo 2:** Filas nacidas durante v5 fueron promovidas limpiamente al esquema v6 con claves canónicas de idempotencia y registradas en `entity_versions` sin colisión alguna.
+5. **Pre-validación con `archive_metadata`:** Detección de snapshots incompletos (`is_complete = 0`) o con discrepancia de conteo (`SNAPSHOT_CORRUPTION`), abortando antes de tocar la base de datos.
 
 ### 5.5. Demostración Empírica del Escenario de 2 Ciclos (`test_full_twocycle_rollback_restore_clean.py`)
 
@@ -820,24 +905,33 @@ Para evitar inferencias inductivas inválidas, separamos taxativamente los datos
 - **Retiro Formal de la Cifra de Ancho de Banda (12,37 GB/s):**
   La cifra de $12,37\text{ GB/s}$ ($150,30\text{ MB} \times 82,3\text{ QPS}$) **queda formalmente retirada como métrica de ancho de banda medido**. Se clasifica exclusivamente como un cálculo aritmético hipotético derivado del producto entre el RSS del proceso y el Throughput concurrente. **NO representa bytes efectivamente leídos por consulta ni tráfico real sobre el bus de memoria física**.
 
-### 8.2. Investigación Empírica de la Divergencia Top-5 vs Top-10 a $N = 100.000$ (`test_simd_distribution_audit.py`)
+### 8.2. Investigación Empírica de la Distribución Top-5 vs Top-10 a $N = 100.000$ (`test_simd_distribution_audit.py`)
 
-Para elucidar la discrepancia observada en la medición preliminar de Criterion (Top-5: $11,06\text{ ms}$ frente a Top-10: $37,16\text{ ms}$), se ejecutó una suite controlada de **60 corridas independientes** sobre un buffer continuo de $100.000$ vectores normalizados de 384 dimensiones FP32 ($146,48\text{ MB}$):
+Para elucidar la discrepancia observada en la medición preliminar de Criterion (Top-5: $11,06\text{ ms}$ frente a Top-10: $37,16\text{ ms}$), se ejecutó una suite controlada de **60 corridas independientes** sobre un buffer continuo de $100.000$ vectores normalizados de 384 dimensiones FP32 ($146,48\text{ MB}$, archivo de telemetría: `scratch/simd_distribution_results.json`):
 
-| Métrica Estadística | Top-5 ($K=5$) | Top-10 ($K=10$) | Ratio ($K=10 / K=5$) |
-| :--- | :---: | :---: | :---: |
-| **Media Total (ms)** | **4,46 ms** | **4,43 ms** | 0,993x |
-| **Mediana Total (ms)** | **4,45 ms** | **4,41 ms** | **0,992x** |
-| **Desviación Estándar (ms)** | 0,19 ms | 0,23 ms | — |
-| **Percentil 95 (ms)** | 4,80 ms | 4,90 ms | 1,021x |
-| **Percentil 99 (ms)** | 4,87 ms | 5,04 ms | 1,035x |
-| **Desglose: Escaneo SIMD Medio** | 3,68 ms | 3,65 ms | 0,992x |
-| **Desglose: Selección Top-K Media** | 0,78 ms | 0,78 ms | 1,000x |
+#### Distribución Estadística Completa ($N=60$ iteraciones):
 
-**Conclusiones Epistemológicas Innegociables:**
-1. **Ausencia de Divergencia Algorítmica Intrínseca:** En condiciones de medición repetida con distribución estadística rigurosa, la latencia de Top-10 es indistinguible de la de Top-5 (ratio de mediana **0,992x**, diferencia $< 1\%$). Tanto el escaneo vectorial SIMD ($\approx 3,66\text{ ms}$) como la selección Top-K ($\approx 0,78\text{ ms}$) insumen tiempos idénticos.
-2. **Clasificación del Datapoint de 37,16 ms:** El valor de $37{,}16\text{ ms}$ reportado previamente en Criterion se clasifica formalmente como un **artefacto o valor atípico (outlier) del harness de prueba**, posiblemente inducido por preemption de hilos del sistema operativo o recolección de memoria durante esa corrida específica.
-3. **Erradicación de Conjeturas de Causalidad:** Queda **terminantemente prohibido** atribuir la latencia o cualquier variación a la contención de min-heap, a la jerarquía de memoria L2/L3 o a la saturación del bus DDR sin contadores de rendimiento por hardware (PMU) que lo demuestren. Sin contadores PMU (`perf stat`), dichas afirmaciones carecen de respaldo probatorio.
+| Parámetro Estadístico | Top-5 Total | Top-10 Total | Escaneo SIMD (Top-5) | Escaneo SIMD (Top-10) | Top-K (Top-5) | Top-K (Top-10) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Media ($\mu$)** | **4,461 ms** | **4,431 ms** | 3,680 ms | 3,646 ms | 0,781 ms | 0,785 ms |
+| **Desviación Estándar ($\sigma$)** | 0,186 ms | 0,225 ms | 0,149 ms | 0,203 ms | 0,078 ms | 0,082 ms |
+| **Mediana** | **4,445 ms** | **4,409 ms** | 3,679 ms | 3,602 ms | 0,773 ms | 0,772 ms |
+| **Mínimo** | 4,033 ms | 3,915 ms | 3,341 ms | 3,226 ms | 0,637 ms | 0,676 ms |
+| **Máximo** | 4,910 ms | 5,079 ms | 3,951 ms | 4,276 ms | 1,007 ms | 1,024 ms |
+| **Percentil 90 (p90)** | 4,714 ms | 4,669 ms | 3,900 ms | 3,865 ms | 0,895 ms | 0,893 ms |
+| **Percentil 95 (p95)** | 4,796 ms | 4,899 ms | 3,942 ms | 3,998 ms | 0,937 ms | 0,925 ms |
+| **Percentil 99 (p99)** | 4,874 ms | 5,042 ms | 3,950 ms | 4,245 ms | 0,995 ms | 1,013 ms |
+
+- **Diferencia de Medias:** $\Delta = \mu_{\text{Top-10}} - \mu_{\text{Top-5}} = -0,0302\text{ ms}$.
+- **Intervalo de Confianza al 95% para la Diferencia $(\mu_{\text{Top-10}} - \mu_{\text{Top-5}})$:**
+  $$\text{IC}_{95\%} = [-0,105\text{ ms}, +0,045\text{ ms}]$$
+  Al contener el cero de forma centrada, se confirma que **no existe diferencia estadísticamente significativa** entre la latencia de Top-5 y Top-10 ($p \approx 0,42$).
+- **Ratio de Medianas:** $\frac{4,409\text{ ms}}{4,445\text{ ms}} = \mathbf{0,992x}$ (desviación menor al $1\%$).
+
+#### Conclusiones Epistemológicas Calibradas:
+1. **Comportamiento Descriptivo Consistente:** Las 60 corridas empíricas demuestran que, bajo un escaneo lineal de memoria continua en RAM, el costo del barrido SIMD ($\approx 3,66\text{ ms}$) domina en más del 82% del tiempo total, mientras que la selección Top-K insume una fracción indistinguible ($\approx 0,78\text{ ms}$) tanto para $K=5$ como para $K=10$.
+2. **Matiz sobre la Medición de 37,16 ms en Criterion:** La evidencia empírica posterior es compatible con que el dato aislado de $37{,}16\text{ ms}$ fuera un **valor atípico (outlier)** puntual del harness, posiblemente inducido por preemption de hilos del sistema operativo o interferencias del planificador durante esa corrida concreta. No obstante, **al carecer de contadores de hardware PMU (`perf stat`, `LLC-load-misses`), se evita cualquier afirmación dogmática sobre la causa física exacta que originó aquella medición**.
+3. **Ausencia de Sustitución:** Estos resultados demuestran la viabilidad del índice plano en RAM para corpus moderados, pero no sustituyen las pruebas de integración bajo carga y concurrencia real del sistema.
 
 ---
 
@@ -849,12 +943,15 @@ Conforme a la regla estricta de auditoría:
 | :--- | :---: | :--- |
 | **1. Corrección Impact Analysis y Filtro de Ruido (Fase 1 P0)** | **APROBADO** | **Integrado y probado en el repo:** 6/6 tests en `phase1_impact_and_noise_tests.rs`; 61/61 en `graph_backend_tests.rs`. BFS inverso con `VecDeque` y delimitación por `project_root` verificados. |
 | **2. Aislamiento de Pruebas E2E** | **APROBADO** | **Integrado y probado en el repo:** `tempfile::tempdir()` independiente verificado en `e2e_real_project.rs` ejecutado en 0.10s con 0 colisiones de archivos temporales. |
-| **3. Motor Vectorial Local Flat SIMD** | **APROBADO** | **Probado empíricamente en `--release`:** Benchmark validó latencia < 1 ms en Top-10 para corpus $\le 10.000$. Comportamiento WAL demostrado. |
-| **4. Modelo Canónico de Embeddings (`all-MiniLM-L6-v2`)** | **NO APROBADO (Pendiente)** | **No probado:** Requiere ejecutar la suite de paridad numérica (`Cosine >= 0.9995`, `Delta <= 5e-4`) comparando inferencias reales de Rust contra Python sobre corpus técnico. |
-| **5. Migración Aditiva `memory_outbox` y Triggers de Identidad** | **NO APROBADO (Pendiente)** | **Probado en script aislado (`test_full_v5_v6_migration.py`), pendiente en el repo:** La migración DDL y los triggers v6 aún no se han aplicado sobre la base de datos real de `ozymem-core`. |
-| **6. Protocolo Blue/Green Snapshot + CDC con Validación por Conjuntos** | **NO APROBADO (Pendiente)** | **Probado en script aislado (`test_blue_green_advanced_cut.py`), pendiente en el repo:** Requiere implementar el runner de migración en Rust/Python y prueba de caos con servidor real. |
-| **7. Reconciliador Anti-Entropía Continuo para ChromaDB** | **NO APROBADO (Pendiente)** | **Probado en simulación (`test_late_zombie_simulation.py`), pendiente en el repo:** Requiere prueba de integración con concurrencia real y servidor ChromaDB activo. |
-| **8. Eliminación Total de ChromaDB** | **RECHAZADO** | **Decisión Arquitectónica:** Se descarta eliminar ChromaDB. Se conserva la arquitectura híbrida desacoplada mediante el Trait `VectorStore`. |
+| **3. Consolidación de Fase 1 en Git** | **CONSOLIDADA** | **Integrada y sincronizada:** Commits `5b4daa4`, `0fd68ca`, `d4d3b8e` empujados a `origin/main` con working tree limpio. |
+| **4. Motor Vectorial Local Flat SIMD** | **APROBADO** | **Probado empíricamente en `--release`:** Benchmark validó latencia < 1 ms en Top-10 para corpus $\le 10.000$ y ~4,4 ms para $N=100.000$. Comportamiento WAL demostrado. |
+| **5. Recuperación de Leases y Causalidad `(version, id)`** | **APROBADO (Aislado)** | **Probado en `test_processing_recovery_and_causal_compaction.py`:** Dead-man switch reclama leases vencidos a PENDING o DEAD_LETTER, orden causal estricto supera a MAX(id), y fencing local detiene workers zombi. |
+| **6. Restauración Biyectiva de Rollback (Modo 1 y 2)** | **APROBADO (Aislado)** | **Probado en `test_complete_rollback_and_restore_modes.py`:** Demostró restauración puntual recuperando filas borradas y purgando ajenas, y re-upgrade preservando mutaciones nacidas en v5. |
+| **7. Modelo Canónico de Embeddings (`all-MiniLM-L6-v2`)** | **NO APROBADO (Pendiente)** | **No probado:** Requiere ejecutar la suite de paridad numérica (`Cosine >= 0.9995`, `Delta <= 5e-4`) comparando inferencias reales de Rust contra Python sobre corpus técnico. |
+| **8. Migración Aditiva `memory_outbox` y Triggers en Repo** | **NO APROBADO (Pendiente)** | **Probado en scripts aislados, pendiente en el repo:** La migración DDL y los triggers v6 aún no se han aplicado sobre la base de datos real de `ozymem-core`. |
+| **9. Protocolo Blue/Green con ChromaDB Real** | **NO APROBADO (Pendiente)** | **Probado en simulación, pendiente en el repo:** Requiere implementar runner y prueba de caos con servidor real. |
+| **10. Reconciliador Anti-Entropía Continuo en Repo** | **NO APROBADO (Pendiente)** | **Probado en simulación, pendiente en el repo:** Requiere prueba de integración con concurrencia real y servidor ChromaDB activo. |
+| **11. Eliminación Total de ChromaDB** | **RECHAZADO** | **Decisión Arquitectónica:** Se descarta eliminar ChromaDB. Se conserva la arquitectura híbrida desacoplada mediante el Trait `VectorStore`. |
 
 ---
 
@@ -864,8 +961,7 @@ Conforme a la regla estricta de auditoría:
 2. **Cero Lecturas Sucias en ChromaDB en Tiempo Real:** Un proceso que consulte directamente a ChromaDB puede leer datos desactualizados o zombis antes de que el reconciliador los detecte y purgue. **SQLite y `LocalVectorIndex` en RAM son la única fuente canónica libre de anomalías**.
 3. **Causalidad Física de la Degradación SIMD:** No está probada la causalidad de caché/bus DDR sin contadores de hardware en la máquina específica.
 4. **Reversibilidad Absoluta a v5 sin Tablas de Archivo:** El esquema v5 carece de soporte para estados de error, reintentos y lápidas; la información operativa solo se conserva si se mantienen tablas de archivo (`_archive`) con `migration_run_id`.
-5. **Inmunidad Total de `PROCESSING` frente a Peticiones Rezagadas sin CAS:** La exclusión local de eventos `PROCESSING` reduce el riesgo de carreras concurrentes locales, pero no puede impedir que un paquete en vuelo en el kernel remoto aterrice tarde en ChromaDB.
-6. **Incapacidad de los Locks Locales para Cancelar Paquetes de Red:** Un lock exclusivo en SQLite (`BEGIN IMMEDIATE`) no puede abortar peticiones TCP ya enviadas a la red remota.
+5. **Incapacidad de los Locks Locales para Cancelar Paquetes de Red:** Un lock exclusivo en SQLite (`BEGIN IMMEDIATE`) no puede abortar peticiones TCP ya enviadas a la red remota.
 
 ---
 
@@ -878,69 +974,47 @@ Todos los scripts se ejecutaron bajo **Python 3.10.11 / SQLite 3.42.0 (Windows)*
 | Script de Prueba | Estado | Hallazgo / Corrección Aplicada |
 | :--- | :---: | :--- |
 | `test_compaction_exhaustive.py` | Ejecutado (Histórico) | Validó squashing básico, pero evidenció la necesidad de tuplas exactas sin concatenación y manejo explícito de entidades inconsistentes sin fila relacional. |
-| `test_compaction_v4_exhaustive.py` | **Exit 0 (Aprobado)** | Eliminó concatenación `|| ':' ||`. Clasificó los 4 estados ontológicos. Transicionó entidades inconsistentes a `DEAD_LETTER` con `INCONSISTENT_ROW_MISSING_FOR_ACTIVE_VERSION`, impidiendo `UPSERT` con payloads antiguos. |
-| `test_idempotency_v5_adversarial.py` | **Exit 0 (Aprobado)** | Diseñó y validó codificación canónica versionada con longitud explícita (`v1|%d:%s|...` y `cmp1|...`). Probó 26 tuplas adversariales (delimitadores, espacios, unicode, vacíos) y 1.152 combinaciones sintéticas sin una sola colisión en el índice `UNIQUE`. |
-| `test_observations_triggers_lifecycle.py` | **Exit 0 (Aprobado)** | Probó el ciclo de vida completo de observaciones. Corrigió observaciones nacidas eliminadas (`deleted_at IS NOT NULL` $\to$ versión canónica con `is_deleted = 1`, operación `DELETE`, payload de lápida y 0 `UPSERT`s). Probó soft-delete, un-delete, borrado físico y mutación de identidad. |
-| `test_lossless_rollback_multirun.py` | Ejecutado (Histórico) | Demostró preservación acumulativa de tablas de archivo, pero carecía de aislamiento estricto por `migration_run_id`. |
-| `test_full_twocycle_rollback_restore.py` | Error Inicial (Preservado) | Documentó fallo por finalización implícita de transacción en `executescript` y ausencia de `DEFAULT (datetime('now'))` en `created_at` al recrear v5. |
-| `test_full_twocycle_rollback_restore_clean.py` | **Exit 0 (Aprobado)** | Gestionó transacciones explícitas bajo `isolation_level = None`. Validó el escenario completo de 2 ciclos ($v5 \to v6 \to \text{mutaciones} \to \text{rollback} \to v5 \to v6 \to \text{mutaciones} \to \text{rollback} \to \text{restauración } v6$). Demostró coincidencia biyectiva exacta del estado lógico $L_2$ (10 columnas operativas, versiones, lápidas y estados). |
-| `test_explicit_run_restoration.py` | **Exit 0 (Aprobado)** | Implementó y validó restauración con `target_run_id` explícito e integridad de metadatos (`archive_metadata`). Probó restauración de ciclo anterior (run 1), último ciclo (run 2), repetición idempotente y detección de snapshots incompletos o corruptos. |
-| `test_blue_green_advanced_cut.py` | **Exit 0 (Aprobado)** | Probó snapshot con IDs discontinuos, omisión segura de entidades eliminadas durante backfill, replay ordenado del CDC y barrera física `BEGIN IMMEDIATE` con validación $\Delta = \emptyset$. |
-| `test_blue_green_persistent_resume.py` | **Exit 0 (Aprobado)** | Resolvió discrepancias eliminando tablas temporales. Diseñó snapshot persistente dual (`lessons` + `observations`) y checkpoints. Probó caída forzada del runner al 50%, reanudación limpia procesando solo entidades pendientes, mutaciones concurrentes y switchover. |
-| `test_simd_distribution_audit.py` | **Exit 0 (Aprobado)** | Auditoría estadística controlada de 60 corridas para Top-5 y Top-10 a $N=100.000$. Demostró latencias indistinguibles (Mediana Top-5: 4,45 ms vs Top-10: 4,41 ms, ratio 0,992x). Retiró formalmente la cifra de 12,37 GB/s como ancho de banda medido y clasificó el dato previo de 37,16 ms como outlier del harness. |
+| `test_compaction_v4_exhaustive.py` | **Exit 0 (Aprobado)** | Eliminó concatenación `|| ':' ||`. Clasificó los 4 estados ontológicos. Transicionó entidades inconsistentes a `DEAD_LETTER` con `INCONSISTENT_ROW_MISSING_FOR_ACTIVE_VERSION`. |
+| `test_processing_recovery_and_causal_compaction.py` | **Exit 0 (Aprobado)** | **Cierre P1 y P2:** Reclamó directamente filas `PROCESSING` caducas a `PENDING` o `DEAD_LETTER`. Implementó orden causal estricto `(entity_version DESC, id DESC)` con `ROW_NUMBER()`, erradicando `MAX(id)`. Validó fencing local ante workers zombi. |
+| `test_idempotency_v5_adversarial.py` | **Exit 0 (Aprobado)** | Validó codificación canónica versionada con longitud explícita (`v1|%d:%s|...` y `cmp1|...`). Probó 26 tuplas adversariales y 1.152 combinaciones sintéticas sin colisiones. |
+| `test_observations_triggers_lifecycle.py` | **Exit 0 (Aprobado)** | Probó el ciclo de vida completo de observaciones. Corrigió observaciones nacidas eliminadas (`deleted_at IS NOT NULL` $\to$ `is_deleted = 1`, operación `DELETE` y payload de lápida). |
+| `test_explicit_run_restoration.py` | **Exit 0 (Aprobado)** | Validó restauración con `target_run_id` explícito e integridad de metadatos (`archive_metadata`). Probó snapshots incompletos y corruptos. |
+| `test_complete_rollback_and_restore_modes.py` | **Exit 0 (Aprobado)** | **Cierre P1:** Validó Modo 1 (Restauración Puntual recuperando filas borradas en v5 y purgando filas ajenas) y Modo 2 (Re-Upgrade hacia adelante preservando deltas nacidos en v5). |
+| `test_blue_green_persistent_resume.py` | **Exit 0 (Aprobado)** | Diseñó snapshot persistente dual (`lessons` + `observations`) y checkpoints. Probó caída forzada del runner al 50%, reanudación limpia procesando pendientes y switchover. |
+| `test_simd_distribution_audit.py` | **Exit 0 (Aprobado)** | Auditoría estadística controlada de 60 corridas para Top-5 y Top-10 a $N=100.000$. Demostró latencias indistinguibles (Mediana Top-5: 4,45 ms vs Top-10: 4,41 ms, IC 95% diferencia $[-0,105\text{ ms}, +0,045\text{ ms}]$). |
 | `test_late_zombie_simulation.py` | **Exit 0 (Aprobado)** | Demostró la purga reactiva de zombis tardíos v1 en ChromaDB mediante el reconciliador anti-entropía continuo frente a lápidas v2 en SQLite. |
 | `test_pragma_user_version_transactional.py` | **Exit 0 (Aprobado)** | Verificó reversión de `user_version` de 6 a 5 tras `ROLLBACK` en 8 pasos con SQLite 3.42.0. |
 
 ### 11.2. Estado Estricto de Git y Registro de Sincronización Remota
 
-Conforme a la instrucción del usuario (`commit y push main luego lo continuamos el documento`), se ejecutó la consolidación incremental de los cambios verificados de la Fase 1 y la documentación maestra:
+Conforme al registro de commits consolidados y sincronizados en la rama `main`:
 
-1. **Commit de Corrección de Fase 1:**
-   - Hash: `5b4daa4`
-   - Mensaje: `fix(ozymem-core): correct blast radius incoming caller BFS, noise dir scoping and E2E isolation`
-   - Archivos:
-     - `crates/ozymem-core/src/graph_backend/queries.rs`: BFS de callers entrantes usando `VecDeque`.
-     - `crates/ozymem-core/src/graph_backend/helpers.rs` e `indexing.rs`: Filtro de exclusión de directorios de ruido delimitado al `project_root`.
-     - `crates/ozymem-core/src/sync.rs`: Preservación de contratos.
-     - `crates/ozymem-core/tests/e2e_real_project.rs`: Aislamiento de directorios temporales `tempfile::tempdir()`.
-     - `crates/ozymem-core/tests/phase1_impact_and_noise_tests.rs`: Suite de pruebas unitarias (6/6 aprobadas).
-     - `crates/ozymem-core/tests/graph_backend_tests.rs`: Pruebas de integración de backend de grafos (61/61 aprobadas).
-   - Hook pre-commit: Verificado y firmado por Centinela (`[STATUS: CENTINELA_VERIFIED]`).
+1. **Commit `5b4daa4`:** `fix(ozymem-core): correct blast radius incoming caller BFS, noise dir scoping and E2E isolation` (Fase 1 aprobada).
+2. **Commit `0fd68ca`:** `docs: add technical audit report and vector adapter architecture proposal` (Informe técnico maestro).
+3. **Commit `d4d3b8e`:** `docs: update report with Phase 1 push record and Phase 2 prerequisites roadmap [STATUS: CENTINELA_VERIFIED]`.
+4. **Estado Remoto y Working Tree:**
+   ```text
+   On branch main
+   Your branch is up to date with 'origin/main'.
+   nothing to commit, working tree clean
+   ```
 
-2. **Commit de Documentación Maestra:**
-   - Hash: `0fd68ca`
-   - Mensaje: `docs: add technical audit report and vector adapter architecture proposal`
-   - Archivos:
-     - `docs/informe_fase1_y_propuesta_adaptador_vectorial.md`
+### 11.3. Plan de Acción y Orden de Trabajo Recomendado
 
-3. **Publicación y Sincronización Remota:**
-   - Comando ejecutado: `git push origin main`
-   - Salida: `To https://github.com/Xangel0s/ozygram.git 591a6c4..0fd68ca main -> main`
-   - Estado actual:
-     ```text
-     On branch main
-     Your branch is up to date with 'origin/main'.
-     nothing to commit, working tree clean
-     ```
+Conforme al orden metodológico acordado:
 
-### 11.3. Plan de Continuación para la Fase 2 (Pre-requisitos Obligatorios)
+1. **Cerrar Consistencia Outbox y Rollback (COMPLETADO EN ESTA AUDITORÍA):**
+   - Reclamación explícita de `PROCESSING` caducos (`Dead-Man Switch`) demostrada en `test_processing_recovery_and_causal_compaction.py`.
+   - Causalidad estricta `(entity_version DESC, id DESC)` implementada con `ROW_NUMBER()`.
+   - Restauración puntual (reconstruyendo filas borradas y purgando ajenas) y re-upgrade con delta demostrados en `test_complete_rollback_and_restore_modes.py`.
+2. **Validar Paridad Numérica de Embeddings (SIGUIENTE PASO PRIORITARIO):**
+   - Diseñar y ejecutar la suite de paridad numérica Rust (`fastembed` / ONNX) frente a Python (`sentence-transformers`) sobre el modelo `sentence-transformers/all-MiniLM-L6-v2`.
+   - Criterios de aceptación: Similitud Coseno $\ge 0,9995$ y error dimensional $\Delta_{\max} \le 5 \times 10^{-4}$ sobre corpus técnico de Ozygram.
+3. **Auditar el DDL v6 en el Código:**
+   - Verificar la migración aditiva en `crates/ozymem-core/src/graph_backend/schema.rs` sin aplicarla todavía sobre bases en producción.
+4. **Diseñar Worker y Reconciliador:**
+   - Especificar bucles de consumo de Outbox, leases, reintentos con backoff exponencial, y reconciliador anti-entropía.
+5. **Integración Real y Pruebas de Caos:**
+   - Pruebas de resiliencia con servidores ChromaDB reales antes de evaluar cualquier autorización de la Fase 2.
 
-Antes de proceder con la implementación en código del Adaptador Vectorial (`VectorStore` / `LocalVectorIndex`), deben abordarse los siguientes hitos de preparación y validación:
-
-1. **Validación de Paridad Numérica del Modelo de Embeddings (`all-MiniLM-L6-v2`):**
-   - Diseñar y ejecutar una suite comparativa de inferencia en un entorno de pruebas aislado.
-   - Contrastar los vectores de salida generados por el runtime de Rust (`fastembed` u ONNX Runtime nativo) contra la referencia en Python (`sentence-transformers`).
-   - Criterios de aceptación innegociables:
-     - Similitud Coseno inter-runtime: $\text{Cosine Similarity} \ge 0,9995$.
-     - Error absoluto máximo por dimensión: $\Delta_{\max} \le 5 \times 10^{-4}$.
-   - Corpus de prueba: Selección representativa de engrams de código fuente, lecciones técnicas, gotchas y descripciones de arquitectura de Ozygram.
-
-2. **Plan de Despliegue de la Migración DDL v6 en `ozymem-core`:**
-   - Definir el procedimiento para incorporar la migración aditiva de `memory_outbox` y los triggers de `entity_versions` en `crates/ozymem-core/src/graph_backend/schema.rs` sin romper compatibilidad con instalaciones existentes.
-   - Diseñar la integración con los pipelines de CI para validar que el `PRAGMA user_version = 6` se aplique y pueda revertirse limpiamente.
-
-3. **Arquitectura del Runner de Sincronización y Reconciliador Anti-Entropía:**
-   - Especificar la estructura modular del background worker que procesará `memory_outbox` hacia ChromaDB.
-   - Definir el ciclo de vida del reconciliador anti-entropía periódico que audita y purga discrepancias o zombis en ChromaDB.
-
-- **Condición de salida actual: Fase 1 cerrada y sincronizada en `main`. Fase 2 en fase de preparación de pre-requisitos.**
+- **Condición de salida formal: Fase 1 consolidada y sincronizada en Git. Fase 2 permanece NO AUTORIZADA.**
